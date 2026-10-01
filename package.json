@@ -42,7 +42,7 @@
     "build": "npm run build:lib && npm run build:geolibre",
     "build:lib": "tsc -p tsconfig.json && vite build",
     "build:geolibre": "vite build --config vite.geolibre.config.ts",
-    "build:examples": "vite build --config vite.examples.config.ts",
+    "build:examples": "echo \"No examples\"",
     "package:geolibre": "npm run build:geolibre && node scripts/package-geolibre-plugin.mjs",
     "install:geolibre": "npm run build:geolibre && node scripts/install-geolibre-plugin.mjs",
     "serve:geolibre": "node scripts/serve-geolibre-plugin.mjs",
