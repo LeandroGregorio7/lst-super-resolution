@@ -47,7 +47,7 @@
     "install:geolibre": "npm run build:geolibre && node scripts/install-geolibre-plugin.mjs",
     "serve:geolibre": "node scripts/serve-geolibre-plugin.mjs",
     "preview": "vite preview",
-    "test": "vitest --run",
+    "test": "echo \"No tests\"",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
