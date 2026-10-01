@@ -1,5 +1,7 @@
 import type { GeoLibreAppAPI, GeoLibreControl } from "./host-api";
-
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from '../../App';
 /**
  * Demonstration of the GeoLibre right-sidebar panel host API.
  *
@@ -34,33 +36,18 @@ export function registerTemplateRightPanel<TControl extends GeoLibreControl>(
 
   const unregister = app.registerRightPanel({
     id: RIGHT_PANEL_ID,
-    title: "Workbench",
+    title: "LST SR2D4",
     defaultWidth: 320,
     render(container) {
-      const wrap = document.createElement("div");
-      wrap.className = "geolibre-plugin-right-panel";
-
-      const heading = document.createElement("h2");
-      heading.textContent = "Plugin Workbench";
-
-      const body = document.createElement("p");
-      body.textContent =
-        "This panel is rendered by the plugin through app.registerRightPanel(). " +
-        "Replace this content with your own workbench, query review, or " +
-        "dashboard UI. Drive it with app.openRightPanel(), collapseRightPanel(), " +
-        "and closeRightPanel().";
-
-      wrap.append(heading, body);
-      container.appendChild(wrap);
-
-      // Optional cleanup, run when the panel closes or is unregistered.
+      const root = createRoot(container);
+      root.render(React.createElement(App));
+      
+      // Limpa a memória quando o utilizador fechar o painel
       return () => {
-        wrap.remove();
+        root.unmount();
       };
-    },
+    }
   });
-
-  // Open it right away so the example is visible on activation. Remove this call
   // (or gate it behind a button in your control) if you would rather open the
   // panel on demand instead of every time the plugin activates.
   app.openRightPanel?.(RIGHT_PANEL_ID);
