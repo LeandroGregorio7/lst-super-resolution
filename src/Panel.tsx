@@ -105,7 +105,7 @@ export function Panel({ canvasRef, bgCanvasRef, onStatsChange, lang, setLang, on
       </div>
 
       <h2 style={{ marginTop: 0 }}>{text.title}</h2>
-      <a href="https://colab.research.google.com/drive/1zGGZ18fN4HQDM82IcGRXEt3jo_EJwHbk?usp=sharing" target="_blank" rel="noreferrer" style={{ display: 'block', textAlign: 'center', backgroundColor: '#f39c12', color: 'white', padding: '10px', textDecoration: 'none', fontWeight: 'bold', borderRadius: '4px', marginBottom: '20px' }}>{text.colabBtn}</a>
+      <a href="https://colab.research.google.com/drive/1OL0yxfcRY7qNMtHNszuvlBK-G6vCpwXk?usp=sharing" target="_blank" rel="noreferrer" style={{ display: 'block', textAlign: 'center', backgroundColor: '#f39c12', color: 'white', padding: '10px', textDecoration: 'none', fontWeight: 'bold', borderRadius: '4px', marginBottom: '20px' }}>{text.colabBtn}</a>
       
       <div style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '5px' }}>
         <h3 style={{ marginTop: 0, fontSize: '16px' }}>{text.uploadTitle}</h3><p style={{ fontSize: '13px', color: '#555' }}>{text.uploadDesc}</p>
