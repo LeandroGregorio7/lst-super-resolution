@@ -5,7 +5,7 @@ import App from './App';
 export const plugin = {
   id: "lst-super-resolution",
 name: "LST Super-Resolution (SR2D4)",
-  version: "1.0.0",
+  version: "1.0.3",
   
   // O underline (_) avisa o TypeScript para ignorar que a variável não é usada
   activate(_app: any) {
@@ -47,7 +47,9 @@ name: "LST Super-Resolution (SR2D4)",
 
 export default plugin;
 
-if (document.getElementById('root')) {
+// Monta a aplicação standalone somente durante o desenvolvimento.
+// No GeoLibre, o host é responsável pelo próprio elemento #root.
+if (import.meta.env.DEV && document.getElementById('root')) {
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
       <App />
