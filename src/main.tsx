@@ -5,10 +5,10 @@ import App from './App';
 export const plugin = {
   id: "lst-super-resolution",
 name: "LST Super-Resolution (SR2D4)",
-  version: "1.0.0",
+  version: "1.0.3",
   
   // O underline (_) avisa o TypeScript para ignorar que a variável não é usada
-  activate(_app: any) {
+  activate(app: any) {
     console.log("🔥 LST Super-Resolution ativado no GeoLibre!");
     
     const container = document.createElement('div');
@@ -18,14 +18,14 @@ name: "LST Super-Resolution (SR2D4)",
     container.style.left = '0';
     container.style.width = '100vw';
     container.style.height = '100vh';
-    container.style.zIndex = '9999';
+    container.style.zIndex = '100';
     
     document.body.appendChild(container);
 
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
-        <App />
+        <App hostApp={app} />
       </React.StrictMode>
     );
 
@@ -47,7 +47,10 @@ name: "LST Super-Resolution (SR2D4)",
 
 export default plugin;
 
-if (document.getElementById('root')) {
+// Only mount the standalone demo during Vite development. GeoLibre owns its
+// own #root element; mounting into it from an external plugin causes the host
+// application to flash/reload and can prevent the plugin menu from rendering.
+if (import.meta.env.DEV && document.getElementById('root')) {
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
       <App />

@@ -37,7 +37,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // }
 
 export default defineConfig({
-  // publicDir: false, // enable with the bundlePluginAssets() recipe above
+  // React's browser bundle checks process.env.NODE_ENV. ZIP plugins are
+  // imported directly in the browser, where Node's process global is absent.
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
+  },
+  // publicDir: false, // enable with the bundlePluginAssets recipe above
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
@@ -45,7 +50,9 @@ export default defineConfig({
   },
   build: {
     lib: {
-      entry: resolve(__dirname, "src/geolibre.ts"),
+      // The GeoLibre package must expose the LST plugin declared in
+      // geolibre-plugin/plugin.json, not the template demo entrypoint.
+      entry: resolve(__dirname, "src/main.tsx"),
       formats: ["es"],
       fileName: () => "index.js",
     },
@@ -55,6 +62,10 @@ export default defineConfig({
       external: [],
       output: {
         assetFileNames: () => "style.css",
+        // ZIP installation imports only the manifest entry through a blob URL;
+        // relative/dynamic chunk imports cannot be resolved there. Keep the
+        // uploaded plugin self-contained in one JavaScript file.
+        inlineDynamicImports: true,
       },
     },
     cssCodeSplit: false,
