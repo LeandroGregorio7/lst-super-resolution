@@ -5,12 +5,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  // O plugin roda diretamente no navegador dentro do GeoLibre.
-  // Substitui process.env.NODE_ENV, que não existe no navegador.
+  // React's browser bundle checks process.env.NODE_ENV. GeoLibre imports the
+  // plugin directly in the browser, where Node's process global is absent.
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
-
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
@@ -19,7 +18,8 @@ export default defineConfig({
 
   build: {
     lib: {
-      // Entry point real do plugin LST Super-Resolution.
+      // The GeoLibre package must expose the LST plugin declared in
+      // geolibre-plugin/plugin.json, not the template demo entrypoint.
       entry: resolve(__dirname, "src/main.tsx"),
       formats: ["es"],
       fileName: () => "index.js",
@@ -35,9 +35,8 @@ export default defineConfig({
 
       output: {
         assetFileNames: () => "style.css",
-
-        // O instalador web do GeoLibre carrega apenas o index.js
-        // indicado no plugin.json.
+        // GeoLibre loads only the manifest entry; keep the plugin self-contained
+        // so relative/dynamic chunk imports are not required.
         inlineDynamicImports: true,
       },
     },
