@@ -39,6 +39,10 @@ function toLonLat(x: number, y: number, epsg: number): [number, number] {
   if (epsg === 4326 || epsg === 4269) return [x, y];
   if (epsg >= 32601 && epsg <= 32660) return utmToLonLat(x, y, epsg - 32600, false);
   if (epsg >= 32701 && epsg <= 32760) return utmToLonLat(x, y, epsg - 32700, true);
+  // SIRGAS 2000 / UTM zones 19S–28S (Brazil), including São Paulo EPSG:31983.
+  if (epsg >= 31979 && epsg <= 31988) return utmToLonLat(x, y, epsg - 31960, true);
+  // SAD69 / UTM zones 18S–25S, still common in legacy Brazilian rasters.
+  if (epsg >= 29168 && epsg <= 29175) return utmToLonLat(x, y, epsg - 29150, true);
   console.warn(`[LST] EPSG:${epsg} não tem conversão embutida; assumindo WGS84.`);
   return [x, y];
 }
