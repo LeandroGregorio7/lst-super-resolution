@@ -5,7 +5,7 @@ import App from './App';
 export const plugin = {
   id: "lst-super-resolution",
 name: "LST Super-Resolution (SR2D4)",
-  version: "1.0.8",
+  version: "1.0.9",
   
   // O underline (_) avisa o TypeScript para ignorar que a variável não é usada
   activate(app: any) {
@@ -27,6 +27,13 @@ name: "LST Super-Resolution (SR2D4)",
     container.style.pointerEvents = 'none';
     
     document.body.appendChild(container);
+
+    let expanded = false;
+    const toggleSize = () => {
+      expanded = !expanded;
+      container.style.width = expanded ? 'min(820px, calc(100vw - 40px))' : 'min(440px, calc(100vw - 40px))';
+      container.style.height = expanded ? 'min(860px, calc(100vh - 92px))' : 'min(760px, calc(100vh - 92px))';
+    };
 
     const resizeHandle = document.createElement('button');
     resizeHandle.type = 'button';
@@ -70,7 +77,7 @@ name: "LST Super-Resolution (SR2D4)",
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
-        <App hostApp={app} onClose={() => (this as any).deactivate?.(app)} />
+        <App hostApp={app} onClose={() => (this as any).deactivate?.(app)} onToggleSize={toggleSize} />
       </React.StrictMode>
     );
 

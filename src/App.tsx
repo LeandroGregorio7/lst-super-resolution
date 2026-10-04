@@ -4,7 +4,7 @@ import { renderLstToCanvas, PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { t } from './i18n';
 
-function App({ hostApp: _hostApp, onClose }: { hostApp?: any; onClose?: () => void }) {
+function App({ hostApp: _hostApp, onClose, onToggleSize }: { hostApp?: any; onClose?: () => void; onToggleSize?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -128,7 +128,10 @@ function App({ hostApp: _hostApp, onClose }: { hostApp?: any; onClose?: () => vo
     <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', width: '100%', height: '100%', margin: 0, padding: 0, backgroundColor: '#e7eaee', pointerEvents: 'auto', border: '1px solid #444', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.35)' }}>
       <div style={{ height: '42px', flex: '0 0 42px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 10px', color: '#fff', backgroundColor: '#263238', fontFamily: 'sans-serif', fontSize: '13px', fontWeight: 700 }}>
         <span>{text.title}</span>
-        <button type="button" onClick={onClose} aria-label={lang === 'en' ? 'Close plugin' : 'Fechar plugin'} style={{ border: 'none', background: 'transparent', color: '#fff', fontSize: '22px', lineHeight: 1, cursor: 'pointer', padding: '2px 6px' }}>×</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button type="button" onClick={onToggleSize} aria-label={lang === 'en' ? 'Expand or restore plugin size' : 'Ampliar ou restaurar tamanho do plugin'} title={lang === 'en' ? 'Expand / restore size' : 'Ampliar / restaurar tamanho'} style={{ border: '1px solid #90a4ae', borderRadius: '4px', background: '#455a64', color: '#fff', fontSize: '16px', lineHeight: 1, cursor: 'pointer', padding: '4px 7px' }}>⛶</button>
+          <button type="button" onClick={onClose} aria-label={lang === 'en' ? 'Close plugin' : 'Fechar plugin'} title={lang === 'en' ? 'Close plugin' : 'Fechar plugin'} style={{ border: 'none', background: 'transparent', color: '#fff', fontSize: '22px', lineHeight: 1, cursor: 'pointer', padding: '2px 6px' }}>×</button>
+        </div>
       </div>
       <div style={{ minHeight: 0, flex: 1, display: 'flex', width: '100%' }}>
       <div style={{ width: '230px', minWidth: '230px', height: '100%', borderRight: '2px solid #333', backgroundColor: '#f9f9f9', overflowY: 'auto', zIndex: 10 }}>
