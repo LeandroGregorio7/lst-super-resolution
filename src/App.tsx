@@ -4,7 +4,7 @@ import { renderLstToCanvas, PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { t } from './i18n';
 
-function App() {
+function App({ hostApp: _hostApp }: { hostApp?: any }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -123,9 +123,9 @@ function App() {
   };
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', margin: 0, padding: 0, backgroundColor: '#1e1e1e' }}>
+    <div style={{ position: 'relative', zIndex: 2, display: 'flex', width: '100vw', height: '100vh', margin: 0, padding: 0, backgroundColor: '#e7eaee', pointerEvents: 'auto' }}>
       <div style={{ width: '350px', height: '100%', borderRight: '2px solid #333', backgroundColor: '#f9f9f9', overflowY: 'auto', zIndex: 10 }}>
-        <Panel canvasRef={canvasRef} bgCanvasRef={bgCanvasRef} onStatsChange={setMapStats} lang={lang} setLang={setLang} onOpenMethodology={() => setShowMethodology(true)} onOpenHowToUse={() => setShowHowToUse(true)} />
+        <Panel canvasRef={canvasRef} bgCanvasRef={bgCanvasRef} onStatsChange={setMapStats} lang={lang} setLang={setLang} onOpenMethodology={() => setShowMethodology(true)} onOpenHowToUse={() => setShowHowToUse(true)} useHostMap={false} />
       </div>
 
       <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>

@@ -19,6 +19,7 @@ export interface PanelProps {
   setLang: (lang: 'pt' | 'en') => void;
   onOpenMethodology: () => void;
   onOpenHowToUse: () => void;
+  useHostMap?: boolean;
 }
 
 function extractDateFromFilename(filename: string): string | null {
@@ -29,7 +30,7 @@ function extractDateFromFilename(filename: string): string | null {
 
 const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 50));
 
-export function Panel({ canvasRef, bgCanvasRef, onStatsChange, lang, setLang, onOpenMethodology, onOpenHowToUse }: PanelProps) {
+export function Panel({ canvasRef, bgCanvasRef, onStatsChange, lang, setLang, onOpenMethodology, onOpenHowToUse, useHostMap = false }: PanelProps) {
   const [bandRed, setBandRed] = useState('');
   const [bandNir, setBandNir] = useState('');
   const [bandSwir, setBandSwir] = useState('');
@@ -71,7 +72,9 @@ export function Panel({ canvasRef, bgCanvasRef, onStatsChange, lang, setLang, on
 
       setProgressMsg(text.stepRender); await yieldToUI();
       
-      if (bgCanvasRef.current) renderRGBBasemapToCanvas(swirArray, nirArray, redArray, tiffData.width, tiffData.height, bgCanvasRef.current);
+      if (!useHostMap && bgCanvasRef.current) {
+        renderRGBBasemapToCanvas(swirArray, nirArray, redArray, tiffData.width, tiffData.height, bgCanvasRef.current);
+      }
       
       if (canvasRef.current) {
         const stats = renderLstToCanvas(downscaleResult.lstDownscaled, tiffData.width, tiffData.height, canvasRef.current, 'ironbow');
