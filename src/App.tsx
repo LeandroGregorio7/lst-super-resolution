@@ -3,9 +3,8 @@ import { Panel } from './Panel';
 import { renderLstToCanvas, PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { t } from './i18n';
-import { addOrUpdateLstOverlay, removeLstOverlay } from './geolibreRasterOverlay';
 
-function App({ hostApp }: { hostApp?: any }) {
+function App({ hostApp: _hostApp }: { hostApp?: any }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -28,8 +27,6 @@ function App({ hostApp }: { hostApp?: any }) {
   const [opacity, setOpacity] = useState<number>(0.7);
   const [customColors, setCustomColors] = useState<string[]>(['#000080', '#0000ff', '#00ff00', '#ffff00', '#ff0000']);
   const [debouncedCustomColors, setDebouncedCustomColors] = useState<string[]>(customColors);
-  const hostMap = hostApp?.getMap?.() ?? null;
-  const [hostOverlayReady, setHostOverlayReady] = useState(false);
   
   const [showMethodology, setShowMethodology] = useState(false);
   const [showHowToUse, setShowHowToUse] = useState(false);
@@ -44,23 +41,6 @@ function App({ hostApp }: { hostApp?: any }) {
       renderLstToCanvas(mapStats.data, mapStats.width, mapStats.height, canvasRef.current, palette, debouncedCustomColors);
     }
   }, [palette, debouncedCustomColors, mapStats]);
-
-  useEffect(() => {
-    if (!hostMap || !mapStats) {
-      setHostOverlayReady(false);
-      return;
-    }
-    let cancelled = false;
-    setHostOverlayReady(false);
-    void addOrUpdateLstOverlay(hostMap, mapStats, palette, opacity).then((ok) => {
-      if (!cancelled) setHostOverlayReady(ok);
-    });
-    return () => {
-      cancelled = true;
-      setHostOverlayReady(false);
-      removeLstOverlay(hostMap);
-    };
-  }, [hostMap, mapStats, palette, opacity]);
 
   useEffect(() => {
     const div = scrollRef.current;
@@ -143,9 +123,9 @@ function App({ hostApp }: { hostApp?: any }) {
   };
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', margin: 0, padding: 0, backgroundColor: hostMap ? 'transparent' : '#1e1e1e', pointerEvents: hostMap ? 'none' : 'auto' }}>
-      <div style={{ width: '350px', height: '100%', borderRight: '2px solid #333', backgroundColor: '#f9f9f9', overflowY: 'auto', zIndex: 10, pointerEvents: 'auto' }}>
-        <Panel canvasRef={canvasRef} bgCanvasRef={bgCanvasRef} onStatsChange={setMapStats} lang={lang} setLang={setLang} onOpenMethodology={() => setShowMethodology(true)} onOpenHowToUse={() => setShowHowToUse(true)} useHostMap={Boolean(hostMap)} />
+    <div style={{ position: 'relative', zIndex: 2, display: 'flex', width: '100vw', height: '100vh', margin: 0, padding: 0, backgroundColor: '#e7eaee', pointerEvents: 'auto' }}>
+      <div style={{ width: '350px', height: '100%', borderRight: '2px solid #333', backgroundColor: '#f9f9f9', overflowY: 'auto', zIndex: 10 }}>
+        <Panel canvasRef={canvasRef} bgCanvasRef={bgCanvasRef} onStatsChange={setMapStats} lang={lang} setLang={setLang} onOpenMethodology={() => setShowMethodology(true)} onOpenHowToUse={() => setShowHowToUse(true)} useHostMap={false} />
       </div>
 
       <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -178,7 +158,7 @@ function App({ hostApp }: { hostApp?: any }) {
            <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(0,0,0,0.8)', color: '#00ff88', padding: '10px 20px', borderRadius: '30px', fontSize: '24px', fontWeight: 'bold', zIndex: 10, pointerEvents: 'none' }}>🎯 {hoverTemp.toFixed(1)} °C</div>
         )}
 
-        <div ref={scrollRef} style={{ display: hostMap && hostOverlayReady ? 'none' : (mapStats ? 'block' : 'none'), width: '100%', height: '100%', overflow: 'auto', cursor: isDragging ? 'grabbing' : 'grab' }} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onMouseMove={handleMouseMove}>
+        <div ref={scrollRef} style={{ display: mapStats ? 'block' : 'none', width: '100%', height: '100%', overflow: 'auto', cursor: isDragging ? 'grabbing' : 'grab' }} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onMouseMove={handleMouseMove}>
           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 'min-content', minHeight: 'min-content' }}>
             <div style={{ position: 'relative', border: '2px solid #555', borderRadius: '8px', transition: isDragging ? 'none' : 'transform 0.1s', transform: `scale(${zoom})`, transformOrigin: 'center center' }}><canvas ref={bgCanvasRef} style={{ display: 'block', pointerEvents: 'none' }} /><canvas ref={canvasRef} style={{ display: 'block', position: 'absolute', top: 0, left: 0, opacity: opacity, pointerEvents: 'none' }} /></div>
           </div>
