@@ -5,7 +5,7 @@ import App from './App';
 export const plugin = {
   id: "lst-super-resolution",
 name: "LST Super-Resolution (SR2D4)",
-  version: "1.0.5",
+  version: "1.0.6",
   
   // O underline (_) avisa o TypeScript para ignorar que a variável não é usada
   activate(app: any) {
@@ -19,6 +19,11 @@ name: "LST Super-Resolution (SR2D4)",
     container.style.width = 'min(440px, calc(100vw - 40px))';
     container.style.height = 'min(760px, calc(100vh - 92px))';
     container.style.maxHeight = 'calc(100vh - 92px)';
+    container.style.minWidth = '360px';
+    container.style.minHeight = '420px';
+    container.style.maxWidth = 'min(900px, calc(100vw - 40px))';
+    container.style.resize = 'both';
+    container.style.overflow = 'auto';
     container.style.zIndex = '1000';
     container.style.pointerEvents = 'none';
     
