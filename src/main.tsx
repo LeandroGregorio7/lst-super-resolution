@@ -5,7 +5,7 @@ import App from './App';
 export const plugin = {
   id: "lst-super-resolution",
 name: "LST Super-Resolution (SR2D4)",
-  version: "1.0.3",
+  version: "1.0.4",
   
   // O underline (_) avisa o TypeScript para ignorar que a variável não é usada
   activate(app: any) {
