@@ -1,3 +1,4 @@
+import proj4 from 'proj4';
 import { renderLstToCanvas, type PaletteType } from './colorMapper';
 
 type MapLike = {
@@ -34,23 +35,50 @@ function utmToLonLat(easting: number, northing: number, zone: number, southern: 
   const lon = (zone - 1) * 6 - 180 + 3 + (d - (1 + 2 * t1 + c1) * d ** 3 / 6 + (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * ePrimeSquared + 24 * t1 ** 2) * d ** 5 / 120) / Math.cos(phi1);
   return [(lon * 180) / Math.PI, (lat * 180) / Math.PI];
 }
-function toLonLat(x: number, y: number, epsg: number): [number, number] {
-  if (epsg === 3857 || epsg === 900913) return mercatorToLonLat(x, y);
+const epsgDefinitionCache = new Map<number, string>();
+
+async function toLonLat(x: number, y: number, epsg: number): Promise<[number, number]> {
   if (epsg === 4326 || epsg === 4269) return [x, y];
+  if (epsg === 3857 || epsg === 900913) return mercatorToLonLat(x, y);
+
+  // Fast offline paths for the standard global UTM and Brazilian UTM families.
   if (epsg >= 32601 && epsg <= 32660) return utmToLonLat(x, y, epsg - 32600, false);
   if (epsg >= 32701 && epsg <= 32760) return utmToLonLat(x, y, epsg - 32700, true);
-  // SIRGAS 2000 / UTM zones 19S–28S (Brazil), including São Paulo EPSG:31983.
   if (epsg >= 31979 && epsg <= 31988) return utmToLonLat(x, y, epsg - 31960, true);
-  // SAD69 / UTM zones 18S–25S, still common in legacy Brazilian rasters.
   if (epsg >= 29168 && epsg <= 29175) return utmToLonLat(x, y, epsg - 29150, true);
-  console.warn(`[LST] EPSG:${epsg} não tem conversão embutida; assumindo WGS84.`);
-  return [x, y];
+
+  // For any other EPSG code, obtain the official PROJ definition once and
+  // cache it. This covers national grids and projected CRSs worldwide.
+  const code = `EPSG:${epsg}`;
+  let definition = epsgDefinitionCache.get(epsg);
+  if (!definition) {
+    const response = await fetch(`https://epsg.io/${epsg}.proj4`);
+    if (!response.ok) throw new Error(`CRS ${code} não encontrado (HTTP ${response.status}).`);
+    definition = (await response.text()).trim();
+    if (!definition) throw new Error(`CRS ${code} retornou uma definição vazia.`);
+    epsgDefinitionCache.set(epsg, definition);
+    proj4.defs(code, definition);
+  } else if (!proj4.defs(code)) {
+    proj4.defs(code, definition);
+  }
+  const result = proj4(code, 'EPSG:4326', [x, y]);
+  return [result[0], result[1]];
 }
-function rasterCoordinates(stats: RasterStats): number[][] {
-  const x0 = stats.origin[0], y0 = stats.origin[1], x1 = x0 + stats.width * stats.resolution[0], y1 = y0 + stats.height * stats.resolution[1];
-  const west = Math.min(x0, x1), east = Math.max(x0, x1), south = Math.min(y0, y1), north = Math.max(y0, y1);
-  return [toLonLat(west, north, stats.epsg), toLonLat(east, north, stats.epsg), toLonLat(east, south, stats.epsg), toLonLat(west, south, stats.epsg)];
+
+async function rasterCoordinates(stats: RasterStats): Promise<number[][]> {
+  const x0 = stats.origin[0], y0 = stats.origin[1];
+  const x1 = x0 + stats.width * stats.resolution[0];
+  const y1 = y0 + stats.height * stats.resolution[1];
+  const west = Math.min(x0, x1), east = Math.max(x0, x1);
+  const south = Math.min(y0, y1), north = Math.max(y0, y1);
+  return Promise.all([
+    toLonLat(west, north, stats.epsg),
+    toLonLat(east, north, stats.epsg),
+    toLonLat(east, south, stats.epsg),
+    toLonLat(west, south, stats.epsg),
+  ]);
 }
+
 function makeOverlayCanvas(stats: RasterStats, palette: PaletteType): HTMLCanvasElement {
   const scale = Math.min(1, MAX_TEXTURE_SIZE / Math.max(stats.width, stats.height));
   const width = Math.max(1, Math.round(stats.width * scale)), height = Math.max(1, Math.round(stats.height * scale));
@@ -78,7 +106,7 @@ export async function addOrUpdateLstOverlay(map: MapLike | null | undefined, sta
   try {
     if (map.isStyleLoaded?.() === false && map.once) await new Promise<void>(resolve => map.once?.('load', resolve));
     const image = await canvasToObjectUrl(makeOverlayCanvas(stats, palette));
-    const coordinates = rasterCoordinates(stats), source = map.getSource(SOURCE_ID);
+    const coordinates = await rasterCoordinates(stats), source = map.getSource(SOURCE_ID);
     if (source?.updateImage) source.updateImage({ url: image, coordinates });
     else {
       removeLstOverlay(map);
