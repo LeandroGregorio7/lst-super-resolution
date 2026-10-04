@@ -5,7 +5,7 @@ import App from './App';
 export const plugin = {
   id: "lst-super-resolution",
 name: "LST Super-Resolution (SR2D4)",
-  version: "1.0.4",
+  version: "1.0.5",
   
   // O underline (_) avisa o TypeScript para ignorar que a variável não é usada
   activate(app: any) {
@@ -13,19 +13,21 @@ name: "LST Super-Resolution (SR2D4)",
     
     const container = document.createElement('div');
     container.id = 'lst-plugin-container';
-    container.style.position = 'absolute';
-    container.style.top = '0';
-    container.style.left = '0';
-    container.style.width = '100vw';
-    container.style.height = '100vh';
-    container.style.zIndex = '100';
+    container.style.position = 'fixed';
+    container.style.top = '72px';
+    container.style.right = '20px';
+    container.style.width = 'min(440px, calc(100vw - 40px))';
+    container.style.height = 'min(760px, calc(100vh - 92px))';
+    container.style.maxHeight = 'calc(100vh - 92px)';
+    container.style.zIndex = '1000';
+    container.style.pointerEvents = 'none';
     
     document.body.appendChild(container);
 
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
-        <App hostApp={app} />
+        <App hostApp={app} onClose={() => (this as any).deactivate?.(app)} />
       </React.StrictMode>
     );
 

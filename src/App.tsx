@@ -4,12 +4,14 @@ import { renderLstToCanvas, PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { t } from './i18n';
 
-function App({ hostApp: _hostApp }: { hostApp?: any }) {
+function App({ hostApp: _hostApp, onClose }: { hostApp?: any; onClose?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   
-  const [lang, setLang] = useState<'pt' | 'en'>('pt');
+  const [lang, setLang] = useState<'pt' | 'en'>(() =>
+    typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en'
+  );
   const text = t[lang];
 
   const [mapStats, setMapStats] = useState<{ 
@@ -123,12 +125,17 @@ function App({ hostApp: _hostApp }: { hostApp?: any }) {
   };
 
   return (
-    <div style={{ position: 'relative', zIndex: 2, display: 'flex', width: '100vw', height: '100vh', margin: 0, padding: 0, backgroundColor: '#e7eaee', pointerEvents: 'auto' }}>
-      <div style={{ width: '350px', height: '100%', borderRight: '2px solid #333', backgroundColor: '#f9f9f9', overflowY: 'auto', zIndex: 10 }}>
+    <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', width: '100%', height: '100%', margin: 0, padding: 0, backgroundColor: '#e7eaee', pointerEvents: 'auto', border: '1px solid #444', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.35)' }}>
+      <div style={{ height: '42px', flex: '0 0 42px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 10px', color: '#fff', backgroundColor: '#263238', fontFamily: 'sans-serif', fontSize: '13px', fontWeight: 700 }}>
+        <span>{text.title}</span>
+        <button type="button" onClick={onClose} aria-label={lang === 'en' ? 'Close plugin' : 'Fechar plugin'} style={{ border: 'none', background: 'transparent', color: '#fff', fontSize: '22px', lineHeight: 1, cursor: 'pointer', padding: '2px 6px' }}>×</button>
+      </div>
+      <div style={{ minHeight: 0, flex: 1, display: 'flex', width: '100%' }}>
+      <div style={{ width: '230px', minWidth: '230px', height: '100%', borderRight: '2px solid #333', backgroundColor: '#f9f9f9', overflowY: 'auto', zIndex: 10 }}>
         <Panel canvasRef={canvasRef} bgCanvasRef={bgCanvasRef} onStatsChange={setMapStats} lang={lang} setLang={setLang} onOpenMethodology={() => setShowMethodology(true)} onOpenHowToUse={() => setShowHowToUse(true)} useHostMap={false} />
       </div>
 
-      <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
         {!mapStats && <div style={{ textAlign: 'center', color: '#aaa' }}><h2>{text.mapArea}</h2><p>{text.mapDesc}</p></div>}
 
         {mapStats && (
@@ -184,6 +191,7 @@ function App({ hostApp: _hostApp }: { hostApp?: any }) {
         {showMethodology && (<div style={modalOverlayStyle}><div style={modalStyle}><h3>{text.methodology}</h3><p style={{textAlign: 'justify'}}>{text.methodText1}</p><p style={{textAlign: 'justify'}}>{text.methodText2}</p><button onClick={() => setShowMethodology(false)} style={{...btnStyle, marginTop: '10px'}}>{text.close}</button></div></div>)}
         {showHowToUse && (<div style={modalOverlayStyle}><div style={modalStyle}><h3>{text.howToUse}</h3><ul style={{ textAlign: 'left', lineHeight: '1.6' }}><li>{text.useText1}</li><li>{text.useText2}</li><li>{text.useText3}</li><li>{text.useText4}</li><li>{text.useText5}</li></ul><button onClick={() => setShowHowToUse(false)} style={{...btnStyle, marginTop: '10px'}}>{text.understood}</button></div></div>)}
       </div>
+      </div>
     </div>
   );
 }
@@ -191,5 +199,5 @@ function App({ hostApp: _hostApp }: { hostApp?: any }) {
 export default App;
 
 const btnStyle: React.CSSProperties = { padding: '6px 12px', backgroundColor: '#444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', outline: 'none', fontSize: '13px' };
-const modalOverlayStyle: React.CSSProperties = { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 };
+const modalOverlayStyle: React.CSSProperties = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 };
 const modalStyle: React.CSSProperties = { backgroundColor: '#fff', color: '#333', padding: '30px', borderRadius: '8px', maxWidth: '400px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' };
