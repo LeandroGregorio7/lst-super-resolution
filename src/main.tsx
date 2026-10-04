@@ -5,7 +5,7 @@ import App from './App';
 export const plugin = {
   id: "lst-super-resolution",
 name: "LST Super-Resolution (SR2D4)",
-  version: "1.0.7",
+  version: "1.0.8",
   
   // O underline (_) avisa o TypeScript para ignorar que a variável não é usada
   activate(app: any) {
@@ -34,10 +34,10 @@ name: "LST Super-Resolution (SR2D4)",
     resizeHandle.setAttribute('aria-label', 'Resize plugin panel');
     resizeHandle.textContent = '↘';
     Object.assign(resizeHandle.style, {
-      position: 'absolute', right: '3px', bottom: '3px', width: '28px', height: '28px',
-      border: '1px solid rgba(255,255,255,.65)', borderRadius: '5px',
-      background: '#263238', color: '#fff', cursor: 'nwse-resize', zIndex: '1002',
-      fontSize: '18px', lineHeight: '20px', padding: '0', pointerEvents: 'auto',
+      position: 'absolute', right: '-4px', bottom: '-4px', width: '34px', height: '34px',
+      border: '2px solid #fff', borderRadius: '7px',
+      background: '#f57c00', color: '#fff', cursor: 'nwse-resize', zIndex: '1002',
+      fontSize: '22px', fontWeight: 'bold', lineHeight: '26px', padding: '0', pointerEvents: 'auto',
     });
     container.appendChild(resizeHandle);
     let resizing = false;
