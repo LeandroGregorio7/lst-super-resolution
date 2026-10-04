@@ -29,6 +29,7 @@ function App({ hostApp }: { hostApp?: any }) {
   const [customColors, setCustomColors] = useState<string[]>(['#000080', '#0000ff', '#00ff00', '#ffff00', '#ff0000']);
   const [debouncedCustomColors, setDebouncedCustomColors] = useState<string[]>(customColors);
   const hostMap = hostApp?.getMap?.() ?? null;
+  const [hostOverlayReady, setHostOverlayReady] = useState(false);
   
   const [showMethodology, setShowMethodology] = useState(false);
   const [showHowToUse, setShowHowToUse] = useState(false);
@@ -45,9 +46,20 @@ function App({ hostApp }: { hostApp?: any }) {
   }, [palette, debouncedCustomColors, mapStats]);
 
   useEffect(() => {
-    if (!hostMap || !mapStats) return;
-    addOrUpdateLstOverlay(hostMap, mapStats, palette, opacity);
-    return () => removeLstOverlay(hostMap);
+    if (!hostMap || !mapStats) {
+      setHostOverlayReady(false);
+      return;
+    }
+    let cancelled = false;
+    setHostOverlayReady(false);
+    void addOrUpdateLstOverlay(hostMap, mapStats, palette, opacity).then((ok) => {
+      if (!cancelled) setHostOverlayReady(ok);
+    });
+    return () => {
+      cancelled = true;
+      setHostOverlayReady(false);
+      removeLstOverlay(hostMap);
+    };
   }, [hostMap, mapStats, palette, opacity]);
 
   useEffect(() => {
@@ -166,7 +178,7 @@ function App({ hostApp }: { hostApp?: any }) {
            <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(0,0,0,0.8)', color: '#00ff88', padding: '10px 20px', borderRadius: '30px', fontSize: '24px', fontWeight: 'bold', zIndex: 10, pointerEvents: 'none' }}>🎯 {hoverTemp.toFixed(1)} °C</div>
         )}
 
-        <div ref={scrollRef} style={{ display: hostMap ? 'none' : (mapStats ? 'block' : 'none'), width: '100%', height: '100%', overflow: 'auto', cursor: isDragging ? 'grabbing' : 'grab' }} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onMouseMove={handleMouseMove}>
+        <div ref={scrollRef} style={{ display: hostMap && hostOverlayReady ? 'none' : (mapStats ? 'block' : 'none'), width: '100%', height: '100%', overflow: 'auto', cursor: isDragging ? 'grabbing' : 'grab' }} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onMouseMove={handleMouseMove}>
           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 'min-content', minHeight: 'min-content' }}>
             <div style={{ position: 'relative', border: '2px solid #555', borderRadius: '8px', transition: isDragging ? 'none' : 'transform 0.1s', transform: `scale(${zoom})`, transformOrigin: 'center center' }}><canvas ref={bgCanvasRef} style={{ display: 'block', pointerEvents: 'none' }} /><canvas ref={canvasRef} style={{ display: 'block', position: 'absolute', top: 0, left: 0, opacity: opacity, pointerEvents: 'none' }} /></div>
           </div>
