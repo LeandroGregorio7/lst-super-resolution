@@ -1,87 +1,29 @@
 {
-  "name": "geolibre-plugin-template",
-  "version": "0.1.0",
-  "description": "A template for creating GeoLibre plugins with MapLibre GL JS controls",
+  "name": "sr2d4-lst-explorer",
+  "version": "1.0.0",
+  "description": "Independent web GIS explorer for SR2D4 imagery and Land Surface Temperature",
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/types/index.d.ts",
-  "exports": {
-    ".": {
-      "import": {
-        "types": "./dist/types/index.d.ts",
-        "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./dist/types/index.d.cts",
-        "default": "./dist/index.cjs"
-      }
-    },
-    "./react": {
-      "import": {
-        "types": "./dist/types/react.d.ts",
-        "default": "./dist/react.mjs"
-      },
-      "require": {
-        "types": "./dist/types/react.d.cts",
-        "default": "./dist/react.cjs"
-      }
-    },
-    "./style.css": "./dist/geolibre-plugin-template.css"
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
-  "sideEffects": [
-    "*.css"
-  ],
+  "main": "./dist/index.html",
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:lib && npm run build:geolibre",
-    "build:lib": "tsc -p tsconfig.json && vite build",
-    "build:geolibre": "vite build --config vite.geolibre.config.ts",
-    "build:examples": "echo \"No examples\"",
-    "package:geolibre": "npm run build:geolibre && node scripts/package-geolibre-plugin.mjs",
-    "install:geolibre": "npm run build:geolibre && node scripts/install-geolibre-plugin.mjs",
-    "serve:geolibre": "node scripts/serve-geolibre-plugin.mjs",
+    "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview",
-    "test": "echo \"No tests\"",
-    "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "prepublishOnly": "npm run build:lib"
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\""
   },
   "keywords": [
-    "geolibre",
-    "maplibre",
-    "maplibre-gl",
-    "map",
-    "plugin",
-    "control",
-    "react",
-    "typescript"
+    "SR2D4",
+    "LST",
+    "remote-sensing",
+    "GIS",
+    "GeoTIFF",
+    "MapLibre"
   ],
-  "author": "Your Name",
+  "author": "Leandro Gregorio",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/geolibre-plugin-template.git"
-  },
-  "peerDependencies": {
-    "maplibre-gl": ">=3.0.0",
-    "react": ">=18.0.0",
-    "react-dom": ">=18.0.0"
-  },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    }
+    "url": "https://github.com/LeandroGregorio7/lst-super-resolution.git"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -89,6 +31,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.9.2",
+    "@types/proj4": "^2.5.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
@@ -107,6 +50,7 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
-    "geotiff": "^3.0.5"
+    "geotiff": "^3.0.5",
+    "proj4": "^2.22.0"
   }
 }

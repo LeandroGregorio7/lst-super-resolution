@@ -73,7 +73,7 @@ function getThermalColor(rawVal: number, v: number, palette: PaletteType, custom
     const cv = Math.round(v * 255); return { r: cv, g: cv, b: cv };
   }
 
-  let stops = palette === 'spectral' ? [
+  const stops = palette === 'spectral' ? [
     { p: 0.0, r: 94, g: 79, b: 162 }, { p: 0.2, r: 50, g: 136, b: 189 },
     { p: 0.4, r: 102, g: 194, b: 165 }, { p: 0.6, r: 253, g: 212, b: 134 },
     { p: 0.8, r: 244, g: 109, b: 67 }, { p: 1.0, r: 158, g: 1, b: 66 }
