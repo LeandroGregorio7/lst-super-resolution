@@ -1,195 +1,44 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Panel } from './Panel';
-import { renderLstToCanvas, PaletteType } from './colorMapper';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { calculateOpticalIndices } from './opticalIndices';
+import { applyTsHARP } from './downscaling';
+import { calculateThermalRadiance } from './thermalProcessing';
+import { readTiffPixels } from './tiffReader';
+import { renderLstToCanvas, renderRGBBasemapToCanvas, type PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
-import { t } from './i18n';
+import { boundsExtent, rasterBoundsToWgs84, type RasterBounds } from './rasterGeo';
 
-function App({ hostApp: _hostApp }: { hostApp?: any }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  
-  const [lang, setLang] = useState<'pt' | 'en'>('pt');
-  const text = t[lang];
+type Lang = 'pt' | 'en';
+type Theme = 'light' | 'dark';
+type Provider = 'osm' | 'esri';
+type RasterState = { data: Float32Array; width: number; height: number; bounds: RasterBounds; origin: number[]; resolution: number[]; epsg: number; isProjected: boolean; stats: { min: number; max: number; mean: number; stdDev: number }; ndvi: Float32Array; ndbi: Float32Array; fileName: string; bands: number };
+const COLAB_URL = 'https://colab.research.google.com/drive/1uKJohUXOqTmbNDZY7N8qVzyk1_laBKIg?usp=sharing';
+const TILE_URLS: Record<Provider, string> = { osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', esri: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' };
+const copy = {
+  pt: { eyebrow: 'OPEN SOURCE • GIS WEB', title: 'SR2D4 / LST Explorer', subtitle: 'Um laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.', colab: 'Abrir processamento no Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor', bands: 'Bandas de entrada', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)', calculate: 'Calcular mapa térmico', processing: 'Processando raster…', layers: 'Camadas', lst: 'LST / temperatura', optical: 'Imagem óptica', opacity: 'Transparência', contrast: 'Contraste', palette: 'Paleta', stats: 'Resumo estatístico', min: 'mínima', max: 'máxima', mean: 'média', std: 'desvio', histogram: 'Distribuição térmica', sample: 'Amostra', aoi: 'Área de interesse', draw: 'Desenhar AOI', clear: 'Limpar AOI', clip: 'Recortar AOI', export: 'Exportar', png: 'PNG composto', tiff: 'GeoTIFF LST', uhi: 'GeoTIFF UHI', method: 'Metodologia', help: 'Como usar', metadata: 'Metadados', theme: 'Tema', basemap: 'Mapa-base', ready: 'Pronto', error: 'Não foi possível processar o raster. Verifique se o arquivo contém pelo menos três bandas.', methodText: 'O fluxo combina o produto SR2D4 com índices ópticos e uma regressão TsHARP para estimar a distribuição espacial da LST. O detalhe espacial é estimado: a super-resolução não cria observações térmicas independentes em cada novo pixel. Valide os resultados com dados de campo.', helpText: '1. Gere o produto MS no Colab. 2. Carregue o GeoTIFF aqui. 3. Confirme Red/NIR/SWIR. 4. Calcule e explore o mapa. 5. Use AOI, estatísticas e exportações para documentar a análise.', uhiText: 'Classes UHI por desvio-padrão: fria, leve, moderada e extrema.', noData: 'Carregue um GeoTIFF para começar' },
+  en: { eyebrow: 'OPEN SOURCE • WEB GIS', title: 'SR2D4 / LST Explorer', subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.', colab: 'Open Colab processing', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server', bands: 'Input bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)', calculate: 'Calculate thermal map', processing: 'Processing raster…', layers: 'Layers', lst: 'LST / temperature', optical: 'Optical image', opacity: 'Opacity', contrast: 'Contrast', palette: 'Palette', stats: 'Statistics', min: 'minimum', max: 'maximum', mean: 'mean', std: 'std dev', histogram: 'Temperature distribution', sample: 'Sample', aoi: 'Area of interest', draw: 'Draw AOI', clear: 'Clear AOI', clip: 'Clip AOI', export: 'Export', png: 'Composite PNG', tiff: 'LST GeoTIFF', uhi: 'UHI GeoTIFF', method: 'Methodology', help: 'How it works', metadata: 'Metadata', theme: 'Theme', basemap: 'Basemap', ready: 'Ready', error: 'Raster processing failed. Check that the file contains at least three bands.', methodText: 'The workflow combines SR2D4 imagery with optical indices and a TsHARP regression to estimate the spatial distribution of LST. Spatial detail is estimated: super-resolution does not create independent thermal observations for every new pixel. Validate results with field data.', helpText: '1. Generate the MS product in Colab. 2. Load the GeoTIFF here. 3. Confirm Red/NIR/SWIR. 4. Calculate and explore the map. 5. Use AOIs, statistics and exports to document the analysis.', uhiText: 'UHI classes by standard deviation: cool, light, moderate and extreme.', noData: 'Load a GeoTIFF to begin' }
+} as const;
 
-  const [mapStats, setMapStats] = useState<{ 
-    min: number; max: number; mean: number; stdDev: number; 
-    width: number; height: number; data: Float32Array; landsatMeta: any; 
-    origin: number[]; resolution: number[]; epsg: number; isProjected: boolean;
-  } | null>(null);
-
-  const [zoom, setZoom] = useState<number>(1);
-  const [hoverTemp, setHoverTemp] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
-
-  const [palette, setPalette] = useState<PaletteType>('ironbow');
-  const [opacity, setOpacity] = useState<number>(0.7);
-  const [customColors, setCustomColors] = useState<string[]>(['#000080', '#0000ff', '#00ff00', '#ffff00', '#ff0000']);
-  const [debouncedCustomColors, setDebouncedCustomColors] = useState<string[]>(customColors);
-  
-  const [showMethodology, setShowMethodology] = useState(false);
-  const [showHowToUse, setShowHowToUse] = useState(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedCustomColors(customColors), 150);
-    return () => clearTimeout(timer);
-  }, [customColors]);
-
-  useEffect(() => {
-    if (mapStats && canvasRef.current) {
-      renderLstToCanvas(mapStats.data, mapStats.width, mapStats.height, canvasRef.current, palette, debouncedCustomColors);
-    }
-  }, [palette, debouncedCustomColors, mapStats]);
-
-  useEffect(() => {
-    const div = scrollRef.current;
-    if (!div) return;
-    const handleNativeWheel = (e: WheelEvent) => { e.preventDefault(); setZoom(prev => Math.min(10, Math.max(0.1, prev - e.deltaY * 0.002))); };
-    div.addEventListener('wheel', handleNativeWheel, { passive: false });
-    return () => div.removeEventListener('wheel', handleNativeWheel);
-  }, []);
-
-  const handleExportPNG = () => {
-    if (canvasRef.current && bgCanvasRef.current && mapStats) {
-      const mergeCanvas = document.createElement('canvas');
-      mergeCanvas.width = canvasRef.current.width; mergeCanvas.height = canvasRef.current.height;
-      const ctx = mergeCanvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(bgCanvasRef.current, 0, 0); ctx.globalAlpha = opacity; ctx.drawImage(canvasRef.current, 0, 0); ctx.globalAlpha = 1.0;
-
-        const legW = 320; const legH = palette === 'uhi' ? 140 : 100;
-        const legX = mergeCanvas.width - legW - 30; const legY = mergeCanvas.height - legH - 30;
-
-        ctx.fillStyle = 'rgba(30, 30, 30, 0.9)'; ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(legX, legY, legW, legH, 10); else ctx.rect(legX, legY, legW, legH);
-        ctx.fill(); ctx.strokeStyle = '#444'; ctx.lineWidth = 2; ctx.stroke();
-
-        ctx.fillStyle = '#fff'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(text.legend, legX + legW / 2, legY + 25);
-
-        if (palette === 'uhi') {
-          ctx.textAlign = 'left'; ctx.font = '14px sans-serif'; const startY = legY + 45;
-          ctx.fillStyle = '#1a9641'; ctx.fillRect(legX + 20, startY, 15, 15); ctx.fillStyle = '#fff'; ctx.fillText(`${text.uhiClass1} (< ${mapStats.mean.toFixed(1)}°C)`, legX + 45, startY + 13);
-          ctx.fillStyle = '#fee08b'; ctx.fillRect(legX + 20, startY + 20, 15, 15); ctx.fillStyle = '#fff'; ctx.fillText(`${text.uhiClass2} (até ${(mapStats.mean + 0.5 * mapStats.stdDev).toFixed(1)}°C)`, legX + 45, startY + 33);
-          ctx.fillStyle = '#fdae61'; ctx.fillRect(legX + 20, startY + 40, 15, 15); ctx.fillStyle = '#fff'; ctx.fillText(`${text.uhiClass3} (até ${(mapStats.mean + 1.5 * mapStats.stdDev).toFixed(1)}°C)`, legX + 45, startY + 53);
-          ctx.fillStyle = '#d7191c'; ctx.fillRect(legX + 20, startY + 60, 15, 15); ctx.fillStyle = '#fff'; ctx.fillText(`${text.uhiClass4} (>= ${(mapStats.mean + 1.5 * mapStats.stdDev).toFixed(1)}°C)`, legX + 45, startY + 73);
-        } else {
-          const grad = ctx.createLinearGradient(legX + 20, 0, legX + legW - 20, 0);
-          if (palette === 'jet') { grad.addColorStop(0, '#000082'); grad.addColorStop(0.25, '#00ffff'); grad.addColorStop(0.5, '#00ff00'); grad.addColorStop(0.75, '#ffff00'); grad.addColorStop(1, '#ff0000'); }
-          else if (palette === 'spectral') { grad.addColorStop(0, 'rgb(94,79,162)'); grad.addColorStop(0.2, 'rgb(50,136,189)'); grad.addColorStop(0.4, 'rgb(102,194,165)'); grad.addColorStop(0.6, 'rgb(253,212,134)'); grad.addColorStop(0.8, 'rgb(244,109,67)'); grad.addColorStop(1, 'rgb(158,1,66)'); }
-          else if (palette === 'grayscale') { grad.addColorStop(0, 'black'); grad.addColorStop(1, 'white'); }
-          else if (palette === 'custom') { debouncedCustomColors.forEach((c, i) => grad.addColorStop(i / (debouncedCustomColors.length - 1), c)); }
-          else { grad.addColorStop(0, 'rgb(0,0,130)'); grad.addColorStop(0.25, 'rgb(120,0,120)'); grad.addColorStop(0.5, 'rgb(204,0,0)'); grad.addColorStop(0.75, 'rgb(255,204,0)'); grad.addColorStop(1, 'rgb(255,255,255)'); }
-          ctx.fillStyle = grad; ctx.fillRect(legX + 20, legY + 45, legW - 40, 20);
-          ctx.fillStyle = '#fff'; ctx.font = '14px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(`Min: ${mapStats.min.toFixed(1)}°C`, legX + 20, legY + 85); ctx.textAlign = 'right'; ctx.fillText(`Max: ${mapStats.max.toFixed(1)}°C`, legX + legW - 20, legY + 85);
-        }
-      }
-      const link = document.createElement("a"); link.href = mergeCanvas.toDataURL("image/png"); link.download = `LST_Export_${palette}.png`; link.click();
-    }
-  };
-
-  const handleExportLstTIF = () => {
-    if (mapStats) {
-      alert(`A exportar TIF (EPSG:${mapStats.epsg})...`);
-      setTimeout(() => downloadFloat32Tiff(mapStats.data, mapStats.width, mapStats.height, "LST_Downscaled_1m.tif", mapStats.origin, mapStats.resolution, mapStats.epsg, mapStats.isProjected), 100);
-    }
-  };
-
-  const handleExportUhiTIF = () => {
-    if (mapStats) {
-      alert(`A exportar TIF UHI (EPSG:${mapStats.epsg})...`);
-      setTimeout(() => downloadUhiTiff(mapStats.data, mapStats.width, mapStats.height, "UHI_Classified_1m.tif", mapStats.origin, mapStats.resolution, mapStats.epsg, mapStats.isProjected, mapStats.mean, mapStats.stdDev), 100);
-    }
-  };
-
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!scrollRef.current) return; setIsDragging(true);
-    setDragStart({ x: e.pageX - scrollRef.current.offsetLeft, y: e.pageY - scrollRef.current.offsetTop, scrollLeft: scrollRef.current.scrollLeft, scrollTop: scrollRef.current.scrollTop });
-  };
-  const handleMouseUp = () => setIsDragging(false);
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!mapStats || !canvasRef.current || !scrollRef.current) return;
-    if (isDragging) { e.preventDefault(); scrollRef.current.scrollLeft = dragStart.scrollLeft - (e.pageX - scrollRef.current.offsetLeft - dragStart.x); scrollRef.current.scrollTop = dragStart.scrollTop - (e.pageY - scrollRef.current.offsetTop - dragStart.y); setHoverTemp(null); return; }
-    const rect = canvasRef.current.getBoundingClientRect(); const x = Math.floor((e.clientX - rect.left) * (canvasRef.current.width / rect.width)); const y = Math.floor((e.clientY - rect.top) * (canvasRef.current.height / rect.height));
-    if (x >= 0 && x < mapStats.width && y >= 0 && y < mapStats.height) { const temp = mapStats.data[y * mapStats.width + x]; setHoverTemp(isNaN(temp) ? null : temp); } else setHoverTemp(null);
-  };
-
-  const getLegendGradient = () => {
-    if (palette === 'jet') return 'linear-gradient(to right, #000082, #00ffff, #00ff00, #ffff00, #ff0000)';
-    if (palette === 'spectral') return 'linear-gradient(to right, rgb(94,79,162), rgb(50,136,189), rgb(102,194,165), rgb(253,212,134), rgb(244,109,67), rgb(158,1,66))';
-    if (palette === 'grayscale') return 'linear-gradient(to right, black, white)';
-    if (palette === 'custom') return `linear-gradient(to right, ${debouncedCustomColors.join(', ')})`;
-    return 'linear-gradient(to right, rgb(0,0,130), rgb(120,0,120), rgb(204,0,0), rgb(255,204,0), rgb(255,255,255))';
-  };
-
-  return (
-    <div style={{ position: 'relative', zIndex: 2, display: 'flex', width: '100vw', height: '100vh', margin: 0, padding: 0, backgroundColor: '#e7eaee', pointerEvents: 'auto' }}>
-      <div style={{ width: '350px', height: '100%', borderRight: '2px solid #333', backgroundColor: '#f9f9f9', overflowY: 'auto', zIndex: 10 }}>
-        <Panel canvasRef={canvasRef} bgCanvasRef={bgCanvasRef} onStatsChange={setMapStats} lang={lang} setLang={setLang} onOpenMethodology={() => setShowMethodology(true)} onOpenHowToUse={() => setShowHowToUse(true)} useHostMap={false} />
-      </div>
-
-      <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-        {!mapStats && <div style={{ textAlign: 'center', color: '#aaa' }}><h2>{text.mapArea}</h2><p>{text.mapDesc}</p></div>}
-
-        {mapStats && (
-          <div style={{ position: 'absolute', top: '15px', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '10px', zIndex: 5, width: '95%' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', backgroundColor: 'rgba(42, 42, 42, 0.9)', padding: '8px', borderRadius: '8px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
-              <select value={palette} onChange={(e) => setPalette(e.target.value as PaletteType)} style={{ ...btnStyle, backgroundColor: '#222', border: '1px solid #555' }}><option value="ironbow">🔥 Ironbow</option><option value="spectral">🌌 Spectral</option><option value="jet">🌈 Jet</option><option value="grayscale">🌑 Grayscale</option><option value="custom">{text.custom}</option><option value="uhi">{text.uhiMode}</option></select>
-              {palette === 'custom' && <div style={{ display: 'flex', gap: '2px' }}>{customColors.map((c, i) => <input key={i} type="color" value={c} onChange={(e) => { const newC = [...customColors]; newC[i] = e.target.value; setCustomColors(newC); }} style={{ width: '25px', height: '25px', padding: 0, border: 'none', cursor: 'pointer' }} title={`Cor ${i+1}`} />)}</div>}
-              <div style={{ width: '1px', height: '20px', backgroundColor: '#666', margin: '0 5px' }}></div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'white', fontSize: '13px', fontWeight: 'bold' }}>{text.transp} <input type="range" min="0" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(parseFloat(e.target.value))} style={{ width: '60px', cursor: 'pointer' }} /></div>
-              <div style={{ width: '1px', height: '20px', backgroundColor: '#666', margin: '0 5px' }}></div>
-              <button onClick={() => setZoom(z => Math.max(0.2, z - 0.2))} style={btnStyle}>➖</button><button onClick={() => setZoom(1)} style={btnStyle}>{text.reset}</button><button onClick={() => setZoom(z => Math.min(10, z + 0.2))} style={btnStyle}>➕</button>
-              <div style={{ width: '1px', height: '20px', backgroundColor: '#666', margin: '0 5px' }}></div>
-              <button onClick={handleExportPNG} style={{...btnStyle, backgroundColor: '#28a745'}}>{text.exportPng}</button>
-              <button onClick={handleExportLstTIF} style={{...btnStyle, backgroundColor: '#ffc107', color: 'black'}}>{text.exportLstTif}</button>
-              <button onClick={handleExportUhiTIF} style={{...btnStyle, backgroundColor: '#dc3545', color: 'white'}}>{text.exportUhiTif}</button>
-            </div>
-          </div>
-        )}
-
-        {mapStats?.landsatMeta && (
-          <div style={{ position: 'absolute', top: '80px', left: '20px', backgroundColor: 'rgba(20, 20, 20, 0.85)', padding: '12px', borderRadius: '8px', color: '#00ff88', border: '1px solid #333', fontSize: '12px', zIndex: 5 }}>
-            <h4 style={{ margin: '0 0 5px 0', color: '#fff' }}>{text.landsatBox}</h4><div><b>{text.scene}</b> {mapStats.landsatMeta.id}</div><div><b>{text.date}</b> {new Date(mapStats.landsatMeta.date).toLocaleString()}</div><div><b>{text.clouds}</b> {mapStats.landsatMeta.cloud.toFixed(2)}%</div>
-          </div>
-        )}
-
-        {hoverTemp !== null && !isDragging && (
-           <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(0,0,0,0.8)', color: '#00ff88', padding: '10px 20px', borderRadius: '30px', fontSize: '24px', fontWeight: 'bold', zIndex: 10, pointerEvents: 'none' }}>🎯 {hoverTemp.toFixed(1)} °C</div>
-        )}
-
-        <div ref={scrollRef} style={{ display: mapStats ? 'block' : 'none', width: '100%', height: '100%', overflow: 'auto', cursor: isDragging ? 'grabbing' : 'grab' }} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onMouseMove={handleMouseMove}>
-          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 'min-content', minHeight: 'min-content' }}>
-            <div style={{ position: 'relative', border: '2px solid #555', borderRadius: '8px', transition: isDragging ? 'none' : 'transform 0.1s', transform: `scale(${zoom})`, transformOrigin: 'center center' }}><canvas ref={bgCanvasRef} style={{ display: 'block', pointerEvents: 'none' }} /><canvas ref={canvasRef} style={{ display: 'block', position: 'absolute', top: 0, left: 0, opacity: opacity, pointerEvents: 'none' }} /></div>
-          </div>
-        </div>
-
-        {mapStats && (
-          <div style={{ position: 'absolute', bottom: '30px', right: '30px', backgroundColor: 'rgba(30, 30, 30, 0.9)', padding: '15px', borderRadius: '8px', color: 'white', zIndex: 5, border: '1px solid #444', pointerEvents: 'none' }}>
-            <div style={{ textAlign: 'center', marginBottom: '8px', fontSize: '14px', fontWeight: 'bold' }}>{text.legend}</div>
-            {palette === 'uhi' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><div style={{ width: '16px', height: '16px', backgroundColor: '#1a9641', borderRadius: '3px' }}></div><span>{text.uhiClass1} (&lt; {mapStats.mean.toFixed(1)}°C)</span></div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><div style={{ width: '16px', height: '16px', backgroundColor: '#fee08b', borderRadius: '3px' }}></div><span>{text.uhiClass2} ({mapStats.mean.toFixed(1)}°C a {(mapStats.mean + 0.5 * mapStats.stdDev).toFixed(1)}°C)</span></div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><div style={{ width: '16px', height: '16px', backgroundColor: '#fdae61', borderRadius: '3px' }}></div><span>{text.uhiClass3} (+0.5σ a +1.5σ)</span></div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><div style={{ width: '16px', height: '16px', backgroundColor: '#d7191c', borderRadius: '3px' }}></div><span>{text.uhiClass4} (≥ {(mapStats.mean + 1.5 * mapStats.stdDev).toFixed(1)}°C)</span></div>
-                <div style={{ marginTop: '5px', fontSize: '10px', color: '#aaa', borderTop: '1px solid #444', paddingTop: '4px' }}>{text.uhiMean} {mapStats.mean.toFixed(2)}°C | {text.uhiStd} {mapStats.stdDev.toFixed(2)}°C</div>
-              </div>
-            ) : (
-              <><div style={{ width: '250px', height: '20px', background: getLegendGradient(), borderRadius: '10px', marginBottom: '5px', border: '1px solid #222' }}></div><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}><span>❄️ {mapStats.min.toFixed(1)}°C</span><span>🔥 {mapStats.max.toFixed(1)}°C</span></div></>
-            )}
-          </div>
-        )}
-
-        {showMethodology && (<div style={modalOverlayStyle}><div style={modalStyle}><h3>{text.methodology}</h3><p style={{textAlign: 'justify'}}>{text.methodText1}</p><p style={{textAlign: 'justify'}}>{text.methodText2}</p><button onClick={() => setShowMethodology(false)} style={{...btnStyle, marginTop: '10px'}}>{text.close}</button></div></div>)}
-        {showHowToUse && (<div style={modalOverlayStyle}><div style={modalStyle}><h3>{text.howToUse}</h3><ul style={{ textAlign: 'left', lineHeight: '1.6' }}><li>{text.useText1}</li><li>{text.useText2}</li><li>{text.useText3}</li><li>{text.useText4}</li><li>{text.useText5}</li></ul><button onClick={() => setShowHowToUse(false)} style={{...btnStyle, marginTop: '10px'}}>{text.understood}</button></div></div>)}
-      </div>
-    </div>
-  );
+export default function App() {
+  const [lang, setLang] = useState<Lang>(() => navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('lst-theme') as Theme) || 'dark');
+  const [provider, setProvider] = useState<Provider>('osm'); const [raster, setRaster] = useState<RasterState | null>(null);
+  const [lstUrl, setLstUrl] = useState<string | null>(null); const [opticalUrl, setOpticalUrl] = useState<string | null>(null);
+  const [visibleLst, setVisibleLst] = useState(true); const [visibleOptical, setVisibleOptical] = useState(true); const [opacity, setOpacity] = useState(.82); const [contrast, setContrast] = useState(.1); const [palette, setPalette] = useState<PaletteType>('ironbow');
+  const [file, setFile] = useState<File | null>(null); const [bands, setBands] = useState(['0', '1', '2']); const [busy, setBusy] = useState(false); const [status, setStatus] = useState(''); const [error, setError] = useState('');
+  const [sample, setSample] = useState<{ temp: number; lng: number; lat: number } | null>(null); const [showMethod, setShowMethod] = useState(false); const [showHelp, setShowHelp] = useState(false); const [showMeta, setShowMeta] = useState(false); const [aoi, setAoi] = useState<[number, number][]>([]); const [drawAoi, setDrawAoi] = useState(false);
+  const mapRef = useRef<HTMLDivElement>(null); const mapInstance = useRef<MapLibreMap | null>(null); const lstCanvas = useRef<HTMLCanvasElement | null>(null); const opticalCanvas = useRef<HTMLCanvasElement | null>(null); const t = copy[lang]; const extent = raster ? boundsExtent(raster.bounds) : null;
+  useEffect(() => { localStorage.setItem('lst-theme', theme); document.documentElement.dataset.theme = theme; }, [theme]);
+  const syncLayers = useCallback(() => { const map = mapInstance.current; if (!map || !raster || !lstUrl || !opticalUrl) return; const source = (url: string) => ({ type: 'image' as const, url, coordinates: raster.bounds }); if (map.getSource('lst-raster')) (map.getSource('lst-raster') as any).updateImage({ url: lstUrl, coordinates: raster.bounds }); else { map.addSource('lst-raster', source(lstUrl)); map.addLayer({ id: 'lst-layer', type: 'raster', source: 'lst-raster', paint: { 'raster-opacity': opacity, 'raster-contrast': contrast } }); } if (map.getSource('optical-raster')) (map.getSource('optical-raster') as any).updateImage({ url: opticalUrl, coordinates: raster.bounds }); else { map.addSource('optical-raster', source(opticalUrl)); map.addLayer({ id: 'optical-layer', type: 'raster', source: 'optical-raster', paint: { 'raster-opacity': 1 } }); } if (map.getLayer('lst-layer')) { map.setLayoutProperty('lst-layer', 'visibility', visibleLst ? 'visible' : 'none'); map.setPaintProperty('lst-layer', 'raster-opacity', opacity); map.setPaintProperty('lst-layer', 'raster-contrast', contrast); } if (map.getLayer('optical-layer')) map.setLayoutProperty('optical-layer', 'visibility', visibleOptical ? 'visible' : 'none'); }, [contrast, lstUrl, opacity, opticalUrl, raster, visibleLst, visibleOptical]);
+  useEffect(() => { if (!mapRef.current || mapInstance.current) return; const map = new maplibregl.Map({ container: mapRef.current, style: { version: 8, sources: { basemap: { type: 'raster', tiles: [TILE_URLS.osm], tileSize: 256, attribution: '© OpenStreetMap contributors' } }, layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }] }, center: [-46.63, -23.55], zoom: 4, attributionControl: false }); map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right'); map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right'); map.on('click', (event) => { if (drawAoi) { setAoi((prev) => prev.length >= 2 ? [[event.lngLat.lng, event.lngLat.lat]] : [...prev, [event.lngLat.lng, event.lngLat.lat]]); return; } if (!raster || !extent) return; const x = Math.floor(((event.lngLat.lng - extent.west) / (extent.east - extent.west)) * raster.width); const y = Math.floor(((extent.north - event.lngLat.lat) / (extent.north - extent.south)) * raster.height); if (x >= 0 && y >= 0 && x < raster.width && y < raster.height) { const temp = raster.data[y * raster.width + x]; if (Number.isFinite(temp)) setSample({ temp, lng: event.lngLat.lng, lat: event.lngLat.lat }); } }); mapInstance.current = map; return () => { map.remove(); mapInstance.current = null; }; }, [drawAoi, extent, raster]);
+  useEffect(() => { const source = mapInstance.current?.getSource('basemap') as any; if (source?.setTiles) source.setTiles([TILE_URLS[provider]]); }, [provider]); useEffect(() => { const map = mapInstance.current; if (!map || !raster || !lstUrl || !opticalUrl) return; if (map.isStyleLoaded()) syncLayers(); else map.once('load', syncLayers); return () => { map.off('load', syncLayers); }; }, [lstUrl, opticalUrl, raster, syncLayers]); useEffect(() => { if (raster && mapInstance.current && extent) mapInstance.current.fitBounds([[extent.west, extent.south], [extent.east, extent.north]], { padding: 70, duration: 850, maxZoom: 16 }); }, [extent, raster]);
+  const processFile = async () => { if (!file) return; setBusy(true); setError(''); setStatus(lang === 'pt' ? 'Lendo metadados do GeoTIFF…' : 'Reading GeoTIFF metadata…'); try { const tiff = await readTiffPixels(file); if (tiff.rasters.length < 3) throw new Error('three bands required'); const red = tiff.rasters[Number(bands[0])] as Float32Array; const nir = tiff.rasters[Number(bands[1])] as Float32Array; const swir = tiff.rasters[Number(bands[2])] as Float32Array; setStatus(lang === 'pt' ? 'Calculando NDVI, NDBI e TsHARP…' : 'Calculating NDVI, NDBI and TsHARP…'); await new Promise((r) => setTimeout(r, 30)); const indices = calculateOpticalIndices(red, nir, swir); const base = calculateThermalRadiance(red); const result = applyTsHARP(indices.ndvi, base.brightnessTempCelsius); const lst = document.createElement('canvas'); const optical = document.createElement('canvas'); const stats = renderLstToCanvas(result.lstDownscaled, tiff.width, tiff.height, lst, palette); renderRGBBasemapToCanvas(swir, nir, red, tiff.width, tiff.height, optical); if (!stats) throw new Error('empty raster'); const next: RasterState = { data: result.lstDownscaled, width: tiff.width, height: tiff.height, bounds: rasterBoundsToWgs84(tiff.origin, tiff.resolution, tiff.width, tiff.height, tiff.epsg), origin: tiff.origin, resolution: tiff.resolution, epsg: tiff.epsg, isProjected: tiff.isProjected, stats, ndvi: indices.ndvi, ndbi: indices.ndbi, fileName: file.name, bands: tiff.rasters.length }; lstCanvas.current = lst; opticalCanvas.current = optical; setRaster(next); setLstUrl(lst.toDataURL('image/png')); setOpticalUrl(optical.toDataURL('image/png')); setStatus(t.ready); } catch (e) { console.error(e); setError(t.error); setStatus(''); } finally { setBusy(false); } };
+  useEffect(() => { if (!raster) return; const canvas = document.createElement('canvas'); renderLstToCanvas(raster.data, raster.width, raster.height, canvas, palette); lstCanvas.current = canvas; setLstUrl(canvas.toDataURL('image/png')); }, [palette, raster]);
+  const histogram = useMemo(() => { if (!raster) return []; const bins = Array.from({ length: 10 }, () => 0); const range = raster.stats.max - raster.stats.min || 1; raster.data.forEach((v) => { if (Number.isFinite(v)) bins[Math.min(9, Math.floor(((v - raster.stats.min) / range) * 10))]++; }); const peak = Math.max(...bins, 1); return bins.map((value, i) => ({ value, height: Math.max(4, (value / peak) * 100), label: `${(raster.stats.min + ((raster.stats.max - raster.stats.min) * i) / 10).toFixed(0)}°` })); }, [raster]);
+  const exportPng = () => { if (!lstCanvas.current || !opticalCanvas.current) return; const canvas = document.createElement('canvas'); canvas.width = lstCanvas.current.width; canvas.height = lstCanvas.current.height; const ctx = canvas.getContext('2d'); if (!ctx) return; ctx.drawImage(opticalCanvas.current, 0, 0); ctx.globalAlpha = opacity; ctx.drawImage(lstCanvas.current, 0, 0); const a = document.createElement('a'); a.href = canvas.toDataURL('image/png'); a.download = 'SR2D4-LST-composite.png'; a.click(); };
+  const options = raster ? Array.from({ length: raster.bands }, (_, i) => <option value={i} key={i}>Band {i + 1}</option>) : <><option value="0">Band 1</option><option value="1">Band 2</option><option value="2">Band 3</option></>; const updateBand = (index: number, value: string) => setBands((prev) => prev.map((v, i) => i === index ? value : v)); const toggleAoi = () => { setDrawAoi((v) => !v); if (aoi.length === 2) setAoi([]); }; const uhiLevel = raster ? raster.stats.mean + 1.5 * raster.stats.stdDev : 0;
+  return <div className="app-shell"><header className="topbar"><div className="brand"><div className="brand-mark">◒</div><div><span className="eyebrow">{t.eyebrow}</span><h1>{t.title}</h1></div></div><div className="top-actions"><span className={`status-dot ${raster ? 'active' : ''}`}></span><span>{status || (raster ? t.ready : t.noData)}</span><button className="icon-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title={t.theme}>{theme === 'dark' ? '☼' : '◐'}</button><button className="lang-button" onClick={() => setLang(lang === 'pt' ? 'en' : 'pt')}>{lang === 'pt' ? 'EN' : 'PT'}</button></div></header><div className="intro-strip"><div><strong>{t.subtitle}</strong><span>{raster ? `${raster.fileName} · ${raster.width.toLocaleString()} × ${raster.height.toLocaleString()} px · EPSG:${raster.epsg}` : 'Local-first analysis for SR2D4 multispectral products'}</span></div><a className="colab-button" href={COLAB_URL} target="_blank" rel="noreferrer">↗ {t.colab}</a></div><main className="workspace"><section className="map-stage"><div ref={mapRef} className="map-container"></div>{!raster && <div className="map-empty"><div className="empty-orbit">◌</div><h2>{t.noData}</h2><p>{t.uploadHint}</p></div>}{sample && <div className="sample-card"><span>{t.sample}</span><strong>{sample.temp.toFixed(1)}°C</strong><small>{sample.lat.toFixed(4)}, {sample.lng.toFixed(4)}</small></div>}{raster && <div className="map-legend"><span>{t.lst}</span><div className="legend-gradient"></div><div><b>{raster.stats.min.toFixed(1)}°</b><b>{raster.stats.max.toFixed(1)}°</b></div></div>}<div className="map-tools"><button className={drawAoi ? 'active' : ''} onClick={toggleAoi}>⌗ {drawAoi ? t.clear : t.draw}</button>{aoi.length === 2 && <button onClick={() => { setAoi([]); setDrawAoi(false); }}>× {t.clear}</button>}</div></section><aside className="control-rail"><div className="rail-scroll"><section className="rail-card hero-card"><div className="card-kicker">01 / INPUT</div><h2>{t.upload}</h2><p>{t.uploadHint}</p><label className="file-drop"><input type="file" accept=".tif,.tiff" onChange={(e) => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">↑</span><strong>{file ? file.name : 'Choose GeoTIFF'}</strong><small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : 'TIFF / BigTIFF supported by GeoTIFF reader'}</small></label><div className="band-grid"><h3>{t.bands}</h3><label>{t.red}<select value={bands[0]} onChange={(e) => updateBand(0, e.target.value)}>{options}</select></label><label>{t.nir}<select value={bands[1]} onChange={(e) => updateBand(1, e.target.value)}>{options}</select></label><label>{t.swir}<select value={bands[2]} onChange={(e) => updateBand(2, e.target.value)}>{options}</select></label></div><button className="primary-button" onClick={processFile} disabled={!file || busy}>{busy ? t.processing : t.calculate}<span>→</span></button>{error && <div className="error-box">{error}</div>}</section><section className="rail-card"><div className="card-heading"><h3>{t.layers}</h3><span className="chip">{raster ? '2' : '0'}</span></div><LayerRow label={t.lst} visible={visibleLst} onToggle={() => setVisibleLst(!visibleLst)} color="thermal" /><LayerRow label={t.optical} visible={visibleOptical} onToggle={() => setVisibleOptical(!visibleOptical)} color="optical" /><div className="control-row"><span>{t.basemap}</span><select value={provider} onChange={(e) => setProvider(e.target.value as Provider)}><option value="osm">OpenStreetMap</option><option value="esri">Esri World Imagery</option></select></div><div className="control-row"><span>{t.opacity}</span><input type="range" min="0" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /></div><div className="control-row"><span>{t.contrast}</span><input type="range" min="-1" max="1" step="0.05" value={contrast} onChange={(e) => setContrast(Number(e.target.value))} /></div><div className="control-row"><span>{t.palette}</span><select value={palette} onChange={(e) => setPalette(e.target.value as PaletteType)}><option value="ironbow">Ironbow</option><option value="spectral">Spectral</option><option value="jet">Jet</option><option value="grayscale">Grayscale</option><option value="uhi">UHI classes</option></select></div></section>{raster && <><section className="rail-card"><div className="card-heading"><h3>{t.stats}</h3><span className="chip">°C</span></div><div className="metric-grid"><Metric label={t.min} value={raster.stats.min.toFixed(1)} /><Metric label={t.mean} value={raster.stats.mean.toFixed(1)} /><Metric label={t.max} value={raster.stats.max.toFixed(1)} /><Metric label={t.std} value={raster.stats.stdDev.toFixed(2)} /></div><h4>{t.histogram}</h4><div className="histogram">{histogram.map((bar) => <div className="bar-wrap" key={bar.label}><div className="bar" style={{ height: `${bar.height}%` }}></div><small>{bar.label}</small></div>)}</div><p className="microcopy">{t.uhiText} {raster.stats.max >= uhiLevel ? `Hotspot threshold: ${uhiLevel.toFixed(1)}°C` : ''}</p></section><section className="rail-card"><div className="card-heading"><h3>{t.aoi}</h3><span className="chip">{aoi.length === 2 ? 'active' : '—'}</span></div><p className="microcopy">{aoi.length === 2 ? `${t.clip}: ${aoi[0][0].toFixed(3)}, ${aoi[0][1].toFixed(3)} → ${aoi[1][0].toFixed(3)}, ${aoi[1][1].toFixed(3)}` : (lang === 'pt' ? 'Desenhe uma AOI com dois cliques no mapa.' : 'Draw an AOI with two clicks on the map.')}</p><div className="button-row"><button onClick={toggleAoi}>{t.draw}</button><button disabled={aoi.length !== 2} onClick={() => { setAoi([]); setDrawAoi(false); }}>{t.clip}</button></div></section><section className="rail-card"><div className="card-heading"><h3>{t.export}</h3></div><div className="export-grid"><button onClick={exportPng}>{t.png}</button><button onClick={() => downloadFloat32Tiff(raster.data, raster.width, raster.height, 'LST-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected)}>{t.tiff}</button><button onClick={() => downloadUhiTiff(raster.data, raster.width, raster.height, 'UHI-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected, raster.stats.mean, raster.stats.stdDev)}>{t.uhi}</button></div></section></>}<section className="rail-card utility-links"><button onClick={() => setShowMethod(true)}>◈ {t.method}</button><button onClick={() => setShowHelp(true)}>？ {t.help}</button><button onClick={() => setShowMeta(true)} disabled={!raster}>⌁ {t.metadata}</button></section></div></aside></main>{(showMethod || showHelp || showMeta) && <div className="dialog-backdrop" onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); }}><div className="dialog-card" onClick={(e) => e.stopPropagation()}><button className="dialog-close" onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); }}>×</button><div className="card-kicker">SR2D4 / LST EXPLORER</div><h2>{showMethod ? t.method : showHelp ? t.help : t.metadata}</h2>{showMethod && <p>{t.methodText}</p>}{showHelp && <p>{t.helpText}</p>}{showMeta && raster && <div className="meta-list"><span><b>File</b>{raster.fileName}</span><span><b>Dimensions</b>{raster.width} × {raster.height}</span><span><b>EPSG</b>{raster.epsg}</span><span><b>Bounds</b>{extent?.west.toFixed(4)}, {extent?.south.toFixed(4)} → {extent?.east.toFixed(4)}, {extent?.north.toFixed(4)}</span><span><b>Bands</b>{raster.bands}</span></div>}</div></div>}</div>;
 }
-
-export default App;
-
-const btnStyle: React.CSSProperties = { padding: '6px 12px', backgroundColor: '#444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', outline: 'none', fontSize: '13px' };
-const modalOverlayStyle: React.CSSProperties = { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 };
-const modalStyle: React.CSSProperties = { backgroundColor: '#fff', color: '#333', padding: '30px', borderRadius: '8px', maxWidth: '400px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' };
+function LayerRow({ label, visible, onToggle, color }: { label: string; visible: boolean; onToggle: () => void; color: string }) { return <button className="layer-row" onClick={onToggle}><span className={`layer-swatch ${color}`}></span><span>{label}</span><span className="layer-state">{visible ? '◉' : '○'}</span></button>; }
+function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><small>{label}</small><strong>{value}</strong></div>; }

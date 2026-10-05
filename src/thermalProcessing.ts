@@ -39,7 +39,7 @@ export function calculateThermalRadiance(baseArray: Float32Array): {
     }
 
     // Normaliza de 0 a 1 e inverte (já que muita luz NIR/Red geralmente indica menos calor na proxy)
-    let normalized = (val - minVal) / valRange;
+    const normalized = (val - minVal) / valRange;
     
     // Calcula a temperatura simulada
     const tempCelsius = tempMin + (normalized * (tempMax - tempMin));

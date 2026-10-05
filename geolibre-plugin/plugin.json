@@ -1,6 +1,0 @@
-{
-  "id": "lst-super-resolution",
-  "name": "LST Super-Resolution (SR2D4)",
-  "version": "1.0.3",
-  "entry": "index.js"
-}
