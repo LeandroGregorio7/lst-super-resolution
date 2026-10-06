@@ -1,6 +1,6 @@
 // src/colorMapper.ts
 
-export type PaletteType = 'ironbow' | 'spectral' | 'jet' | 'grayscale' | 'custom' | 'uhi';
+export type PaletteType = 'ironbow' | 'spectral' | 'jet' | 'grayscale' | 'magma' | 'viridis' | 'coolwarm' | 'terrain' | 'custom' | 'uhi';
 
 export function renderLstToCanvas(
   lstData: Float32Array, width: number, height: number, canvas: HTMLCanvasElement,
@@ -80,7 +80,18 @@ function getThermalColor(rawVal: number, v: number, palette: PaletteType, custom
   ] : palette === 'jet' ? [
     { p: 0.0, r: 0, g: 0, b: 130 }, { p: 0.25, r: 0, g: 255, b: 255 },
     { p: 0.5, r: 0, g: 255, b: 0 }, { p: 0.75, r: 255, g: 255, b: 0 }, { p: 1.0, r: 255, g: 0, b: 0 }
-  ] : palette === 'custom' ? customRgb.map((c, i) => ({ p: i / (customRgb.length - 1), ...c })) 
+  ] : palette === 'magma' ? [
+    { p: 0.0, r: 0, g: 0, b: 4 }, { p: 0.2, r: 52, g: 15, b: 75 },
+    { p: 0.4, r: 123, g: 32, b: 107 }, { p: 0.6, r: 202, g: 70, b: 74 },
+    { p: 0.8, r: 251, g: 140, b: 60 }, { p: 1.0, r: 252, g: 253, b: 191 }
+  ] : palette === 'viridis' ? [
+    { p: 0.0, r: 68, g: 1, b: 84 }, { p: 0.25, r: 59, g: 82, b: 139 },
+    { p: 0.5, r: 33, g: 145, b: 140 }, { p: 0.75, r: 94, g: 201, b: 98 }, { p: 1.0, r: 253, g: 231, b: 37 }
+  ] : palette === 'coolwarm' ? [
+    { p: 0.0, r: 59, g: 76, b: 192 }, { p: 0.5, r: 221, g: 221, b: 221 }, { p: 1.0, r: 180, g: 4, b: 38 }
+  ] : palette === 'terrain' ? [
+    { p: 0.0, r: 34, g: 94, b: 168 }, { p: 0.35, r: 83, g: 168, b: 93 }, { p: 0.65, r: 220, g: 190, b: 104 }, { p: 1.0, r: 139, g: 38, b: 31 }
+  ] : palette === 'custom' ? customRgb.map((c, i) => ({ p: i / Math.max(customRgb.length - 1, 1), ...c }))
   : [
     { p: 0.0, r: 0, g: 0, b: 130 }, { p: 0.25, r: 120, g: 0, b: 120 },
     { p: 0.5, r: 204, g: 0, b: 0 }, { p: 0.75, r: 255, g: 204, b: 0 }, { p: 1.0, r: 255, g: 255, b: 255 }
@@ -110,16 +121,26 @@ export function renderRGBBasemapToCanvas(
   const imageData = ctx.createImageData(width, height);
   const data = imageData.data;
 
-  let min = Infinity, max = -Infinity;
-  for (let i = 0; i < band1.length; i+=100) { if (band1[i] > 0 && band1[i] < min) min = band1[i]; if (band1[i] > max) max = band1[i]; }
-  const range = max - min || 1;
+  const stretch = (band: Float32Array) => {
+    const samples: number[] = [];
+    for (let i = 0; i < band.length; i += Math.max(1, Math.floor(band.length / 5000))) {
+      if (Number.isFinite(band[i])) samples.push(band[i]);
+    }
+    if (!samples.length) return { min: 0, max: 1 };
+    samples.sort((a, b) => a - b);
+    const low = samples[Math.floor(samples.length * 0.02)];
+    const high = samples[Math.floor(samples.length * 0.98)] || low + 1;
+    return { min: low, max: high > low ? high : low + 1 };
+  };
+  const redStretch = stretch(band1); const greenStretch = stretch(band2); const blueStretch = stretch(band3);
+  const scale = (value: number, limits: { min: number; max: number }) => Math.round(Math.min(Math.max((value - limits.min) / (limits.max - limits.min), 0), 1) * 255);
 
   for (let i = 0; i < band1.length; i++) {
     const idx = i * 4;
     if (band1[i] <= 0 || isNaN(band1[i])) { data[idx+3] = 0; continue; }
-    data[idx] = Math.round(Math.min(Math.max((band1[i] - min) / range, 0), 1) * 255);
-    data[idx+1] = Math.round(Math.min(Math.max((band2[i] - min) / range, 0), 1) * 255);
-    data[idx+2] = Math.round(Math.min(Math.max((band3[i] - min) / range, 0), 1) * 255);
+    data[idx] = scale(band1[i], redStretch);
+    data[idx+1] = scale(band2[i], greenStretch);
+    data[idx+2] = scale(band3[i], blueStretch);
     data[idx+3] = 255; 
   }
   ctx.putImageData(imageData, 0, 0);
