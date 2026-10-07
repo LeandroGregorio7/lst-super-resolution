@@ -33,7 +33,7 @@ function classify(value: number, mean: number, stdDev: number): UhiProperties['c
 
 /**
  * Creates a compact vector surface from the LST raster. A 3x3 neighborhood
- * average reduces pixel noise before vectorizing a maximum 48x48 grid. This
+ * average reduces pixel noise before vectorizing a maximum 96x96 grid. This
  * is a reproducible browser-side spatial estimate, not a replacement for
  * kriging or field observations.
  */
@@ -44,8 +44,8 @@ export function buildUhiSurface(input: SurfaceInput): UhiSurface {
     south: Math.min(...input.bounds.map((point) => point[1])),
     north: Math.max(...input.bounds.map((point) => point[1])),
   };
-  const columns = Math.min(48, Math.max(8, Math.ceil(input.width / Math.max(1, Math.ceil(input.width / 48)))));
-  const rows = Math.min(48, Math.max(8, Math.ceil(input.height / Math.max(1, Math.ceil(input.height / 48)))));
+  const columns = Math.min(96, Math.max(12, Math.ceil(input.width / Math.max(1, Math.ceil(input.width / 96)))));
+  const rows = Math.min(96, Math.max(12, Math.ceil(input.height / Math.max(1, Math.ceil(input.height / 96)))));
   const features: UhiSurface['features'] = [];
   const sample = (x: number, y: number) => {
     let total = 0;
