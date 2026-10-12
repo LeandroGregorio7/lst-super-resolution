@@ -1,38 +1,27 @@
-// src/opticalIndices.ts
+// Índices espectrais do SR2D4 em resolução fina.
+export type OpticalIndices = { ndvi: Float32Array; ndbi: Float32Array; ndwi: Float32Array };
 
-/**
- * Módulo de Extração de Parâmetros Ópticos (1m) do SR2D4
- */
+function normalizedDifference(a: number, b: number) {
+  const denominator = a + b;
+  return Math.abs(denominator) > 1e-8 ? (a - b) / denominator : NaN;
+}
+
 export function calculateOpticalIndices(
-  bandRed: Float32Array,  // Banda 4 (Vermelho)
-  bandNir: Float32Array,  // Banda 8 (NIR)
-  bandSwir: Float32Array  // Banda 11 (SWIR)
-): { ndvi: Float32Array, ndbi: Float32Array } {
-  
-  const totalPixels = bandRed.length;
-  
-  const ndviArray = new Float32Array(totalPixels);
-  const ndbiArray = new Float32Array(totalPixels);
-
-  for (let i = 0; i < totalPixels; i++) {
+  bandRed: Float32Array,
+  bandNir: Float32Array,
+  bandSwir: Float32Array,
+): OpticalIndices {
+  if (bandRed.length !== bandNir.length || bandRed.length !== bandSwir.length) throw new Error('As bandas ópticas precisam ter a mesma grade.');
+  const ndvi = new Float32Array(bandRed.length);
+  const ndbi = new Float32Array(bandRed.length);
+  const ndwi = new Float32Array(bandRed.length);
+  for (let i = 0; i < bandRed.length; i += 1) {
     const red = bandRed[i];
     const nir = bandNir[i];
     const swir = bandSwir[i];
-
-    // 1. Cálculo do NDVI: Vegetação
-    if (nir + red === 0) {
-      ndviArray[i] = 0; 
-    } else {
-      ndviArray[i] = (nir - red) / (nir + red);
-    }
-
-    // 2. Cálculo do NDBI: Área Construída / Solo Exposto
-    if (swir + nir === 0) {
-      ndbiArray[i] = 0;
-    } else {
-      ndbiArray[i] = (swir - nir) / (swir + nir);
-    }
+    ndvi[i] = normalizedDifference(nir, red);
+    ndbi[i] = normalizedDifference(swir, nir);
+    ndwi[i] = normalizedDifference(nir, swir);
   }
-
-  return { ndvi: ndviArray, ndbi: ndbiArray };
+  return { ndvi, ndbi, ndwi };
 }
