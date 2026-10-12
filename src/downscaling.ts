@@ -1,67 +1,65 @@
 // src/downscaling.ts
 
-/**
- * Aplica o algoritmo TsHARP (Regressão Linear) para fazer o downscaling da Temperatura.
- * Cruzamos o detalhe do NDVI (1m) com a Temperatura (LST).
- */
-export function applyTsHARP(ndvi1m: Float32Array, lstBase: Float32Array): {
+export type TsHarpResult = {
   lstDownscaled: Float32Array;
   slope: number;
   intercept: number;
-} {
-  const totalPixels = ndvi1m.length;
-  
-  // Array que vai guardar a nossa nova temperatura de 1 metro
-  const lstDownscaled = new Float32Array(totalPixels);
+  r2: number;
+  sharpened: false;
+  validCount: number;
+};
 
-  console.log("📐 A iniciar o treino do modelo TsHARP (Regressão Linear)...");
-
-  // --- 1. Calcular as Médias ---
-  let sumNdvi = 0;
-  let sumLst = 0;
-  let validPixels = 0;
-
-  for (let i = 0; i < totalPixels; i++) {
-    // Ignoramos píxeis vazios, água ou nuvens extremas (NDVI < 0)
-    if (ndvi1m[i] > 0 && !isNaN(lstBase[i])) {
-      sumNdvi += ndvi1m[i];
-      sumLst += lstBase[i];
-      validPixels++;
-    }
+/**
+ * Diagnóstico TsHARP seguro para uma única grade.
+ *
+ * TsHARP exige LST coarse e variável óptica fine, com agregação/reamostragem
+ * explícita e adição do residual coarse. Como a aplicação recebe hoje uma
+ * única grade, não há informação térmica independente para criar novos
+ * pixels. O retorno conserva a LST de entrada e expõe apenas a regressão
+ * diagnóstica; isso evita o erro de transformar NDVI em temperatura absoluta.
+ */
+export function applyTsHARP(
+  ndvi: Float32Array,
+  lstBase: Float32Array,
+): TsHarpResult {
+  if (ndvi.length !== lstBase.length) {
+    throw new Error('NDVI e LST precisam estar na mesma grade para o diagnóstico.');
   }
 
-  const meanNdvi = sumNdvi / validPixels;
-  const meanLst = sumLst / validPixels;
+  let n = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXX = 0;
+  let sumYY = 0;
+  let sumXY = 0;
 
-  // --- 2. Calcular o 'a' (Declive) e 'b' (Interseção) ---
-  let numerador = 0;
-  let denominador = 0;
-
-  for (let i = 0; i < totalPixels; i++) {
-    if (ndvi1m[i] > 0 && !isNaN(lstBase[i])) {
-      const diffNdvi = ndvi1m[i] - meanNdvi;
-      const diffLst = lstBase[i] - meanLst;
-      
-      numerador += (diffNdvi * diffLst);
-      denominador += (diffNdvi * diffNdvi);
-    }
+  for (let i = 0; i < ndvi.length; i += 1) {
+    const x = ndvi[i];
+    const y = lstBase[i];
+    // Água e alvos sem vegetação não devem definir a relação NDVI–LST.
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0.1 || x > 0.95) continue;
+    n += 1;
+    sumX += x;
+    sumY += y;
+    sumXX += x * x;
+    sumYY += y * y;
+    sumXY += x * y;
   }
 
-  // O declive (a) diz-nos o quanto a temperatura cai por cada ponto de NDVI
-  const slope = denominador !== 0 ? numerador / denominador : 0;
-  const intercept = meanLst - (slope * meanNdvi);
-
-  console.log(`📊 Equação TsHARP encontrada: Temperatura = (${slope.toFixed(2)} * NDVI) + ${intercept.toFixed(2)}`);
-
-  // --- 3. Aplicar o Downscaling (Fusão) ---
-  for (let i = 0; i < totalPixels; i++) {
-    // Aplicamos a fórmula da temperatura a TODOS os 17 milhões de píxeis de 1 metro
-    lstDownscaled[i] = (slope * ndvi1m[i]) + intercept;
+  if (n < 10) {
+    throw new Error('Amostra insuficiente de pixels de solo/vegetação para ajustar TsHARP.');
   }
 
-  return {
-    lstDownscaled,
-    slope,
-    intercept
-  };
+  const denominator = n * sumXX - sumX * sumX;
+  const slope = Math.abs(denominator) > 1e-12 ? (n * sumXY - sumX * sumY) / denominator : 0;
+  const intercept = (sumY - slope * sumX) / n;
+  const ssTot = sumYY - (sumY * sumY) / n;
+  const ssReg = slope * (sumXY - (sumX * sumY) / n);
+  const r2 = ssTot > 1e-12 ? Math.max(0, Math.min(1, ssReg / ssTot)) : 0;
+
+  // Sem LST coarse separada, o produto válido é a própria LST observada.
+  // Não aplicamos a regressão pixel a pixel: isso criaria falsos extremos.
+  const lstDownscaled = new Float32Array(lstBase);
+
+  return { lstDownscaled, slope, intercept, r2, sharpened: false, validCount: n };
 }

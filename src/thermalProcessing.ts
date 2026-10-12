@@ -1,55 +1,62 @@
 // src/thermalProcessing.ts
 
+export type ThermalInputMode = 'landsat-c2-st-b10' | 'celsius';
+
+export type ThermalDecodeResult = {
+  lstCelsius: Float32Array;
+  validCount: number;
+  min: number;
+  max: number;
+};
+
 /**
- * Simula a extração térmica reescalando os valores base para uma 
- * faixa de temperatura realista (ex: 22°C na água/sombra a 45°C no asfalto)
- * enquanto o módulo de co-registro Landsat/Sentinel é construído.
+ * Decodifica uma banda térmica real.
+ *
+ * Landsat Collection 2 Level-2 ST_B10 usa:
+ *   ST[K] = DN * 0.00341802 + 149.0
+ *
+ * O resultado é convertido para °C. Não existe conversão fisicamente válida
+ * de Red/NIR/SWIR para LST por normalização min-max; por isso este módulo
+ * não aceita mais uma banda óptica como proxy térmica.
  */
-export function calculateThermalRadiance(baseArray: Float32Array): {
-  radiance: Float32Array;
-  brightnessTempCelsius: Float32Array;
-} {
-  const totalPixels = baseArray.length;
-  const radianceArray = new Float32Array(totalPixels);
-  const tempCelsiusArray = new Float32Array(totalPixels);
+export function decodeThermalInput(
+  raw: Float32Array,
+  mode: ThermalInputMode,
+): ThermalDecodeResult {
+  const lstCelsius = new Float32Array(raw.length);
+  let validCount = 0;
+  let min = Infinity;
+  let max = -Infinity;
 
-  // 1. Descobrir os valores mínimos e máximos da imagem para calibrar
-  let minVal = Infinity;
-  let maxVal = -Infinity;
-  for (let i = 0; i < totalPixels; i++) {
-    const val = baseArray[i];
-    if (val > 0) {
-      if (val < minVal) minVal = val;
-      if (val > maxVal) maxVal = val;
+  for (let i = 0; i < raw.length; i += 1) {
+    const dn = raw[i];
+    let value: number;
+
+    if (!Number.isFinite(dn) || dn <= 0 || dn === 65535) {
+      value = NaN;
+    } else if (mode === 'landsat-c2-st-b10') {
+      const kelvin = dn * 0.00341802 + 149.0;
+      value = kelvin - 273.15;
+    } else {
+      value = dn;
     }
-  }
 
-  // 2. Mapear os valores do satélite para Temperaturas Reais (°C)
-  const tempMin = 22.0; // °C (Vegetação densa / Água)
-  const tempMax = 45.0; // °C (Asfalto / Telhados quentes)
-  const valRange = maxVal - minVal || 1;
-
-  for (let i = 0; i < totalPixels; i++) {
-    const val = baseArray[i];
-
-    if (val <= 0) {
-      radianceArray[i] = 0;
-      tempCelsiusArray[i] = NaN; // Ignora píxeis sem dados
+    // Faixa de controle ampla para superfície terrestre; evita propagar
+    // fill values e valores impossíveis para a regressão/UHI.
+    if (!Number.isFinite(value) || value < -80 || value > 100) {
+      lstCelsius[i] = NaN;
       continue;
     }
 
-    // Normaliza de 0 a 1 e inverte (já que muita luz NIR/Red geralmente indica menos calor na proxy)
-    const normalized = (val - minVal) / valRange;
-    
-    // Calcula a temperatura simulada
-    const tempCelsius = tempMin + (normalized * (tempMax - tempMin));
-    
-    radianceArray[i] = val * 0.0003342; // Radiância simulada
-    tempCelsiusArray[i] = tempCelsius;
+    lstCelsius[i] = value;
+    validCount += 1;
+    min = Math.min(min, value);
+    max = Math.max(max, value);
   }
 
-  return {
-    radiance: radianceArray,
-    brightnessTempCelsius: tempCelsiusArray
-  };
+  if (validCount === 0) {
+    throw new Error('Nenhum pixel térmico válido foi encontrado.');
+  }
+
+  return { lstCelsius, validCount, min, max };
 }

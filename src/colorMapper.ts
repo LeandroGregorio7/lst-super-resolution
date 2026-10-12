@@ -28,7 +28,7 @@ export function renderLstToCanvas(
   const range = max - min || 1;
   const mean = count > 0 ? sum / count : 0;
 
-  // Cálculo do Desvio Padrão (σ) para o modo UHI
+  // Cálculo de anomalia térmica exploratória por desvio-padrão
   let sumSqDiff = 0;
   for (let i = 0; i < lstData.length; i++) {
     const val = lstData[i];
@@ -61,7 +61,7 @@ function hexToRgb(hex: string) {
 }
 
 function getThermalColor(rawVal: number, v: number, palette: PaletteType, customRgb: {r:number,g:number,b:number}[], mean: number, stdDev: number): { r: number; g: number; b: number } {
-  // 📊 Modo UHI (Análise Estatística de Ilha de Calor por Desvio Padrão)
+  // 📊 Anomalia exploratória (não é SUHII sem referência rural)
   if (palette === 'uhi') {
     if (rawVal < mean) return { r: 26, g: 150, b: 65 };                // Normal / Frio (Verde)
     if (rawVal < mean + 0.5 * stdDev) return { r: 254, g: 224, b: 139 }; // Ilha Leve (Amarelo)
