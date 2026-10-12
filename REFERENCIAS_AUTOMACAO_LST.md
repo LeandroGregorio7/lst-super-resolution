@@ -1,50 +1,16 @@
-# Evidências externas para o fluxo automático SR2D4 → Landsat → LST sharp
 
-## Artigos fornecidos pelo usuário
+## Sentinel-2 e composição SR2D4/MS x10
 
-- https://www.mdpi.com/2072-4292/17/8/1410
-  - Estudo de super-resolução LST que combina LST Landsat coarse com imagem óptica high-resolution e referência térmica UAV.
-  - O artigo mostra que integrar bandas espectrais, NDVI e LST reduz o erro em comparação com RGB isolado; o modelo KAN teve RMSE reportado de cerca de 4,06 °C e MAE de 3,09 °C no estudo, com validação por UAV.
-  - A evidência não autoriza tratar um resultado óptico-only como observação térmica. O método depende de uma LST coarse real e validação térmica independente.
+- https://www.researchgate.net/figure/Sentinel-2-band-characteristics_tbl1_314119510
+  - Tabela fornecida pelo usuário com B04 Red (aprox. 665 nm), B08 NIR (aprox. 842 nm), B10 cirrus (aprox. 1375 nm), B11 SWIR-1 (aprox. 1610 nm) e B12 SWIR-2 (aprox. 2190 nm).
 
-- https://www.preprints.org/manuscript/202512.1256
-  - O artigo usa Landsat 8/9 Collection 2 Level-2, ST/LST e QA_PIXEL, elimina nuvens/sombras/neve, alinha dados numa grade comum e valida em anos separados.
-  - O modelo proposto combina campo coarse de temperatura com contexto Landsat e usa MAE; enfatiza que a entrada térmica precisa ser uma observação LST clara/qualificada.
-  - Também usa janela temporal e co-registro explícitos, não inferência de temperatura a partir apenas de bandas ópticas.
+- https://custom-scripts.sentinel-hub.com/custom-scripts/sentinel-2/bands/
+  - Confirma nomes, comprimentos de onda e aplicações das bandas Sentinel-2.
 
-## Método de downscaling
+- https://sentiwiki.copernicus.eu/web/s2-mission
+  - Fonte Copernicus: bandas de 10 m B02/B03/B04/B08; bandas de 20 m B05/B06/B07/B8A/B11/B12; bandas de 60 m B01/B09/B10.
 
-- https://www.nuritagam.com/Papers/2006-Agam-et-al-RSE-TsHARP.pdf
-  - TsHARP ajusta a relação LST coarse–predictor na escala coarse, aplica-a ao predictor fine e adiciona o residual coarse para conservar a observação agregada.
-  - Água e pixels coarse heterogêneos devem ser excluídos do ajuste; água tem baixo NDVI e não segue necessariamente a relação solo/vegetação.
+- https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED
+  - Confirma que o produto Sentinel-2 Level-2A Surface Reflectance não entrega B10; contém B11 e B12 como SWIR.
 
-- https://www.mdpi.com/2072-4292/13/7/1306
-  - Revisão: o desempenho dos kernels varia por cobertura, estação e local. Métodos urbanos usam NDVI/EVI, NDBI, NDWI/MNDWI, NDMI, emissividade, albedo, cobertura do solo, DEM e regressões/machine learning.
-  - A relação é empírica e precisa de validação e controle de escala.
-
-## Landsat e temperatura
-
-- https://www.usgs.gov/faqs/what-are-band-designations-landsat-satellites
-  - Landsat 8/9: B10 e B11 são TIRS; B10 ≈ 10,60–11,19 µm, B11 ≈ 11,50–12,51 µm; resolução nativa 100 m, reamostrada para 30 m em Level-1.
-
-- https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature
-  - Collection 2 Level-2 ST é gerado a partir de TIRS, reflectância TOA, brightness temperature, ASTER GED, NDVI ASTER e perfis atmosféricos.
-  - Escala oficial: `ST[K] = DN * 0.00341802 + 149.0`.
-  - O produto tem limitações documentadas de blockiness e ajuste de emissividade.
-
-- https://www.usgs.gov/landsat-missions/landsat-collection-2-known-issues
-  - O USGS documenta blockiness por emissividade ASTER GED de 100 m reamostrada para a grade de 30 m e uma anomalia no ajuste temporal de vegetação.
-
-## Acesso automático candidato
-
-- https://planetarycomputer.microsoft.com/dataset/landsat-c2-l2
-  - Catálogo público Planetary Computer para Landsat Collection 2 Level-2, com `ST_B10` e assets COG.
-  - Deve ser consultado por STAC usando data e bbox derivados do GeoTIFF SR2D4; a cena deve ser filtrada por qualidade/nuvem e escolhida pela menor distância temporal.
-
-- https://earth-search.aws.element84.com/v1/collections/landsat-c2-l2
-  - Earth Search STAC público lista a coleção Landsat C2 L2 e pode ser usado para busca por bbox/datetime.
-
-## SUHI/UHI
-
-- https://www.usgs.gov/publications/characterizing-urban-heat-islands-across-50-major-cities-united-states
-  - SUHI é temperatura de superfície urbana maior que a de área não urbana; intensidade exige comparação urbana–não urbana e dados de cobertura, não apenas média ± desvio-padrão global.
+Para o SR2D4/MS x10 adotado no aplicativo, a ordem é: Camada 01=B02, 02=B03, 03=B04, 04=B05, 05=B06, 06=B07, 07=B08, 08=B8A, 09=B11 e 10=B12. Assim, o usuário deve apontar **Red=03/B04, NIR=07/B08 e SWIR=09/B11**; a **10/B12** é alternativa. Essa associação só é válida quando a exportação do Colab seguir explicitamente essa ordem.
