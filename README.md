@@ -1,37 +1,46 @@
 # SR2D4 / LST Explorer
 
-Aplicação GIS web independente para visualizar produtos multiespectrais SR2D4 e analisar uma banda de Temperatura da Superfície Terrestre (LST) calibrada. O projeto funciona diretamente no navegador e não envia o GeoTIFF a um servidor.
+Aplicação GIS web independente para visualizar produtos multiespectrais SR2D4 e estimar LST espacialmente a partir de uma cena Landsat 8/9 Collection 2 Level-2 encontrada automaticamente. O GeoTIFF SR2D4 permanece local no navegador; a aplicação consulta somente o catálogo e os COGs públicos Landsat necessários para a área do arquivo.
 
-## Pré-requisito metodológico
+## Fluxo automático
 
-**Um produto SR2D4 óptico, sozinho, não contém LST.** Red, NIR e SWIR não podem ser convertidos em temperatura por normalização min–max. Para calcular LST, o GeoTIFF carregado precisa conter uma banda térmica real:
+O nome esperado do produto é, por exemplo, `S2L3Ax10_T23KLQ-5ee4de6e7-20260904_MS.tif`. A aplicação:
 
-- **Landsat Collection 2 Level-2 `ST_B10`**, decodificada por `ST[K] = DN × 0.00341802 + 149.0`; ou
-- uma LST previamente calibrada em °C, com documentação da cadeia radiométrica, emissividade e correção atmosférica.
+1. lê a data `AAAAMMDD` no nome do SR2D4;
+2. lê a extensão espacial e as bandas ópticas do GeoTIFF SR2D4;
+3. consulta o STAC público do Microsoft Planetary Computer na área e em uma janela de ±16 dias;
+4. seleciona a cena Landsat 8/9 mais próxima, priorizando menor distância temporal e filtrando cenas com nuvens excessivas;
+5. acessa os COGs `ST_B10` e `QA_PIXEL`, assinados pelo Planetary Computer, somente na janela espacial necessária;
+6. aplica a escala oficial `ST[K] = DN × 0.00341802 + 149.0`, converte para °C e elimina pixels fill, nuvem, cirrus, sombra e neve;
+7. agrega NDVI, NDBI e NDWI do SR2D4 para a escala Landsat, ajusta a relação multivariada na escala coarse e transfere-a para a grade fina;
+8. adiciona o residual Landsat de cada célula coarse ao resultado fino, preservando a observação térmica agregada.
 
-A aplicação rejeita o antigo fluxo que usava Red como proxy térmica de 22–45 °C. Esse fluxo era apenas uma simulação visual e não deve ser usado em análise científica.
+Não há input de banda térmica Landsat no app. O usuário seleciona apenas Red, NIR e SWIR do próprio SR2D4. A busca térmica é automática.
 
-## Fluxo de uso
+> Atenção: em Landsat 8/9 as bandas TIRS são B10 e B11. A banda `ST_B10` é o produto de temperatura de superfície do Collection 2 Level-2. B11/B12 são nomenclaturas comuns do Sentinel-2 para SWIR, não uma entrada térmica Landsat equivalente.
 
-1. Gere o produto óptico no Colab e obtenha a banda Landsat `ST_B10` da mesma cena, ou monte um GeoTIFF co-registrado que contenha as duas partes.
-2. Abra a aplicação e carregue o GeoTIFF local.
-3. Selecione Red, NIR, SWIR e a banda térmica. Para `ST_B10`, mantenha o modo **Landsat C2 ST_B10 (DN)**.
-4. Calcule e confira a faixa térmica em °C, máscaras, histograma e metadados.
-5. Use o mapa como LST observada/calibrada. A versão atual **não declara super-resolução térmica** quando recebe uma única grade.
+## Limitações científicas
 
-## TsHARP e sharpening
+O resultado fino é uma **estimativa downscaled**, não uma medição térmica independente em cada pixel de 1 m. A resolução espacial da informação térmica original continua sendo Landsat; o SR2D4 fornece os predictores espaciais. A aplicação deve registrar a data Landsat escolhida, a diferença temporal, a cobertura de nuvens, a cena e as métricas do ajuste.
 
-TsHARP pressupõe uma relação cena-específica entre LST coarse e um índice óptico fine. O método exige uma grade térmica coarse, predictors fine co-registrados, ajuste na escala coarse e adição do residual coarse ao produto fine. Uma regressão NDVI–LST aplicada diretamente pixel a pixel não é TsHARP e pode inverter ou exagerar contrastes.
+A literatura recente mostra que integrar reflectância, índices de vegetação e LST melhora a reconstrução em relação a RGB isolado, mas os métodos precisam de co-registro, máscara de qualidade e validação térmica independente. O produto não deve ser apresentado como temperatura observada a 1 m sem validação de campo, UAV térmico ou referência equivalente.
 
-Quando recebe uma única grade, o aplicativo calcula apenas a regressão diagnóstica e conserva a LST observada. Para implementar sharpening científico, é necessário adicionar entrada separada para a grade térmica coarse, reamostragem/agregação documentada, máscara de água/nuvens e validação independente.
+## TsHARP/downscaling
+
+A implementação coarse-to-fine ajusta a regressão com médias dos predictores SR2D4 dentro de cada célula Landsat e aplica os coeficientes aos pixels finos. O residual observado da célula coarse é adicionado ao campo fino, evitando que a regressão invente um viés médio incompatível com a LST Landsat. NDVI isolado não é usado como temperatura; NDBI e NDWI ajudam a distinguir vegetação, superfícies construídas/solo e água.
+
+A compatibilidade da cena deve ser examinada quando a diferença temporal for grande, houver nuvens na área, mudança de iluminação ou diferença de horário de passagem. Se não houver cena adequada, o app deve interromper o processamento em vez de fabricar temperatura.
 
 ## UHI / SUHI
 
-A classe por média e desvio-padrão da própria imagem é apenas uma **anomalia térmica exploratória**. Ela não é intensidade de ilha de calor de superfície (SUHII). Uma SUHII exige uma referência não urbana/rural definida a priori e deve ser calculada, por exemplo, como `média(LST_urbana) − média(LST_referência)`, com máscara de uso/cobertura, distância e janela temporal documentadas. O usuário deve evitar chamar a classificação global por σ de UHI em artigo ou dissertação.
+A classe por média e desvio-padrão da própria imagem é uma **anomalia térmica exploratória**. Ela não é intensidade de ilha de calor de superfície (SUHII). Uma SUHII exige uma referência não urbana/rural definida a priori e deve ser calculada, por exemplo, como `média(LST_urbana) − média(LST_referência)`, com máscaras de uso/cobertura, distância, data e janela temporal documentadas.
 
-## Recursos
+## Referências metodológicas
 
-A interface inclui mapa-base OSM/Esri, camada óptica, camada LST, estatísticas, histograma, análise exploratória por desvio-padrão, metadados e exportação. O resultado é local e deve ser validado com dados de campo ou produto de referência.
+- [LST super-resolution with Landsat, PlanetScope and UAV thermal reference](https://www.mdpi.com/2072-4292/17/8/1410)
+- [Two-stage LST fusion with Landsat and coarse temperature fields](https://www.preprints.org/manuscript/202512.1256)
+- [USGS Landsat Collection 2 Surface Temperature](https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature)
+- [Microsoft Planetary Computer Landsat C2 L2](https://planetarycomputer.microsoft.com/dataset/landsat-c2-l2)
 
 ## Desenvolvimento
 
