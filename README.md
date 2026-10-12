@@ -86,3 +86,9 @@ MIT.
 [1]: https://www.researchgate.net/figure/Sentinel-2-band-characteristics_tbl1_314119510 "Sentinel-2 band characteristics"
 [2]: https://custom-scripts.sentinel-hub.com/custom-scripts/sentinel-2/bands/ "Sentinel-2 Bands — Sentinel Hub"
 [3]: https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED "Harmonized Sentinel-2 MSI Level-2A Surface Reflectance"
+
+## Seleção robusta da cena térmica
+
+A busca Landsat não usa mais somente a cena temporalmente mais próxima. Ela consulta até 12 cenas em uma janela de ±32 dias, lê `ST_B10` e `QA_PIXEL` de cada uma, conta os pixels térmicos válidos dentro da área e escolhe a cena com maior cobertura térmica válida. A máscara usa os bits 0–5 do `QA_PIXEL` para excluir preenchimento, nuvem dilatada, cirrus, nuvem, sombra e neve; o bit 6 (`clear`) não é tratado como nuvem.
+
+Se a área ainda tiver menos de oito células Landsat válidas para ajustar quatro parâmetros, o app não interrompe nem cria uma regressão instável. Ele usa uma transferência conservadora da LST coarse por célula e marca internamente o resultado como não-sharpened. Isso mantém a temperatura observada sem fabricar detalhe de 1 m. A regressão multivariada só é usada quando há amostra suficiente.
