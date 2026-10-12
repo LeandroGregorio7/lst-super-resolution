@@ -67,8 +67,8 @@ export function downscaleLandsatLST(
     const cell = cy * coarseWidth + cx;
     const index = y * fineWidth + x;
     const values = featureVector(fineFeatures, index);
+    fineCell[index] = cell;
     if (values.slice(1).every(Number.isFinite)) {
-      fineCell[index] = cell;
       sums[cell][0] += 1;
       sums[cell][1] += values[1];
       sums[cell][2] += values[2];
@@ -94,7 +94,18 @@ export function downscaleLandsatLST(
     for (let i = 0; i < 4; i += 1) { target[i] += row[i] * temperature; for (let j = 0; j < 4; j += 1) normal[i][j] += row[i] * row[j]; }
     validCount += 1; targetSum += temperature; targetSq += temperature * temperature;
   }
-  if (validCount < 8) throw new Error('A cena Landsat tem poucos pixels térmicos válidos para o downscaling nesta área.');
+  if (validCount === 0) throw new Error('Nenhum pixel térmico Landsat coincide com a área e os preditores ópticos válidos do SR2D4.');
+  if (validCount < 8) {
+    // Fallback conservador: não ajusta uma regressão multivariada instável.
+    // Transfere a LST coarse para a grade fina por célula, sem fabricar detalhe.
+    const fallback = new Float32Array(fineWidth * fineHeight);
+    fallback.fill(NaN);
+    for (let i = 0; i < fallback.length; i += 1) {
+      const cell = fineCell[i];
+      if (cell >= 0 && Number.isFinite(coarseLST[cell])) fallback[i] = coarseLST[cell];
+    }
+    return { lstDownscaled: fallback, slope: 0, intercept: targetSum / validCount, r2: 0, sharpened: false, validCount };
+  }
   const coefficients = solveRidge(normal, target);
   if (!coefficients) throw new Error('Não foi possível ajustar a relação térmica multivariada.');
 
