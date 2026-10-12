@@ -19,6 +19,29 @@ Não há input de banda térmica Landsat no app. O usuário seleciona apenas Red
 
 > Atenção: em Landsat 8/9 as bandas TIRS são B10 e B11. A banda `ST_B10` é o produto de temperatura de superfície do Collection 2 Level-2. B11/B12 são nomenclaturas comuns do Sentinel-2 para SWIR, não uma entrada térmica Landsat equivalente.
 
+## Referência Sentinel-2 e apontamento no SR2D4/MS x10
+
+A referência espectral do Sentinel-2 deve ser lida pelo **nome da banda**, não pela posição numérica do layer. A tabela abaixo é a convenção do produto `S2L3Ax10..._MS.tif` usado neste projeto, quando ele contém as dez bandas ópticas nesta ordem:
+
+| Camada no SR2D4 | Banda Sentinel-2 | Nome/função | Centro aproximado | Apontar no app |
+|---|---|---|---:|---|
+| 01 | B02 | Blue | 490 nm | Não usar para Red/NIR/SWIR |
+| 02 | B03 | Green | 560 nm | Não usar para Red/NIR/SWIR |
+| **03** | **B04** | **Red** | **665 nm** | **Red / Vermelho** |
+| 04 | B05 | Red Edge 1 | 705 nm | Não usar como Red |
+| 05 | B06 | Red Edge 2 | 740 nm | Não usar como NIR |
+| 06 | B07 | Red Edge 3 | 783 nm | Não usar como NIR |
+| **07** | **B08** | **NIR** | **842 nm** | **NIR / Infravermelho próximo** |
+| 08 | B8A | Red Edge 4 | 865 nm | Não substituir automaticamente B08 |
+| **09** | **B11** | **SWIR 1** | **1610 nm** | **SWIR / recomendado para NDBI** |
+| **10** | **B12** | **SWIR 2** | **2190 nm** | **SWIR alternativo para NDBI** |
+
+Portanto, no arquivo SR2D4/MS x10 padrão, indique: **Red = Camada 03/B04; NIR = Camada 07/B08; SWIR = Camada 09/B11**. A Camada 10/B12 também é válida como SWIR alternativo. **Nunca selecione a Camada 10 por ela ser “10”: ela é B12 somente quando a ordem do SR2D4 é a tabela acima.**
+
+A B10 do Sentinel-2 é uma banda de **cirrus**, centrada perto de 1375 nm; ela não é Red, NIR nem SWIR e não aparece como banda de reflectância no produto Sentinel-2 Level-2A SR. B11 e B12 são as bandas SWIR. [1] [2] [3]
+
+Se o GeoTIFF não trouxer nomes no metadata e não seguir claramente a convenção `S2L3Ax10`, o usuário deve conferir a ordem definida no Colab antes de calcular. O app mostra um alerta e não deve interpretar uma posição genérica como banda espectral.
+
 ## Limitações científicas
 
 O resultado fino é uma **estimativa downscaled**, não uma medição térmica independente em cada pixel de 1 m. A resolução espacial da informação térmica original continua sendo Landsat; o SR2D4 fornece os predictores espaciais. A aplicação deve registrar a data Landsat escolhida, a diferença temporal, a cobertura de nuvens, a cena e as métricas do ajuste.
@@ -57,3 +80,9 @@ O workflow `.github/workflows/deploy-pages.yml` gera `dist` e publica no GitHub 
 ## Licença
 
 MIT.
+
+## Referências
+
+[1]: https://www.researchgate.net/figure/Sentinel-2-band-characteristics_tbl1_314119510 "Sentinel-2 band characteristics"
+[2]: https://custom-scripts.sentinel-hub.com/custom-scripts/sentinel-2/bands/ "Sentinel-2 Bands — Sentinel Hub"
+[3]: https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED "Harmonized Sentinel-2 MSI Level-2A Surface Reflectance"
