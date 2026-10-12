@@ -6,6 +6,7 @@ import { boundsExtent } from './rasterGeo';
 const STAC_SEARCH = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
 const STAC_SIGN = 'https://planetarycomputer.microsoft.com/api/sas/v1/sign';
 const MAX_CANDIDATES_TO_TEST = 12;
+export type ThermalProgress = (message: string) => void;
 
 type StacItem = {
   id: string;
@@ -99,8 +100,9 @@ async function readSubset(url: string, bbox: [number, number, number, number], s
   return { data: result, width, height };
 }
 
-async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds): Promise<LandsatThermalSubset> {
+async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
   const acquisition = new Date(String(item.properties.datetime));
+  onProgress?.(`Lendo ${item.id} · ST_B10 e QA_PIXEL…`);
   const epsg = Number(item.properties['proj:epsg'] ?? 32623);
   const bbox = nativeBbox(bounds, epsg);
   const thermalUrl = await signedHref(String(item.assets.lwir11.href));
@@ -123,17 +125,21 @@ async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds)
     if (valid) validThermalPixels += 1;
   }
   const satellite = item.id.startsWith('LC08') ? 'Landsat 8' : 'Landsat 9';
+  onProgress?.(`${item.id}: ${validThermalPixels.toLocaleString()} pixels térmicos válidos (${(validThermalPixels / Math.max(thermal.data.length, 1) * 100).toFixed(1)}%)`);
   return { itemId: item.id, satellite, acquisitionDate: isoDay(acquisition), sourceDate: isoDay(srDate), daysFromSr2d4: dayDistance(acquisition, srDate), cloudCover: Number(item.properties['eo:cloud_cover'] ?? 100), validThermalPixels, validThermalFraction: thermal.data.length ? validThermalPixels / thermal.data.length : 0, lstCelsius, qaPixel, width: thermal.width, height: thermal.height, bounds, epsg };
 }
 
-export async function fetchNearestLandsatThermal(fileName: string, bounds: RasterBounds): Promise<LandsatThermalSubset> {
+export async function fetchNearestLandsatThermal(fileName: string, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
   const srDate = parseSr2d4Date(fileName);
+  onProgress?.(`Consultando catálogo Landsat em ±32 dias de ${isoDay(srDate)}…`);
   const candidates = await searchLandsat(srDate, bounds);
+  onProgress?.(`${candidates.length} cenas candidatas encontradas; testando cobertura térmica…`);
   if (!candidates.length) throw new Error(`Nenhuma cena Landsat 8/9 foi encontrada em ±32 dias de ${isoDay(srDate)}.`);
   const results: LandsatThermalSubset[] = [];
-  for (const candidate of candidates) {
+  for (const [index, candidate] of candidates.entries()) {
     try {
-      const result = await readCandidate(candidate, srDate, bounds);
+      onProgress?.(`Cena ${index + 1}/${candidates.length}: ${candidate.id}`);
+      const result = await readCandidate(candidate, srDate, bounds, onProgress);
       if (result.validThermalPixels > 0) results.push(result);
     } catch (error) {
       console.warn('Cena Landsat ignorada:', candidate.id, error);
@@ -143,5 +149,6 @@ export async function fetchNearestLandsatThermal(fileName: string, bounds: Raste
   // Prefer a usable scene with broad thermal coverage; use temporal distance only as tie-breaker.
   results.sort((a, b) => b.validThermalFraction - a.validThermalFraction || b.validThermalPixels - a.validThermalPixels || a.daysFromSr2d4 - b.daysFromSr2d4);
   const best = results[0];
+  onProgress?.(`Cena escolhida: ${best.itemId} · ${best.validThermalPixels.toLocaleString()} pixels válidos · cobertura ${(best.validThermalFraction * 100).toFixed(1)}%`);
   return best;
 }
