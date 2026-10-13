@@ -82,7 +82,7 @@ function nativeBbox(bounds: RasterBounds, epsg: number): [number, number, number
   let west = Infinity; let south = Infinity; let east = -Infinity; let north = -Infinity; for (const point of points) { west = Math.min(west, point[0]); south = Math.min(south, point[1]); east = Math.max(east, point[0]); north = Math.max(north, point[1]); } return [west, south, east, north];
 }
 
-async function readSubset(url: string, bbox: [number, number, number, number], sample: number): Promise<{ data: Float32Array | Uint16Array; width: number; height: number; bounds: RasterBounds }> {
+async function readSubset(url: string, bbox: [number, number, number, number], sample: number, epsg: number): Promise<{ data: Float32Array | Uint16Array; width: number; height: number; bounds: RasterBounds }> {
   const tiff = await GeoTIFF.fromUrl(url);
   const image = await tiff.getImage();
   const imageBox = image.getBoundingBox();
@@ -116,7 +116,7 @@ async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds,
   const bbox = nativeBbox(bounds, epsg);
   const thermalUrl = await signedHref(String(item.assets.lwir11.href));
   const qaUrl = await signedHref(String(item.assets.qa_pixel.href));
-  const [thermal, qa] = await Promise.all([readSubset(thermalUrl, bbox, 0), readSubset(qaUrl, bbox, 0)]);
+  const [thermal, qa] = await Promise.all([readSubset(thermalUrl, bbox, 0, epsg), readSubset(qaUrl, bbox, 0, epsg)]);
   if (thermal.width !== qa.width || thermal.height !== qa.height) throw new Error('ST_B10 e QA_PIXEL possuem grades incompatíveis.');
   const lstCelsius = new Float32Array(thermal.data.length);
   const qaPixel = new Uint16Array(qa.data.length);
