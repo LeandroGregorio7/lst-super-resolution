@@ -39,10 +39,10 @@ function classify(value: number, mean: number, stdDev: number): UhiProperties['c
  */
 export function buildUhiSurface(input: SurfaceInput): UhiSurface {
   const extent = {
-    west: Math.min(...input.bounds.map((point) => point[0])),
-    east: Math.max(...input.bounds.map((point) => point[0])),
-    south: Math.min(...input.bounds.map((point) => point[1])),
-    north: Math.max(...input.bounds.map((point) => point[1])),
+    west: input.bounds.reduce((value, point) => Math.min(value, point[0]), Infinity),
+    east: input.bounds.reduce((value, point) => Math.max(value, point[0]), -Infinity),
+    south: input.bounds.reduce((value, point) => Math.min(value, point[1]), Infinity),
+    north: input.bounds.reduce((value, point) => Math.max(value, point[1]), -Infinity),
   };
   const columns = Math.min(96, Math.max(12, Math.ceil(input.width / Math.max(1, Math.ceil(input.width / 96)))));
   const rows = Math.min(96, Math.max(12, Math.ceil(input.height / Math.max(1, Math.ceil(input.height / 96)))));

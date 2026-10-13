@@ -79,7 +79,7 @@ async function signedHref(href: string): Promise<string> {
 function nativeBbox(bounds: RasterBounds, epsg: number): [number, number, number, number] {
   const transform = (point: [number, number]) => proj4('EPSG:4326', `EPSG:${epsg}`, point) as [number, number];
   const points = bounds.map(transform);
-  return [Math.min(...points.map((p) => p[0])), Math.min(...points.map((p) => p[1])), Math.max(...points.map((p) => p[0])), Math.max(...points.map((p) => p[1]))];
+  let west = Infinity; let south = Infinity; let east = -Infinity; let north = -Infinity; for (const point of points) { west = Math.min(west, point[0]); south = Math.min(south, point[1]); east = Math.max(east, point[0]); north = Math.max(north, point[1]); } return [west, south, east, north];
 }
 
 async function readSubset(url: string, bbox: [number, number, number, number], sample: number): Promise<{ data: Float32Array | Uint16Array; width: number; height: number }> {
