@@ -82,7 +82,7 @@ function nativeBbox(bounds: RasterBounds, epsg: number): [number, number, number
   let west = Infinity; let south = Infinity; let east = -Infinity; let north = -Infinity; for (const point of points) { west = Math.min(west, point[0]); south = Math.min(south, point[1]); east = Math.max(east, point[0]); north = Math.max(north, point[1]); } return [west, south, east, north];
 }
 
-async function readSubset(url: string, bbox: [number, number, number, number], sample: number): Promise<{ data: Float32Array | Uint16Array; width: number; height: number }> {
+async function readSubset(url: string, bbox: [number, number, number, number], sample: number): Promise<{ data: Float32Array | Uint16Array; width: number; height: number; bounds: RasterBounds }> {
   const tiff = await GeoTIFF.fromUrl(url);
   const image = await tiff.getImage();
   const imageBox = image.getBoundingBox();
@@ -97,7 +97,16 @@ async function readSubset(url: string, bbox: [number, number, number, number], s
   const result = await image.readRasters({ window, samples: [sample], interleave: true }) as unknown as Float32Array & { width?: number; height?: number };
   const width = Number(result.width ?? Math.max(1, window[2] - window[0]));
   const height = Number(result.height ?? Math.max(1, window[3] - window[1]));
-  return { data: result, width, height };
+  // Use the actual COG pixel-window footprint, not the SR2D4 AOI as a proxy.
+  // Reusing the AOI bounds for a cropped Landsat array shifts/distorts the coarse grid.
+  const left = origin[0] + window[0] * resolution[0];
+  const right = origin[0] + window[2] * resolution[0];
+  const top = origin[1] + window[1] * resolution[1];
+  const bottom = origin[1] + window[3] * resolution[1];
+  const toWgs84 = (x: number, y: number): [number, number] =>
+    proj4(`EPSG:${epsg}`, 'EPSG:4326', [x, y]) as [number, number];
+  const subsetBounds = [toWgs84(left, top), toWgs84(right, top), toWgs84(right, bottom), toWgs84(left, bottom)] as RasterBounds;
+  return { data: result, width, height, bounds: subsetBounds };
 }
 
 async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
@@ -126,7 +135,7 @@ async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds,
   }
   const satellite = item.id.startsWith('LC08') ? 'Landsat 8' : 'Landsat 9';
   onProgress?.(`${item.id}: ${validThermalPixels.toLocaleString()} pixels térmicos válidos (${(validThermalPixels / Math.max(thermal.data.length, 1) * 100).toFixed(1)}%)`);
-  return { itemId: item.id, satellite, acquisitionDate: isoDay(acquisition), sourceDate: isoDay(srDate), daysFromSr2d4: dayDistance(acquisition, srDate), cloudCover: Number(item.properties['eo:cloud_cover'] ?? 100), validThermalPixels, validThermalFraction: thermal.data.length ? validThermalPixels / thermal.data.length : 0, lstCelsius, qaPixel, width: thermal.width, height: thermal.height, bounds, epsg };
+  return { itemId: item.id, satellite, acquisitionDate: isoDay(acquisition), sourceDate: isoDay(srDate), daysFromSr2d4: dayDistance(acquisition, srDate), cloudCover: Number(item.properties['eo:cloud_cover'] ?? 100), validThermalPixels, validThermalFraction: thermal.data.length ? validThermalPixels / thermal.data.length : 0, lstCelsius, qaPixel, width: thermal.width, height: thermal.height, bounds: thermal.bounds, epsg };
 }
 
 export async function fetchNearestLandsatThermal(fileName: string, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
