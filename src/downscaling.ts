@@ -53,9 +53,16 @@ function fitModel(rows: number[][], target: number[]) {
   return solveRidge(normal, vector);
 }
 
-function range(values: number[]) {
-  const finite = values.filter(Number.isFinite);
-  return finite.length ? Math.max(...finite) - Math.min(...finite) : 0;
+function range(values: ArrayLike<number>) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (!Number.isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return min !== Infinity ? max - min : 0;
 }
 
 /** TsHARP coarse-to-fine com índices finos do SR2D4 e residual Landsat conservado. */
@@ -144,7 +151,7 @@ export function downscaleLandsatLST(
     lstDownscaled: output, slope: coefficients[1] ?? 0, intercept: coefficients[0] ?? 0,
     r2: 0, sharpened: true, validCount: validCells.length,
     model: useMultivariate ? 'multivariate-NDVI-NDBI-NDWI' : 'TsHARP-NDVI-polynomial',
-    coarseRange: range(coarseValues), fineRange: range(Array.from(output)), fineSignalRange,
+    coarseRange: range(coarseValues), fineRange: range(output), fineSignalRange,
     conservationMae: conservationCount ? conservationError / conservationCount : NaN,
     coarseWidth, coarseHeight,
   };
@@ -154,5 +161,5 @@ export function downscaleLandsatLST(
 export function applyTsHARP(ndvi: Float32Array, lstBase: Float32Array): TsHarpResult {
   if (ndvi.length !== lstBase.length) throw new Error('NDVI e LST precisam estar na mesma grade.');
   const output = new Float32Array(lstBase); const valid = Array.from(lstBase).filter(Number.isFinite).length;
-  return { lstDownscaled: output, slope: 0, intercept: valid ? lstBase[0] : 0, r2: 0, sharpened: false, validCount: valid, model: 'coarse-fallback', coarseRange: range(Array.from(lstBase)), fineRange: range(Array.from(output)), fineSignalRange: 0, conservationMae: 0, coarseWidth: lstBase.length, coarseHeight: 1 };
+  return { lstDownscaled: output, slope: 0, intercept: valid ? lstBase[0] : 0, r2: 0, sharpened: false, validCount: valid, model: 'coarse-fallback', coarseRange: range(lstBase), fineRange: range(output), fineSignalRange: 0, conservationMae: 0, coarseWidth: lstBase.length, coarseHeight: 1 };
 }
