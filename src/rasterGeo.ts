@@ -2,6 +2,14 @@ import proj4 from 'proj4';
 
 export type RasterBounds = [[number, number], [number, number], [number, number], [number, number]];
 
+function minOf(values: number[]) {
+  return values.reduce((minimum, value) => Math.min(minimum, value), Infinity);
+}
+
+function maxOf(values: number[]) {
+  return values.reduce((maximum, value) => Math.max(maximum, value), -Infinity);
+}
+
 function epsgDef(epsg: number) {
   if (epsg === 4326 || epsg === 4269) return `EPSG:${epsg}`;
   if (epsg === 3857) return 'EPSG:3857';
@@ -36,5 +44,5 @@ export function rasterBoundsToWgs84(
 export function boundsExtent(bounds: RasterBounds) {
   const lons = bounds.map((p) => p[0]);
   const lats = bounds.map((p) => p[1]);
-  return { west: Math.min(...lons), east: Math.max(...lons), south: Math.min(...lats), north: Math.max(...lats) };
+  return { west: minOf(lons), east: maxOf(lons), south: minOf(lats), north: maxOf(lats) };
 }
