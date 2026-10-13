@@ -120,22 +120,47 @@ export function downscaleLandsatLST(
     return useMultivariate ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi + coefficients[3] * ndwi : coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndvi * ndvi;
   };
 
-  const residuals = new Float32Array(nCells); residuals.fill(NaN);
-  const coarsePredictions = new Float32Array(nCells); coarsePredictions.fill(NaN);
-  for (let cell = 0; cell < nCells; cell += 1) {
-    const [ndvi, ndbi, ndwi] = means[cell]; const temperature = coarseLST[cell];
-    if (!Number.isFinite(temperature) || !Number.isFinite(ndvi)) continue;
-    const predicted = useMultivariate ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi + coefficients[3] * ndwi : coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndvi * ndvi;
-    coarsePredictions[cell] = predicted; residuals[cell] = temperature - predicted;
+  // Predict on the actual SR2D4 grid first. A coarse residual alone is not
+  // sufficient for conservation: fine-pixel sampling and missing values can make
+  // the mean of the predictions differ from the coarse model prediction.
+  const finePredictions = new Float32Array(fineWidth * fineHeight);
+  finePredictions.fill(NaN);
+  const predictionSums = new Float64Array(nCells);
+  const predictionCounts = new Uint32Array(nCells);
+  for (let index = 0; index < finePredictions.length; index += 1) {
+    const cell = fineCell[index];
+    if (cell < 0 || !Number.isFinite(coarseLST[cell])) continue;
+    const predicted = predict(index);
+    if (!Number.isFinite(predicted)) continue;
+    finePredictions[index] = predicted;
+    predictionSums[cell] += predicted;
+    predictionCounts[cell] += 1;
   }
 
-  const output = new Float32Array(fineWidth * fineHeight); output.fill(NaN);
-  const finePredictionValues: number[] = []; const signalValues: number[] = []; const coarseValues: number[] = [];
+  // Cell-wise additive residual is estimated from the *mean of fine predictions*
+  // in that exact Landsat cell. This enforces the coarse observation constraint:
+  // mean(T_fine | cell) == T_Landsat, up to Float32 rounding.
+  const cellCorrections = new Float32Array(nCells);
+  cellCorrections.fill(NaN);
+  for (let cell = 0; cell < nCells; cell += 1) {
+    if (predictionCounts[cell] && Number.isFinite(coarseLST[cell])) {
+      cellCorrections[cell] = coarseLST[cell] - predictionSums[cell] / predictionCounts[cell];
+    }
+  }
+
+  const output = new Float32Array(fineWidth * fineHeight);
+  output.fill(NaN);
+  const finePredictionValues: number[] = [];
+  const signalValues: number[] = [];
+  const coarseValues: number[] = [];
   for (let index = 0; index < output.length; index += 1) {
-    const cell = fineCell[index]; const predicted = predict(index);
-    if (cell < 0 || !Number.isFinite(predicted) || !Number.isFinite(residuals[cell])) continue;
-    output[index] = predicted + residuals[cell];
-    finePredictionValues.push(predicted); signalValues.push(output[index] - coarseLST[cell]); coarseValues.push(coarseLST[cell]);
+    const cell = fineCell[index];
+    const predicted = finePredictions[index];
+    if (cell < 0 || !Number.isFinite(predicted) || !Number.isFinite(cellCorrections[cell])) continue;
+    output[index] = predicted + cellCorrections[cell];
+    finePredictionValues.push(predicted);
+    signalValues.push(output[index] - coarseLST[cell]);
+    coarseValues.push(coarseLST[cell]);
   }
 
   // Numerical proof that the output is not just the coarse image repeated.
