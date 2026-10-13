@@ -18,7 +18,7 @@ export type TsHarpResult = {
 };
 
 type Features = { ndvi: Float32Array; ndbi: Float32Array; ndmi: Float32Array };
-type CellStats = { count: number; sumNdvi: number; sumNdbi: number; sumNdwi: number };
+type CellStats = { count: number; sumNdvi: number; sumNdbi: number; sumNdmi: number };
 
 function solveRidge(matrix: number[][], vector: number[], ridge = 1e-8) {
   const n = vector.length;
@@ -73,7 +73,7 @@ export function downscaleLandsatLST(
   const coarse = boundsExtent(coarseBounds);
   const fine = boundsExtent(fineBounds);
   const nCells = coarseWidth * coarseHeight;
-  const cells: CellStats[] = Array.from({ length: nCells }, () => ({ count: 0, sumNdvi: 0, sumNdbi: 0, sumNdwi: 0 }));
+  const cells: CellStats[] = Array.from({ length: nCells }, () => ({ count: 0, sumNdvi: 0, sumNdbi: 0, sumNdmi: 0 }));
   const fineCell = new Int32Array(fineWidth * fineHeight);
   fineCell.fill(-1);
 
@@ -88,7 +88,7 @@ export function downscaleLandsatLST(
     fineCell[index] = cell;
     const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndmi = fineFeatures.ndmi[index];
     if (Number.isFinite(ndvi) && Number.isFinite(ndbi) && Number.isFinite(ndmi)) {
-      const stats = cells[cell]; stats.count += 1; stats.sumNdvi += ndvi; stats.sumNdbi += ndbi; stats.sumNdwi += ndmi;
+      const stats = cells[cell]; stats.count += 1; stats.sumNdvi += ndvi; stats.sumNdbi += ndbi; stats.sumNdmi += ndmi;
     }
   }
 
@@ -97,11 +97,11 @@ export function downscaleLandsatLST(
   for (let cell = 0; cell < nCells; cell += 1) {
     const stats = cells[cell]; const temperature = coarseLST[cell];
     if (!Number.isFinite(temperature) || stats.count < 1) continue;
-    const ndvi = stats.sumNdvi / stats.count; const ndbi = stats.sumNdbi / stats.count; const ndmi = stats.sumNdwi / stats.count;
+    const ndvi = stats.sumNdvi / stats.count; const ndbi = stats.sumNdbi / stats.count; const ndmi = stats.sumNdmi / stats.count;
     means[cell] = [ndvi, ndbi, ndmi];
     validCells.push(cell);
   }
-  if (!validCells.length) throw new Error('Nenhuma célula térmica Landsat válida após a máscara e a exclusão de água do ajuste TsHARP.');
+  if (!validCells.length) throw new Error('Nenhuma célula térmica Landsat válida após a máscara QA e a verificação dos índices ópticos.');
 
   // NDVI polynomial is the canonical TsHARP basis. NDBI and NDMI are added
   // only when the scene has enough independent coarse cells to support them.
