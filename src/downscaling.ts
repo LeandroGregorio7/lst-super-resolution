@@ -131,7 +131,7 @@ export function downscaleLandsatLST(
   // NDVI polynomial is the canonical TsHARP basis. Add NDBI and a truly
   // independent green-NIR NDWI only when they are available and sample size allows.
   const ndwiCellCount = validCells.filter((cell) => Number.isFinite(means[cell][2])).length;
-  const useNdwiModel = validCells.length >= 12 && ndwiCellCount >= 12;
+  const useNdwiModel = validCells.length >= 12 && ndwiCellCount === validCells.length;
   const useNdbiModel = !useNdwiModel && validCells.length >= 8;
   const rows = validCells.map((cell) => {
     const [ndvi, ndbi, ndwi] = means[cell];
