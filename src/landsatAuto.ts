@@ -6,6 +6,7 @@ import { boundsExtent } from './rasterGeo';
 const STAC_SEARCH = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
 const STAC_SIGN = 'https://planetarycomputer.microsoft.com/api/sas/v1/sign';
 const MAX_CANDIDATES_TO_TEST = 12;
+const MIN_USABLE_THERMAL_FRACTION = 0.8;
 export type ThermalProgress = (message: string) => void;
 
 type StacItem = {
@@ -168,9 +169,18 @@ export async function fetchNearestLandsatThermal(fileName: string, bounds: Raste
     }
   }
   if (!results.length) throw new Error(`As cenas Landsat encontradas em ±32 dias não têm pixels ST_B10 válidos nesta área após a máscara QA_PIXEL.`);
-  // Prefer a usable scene with broad thermal coverage; use temporal distance only as tie-breaker.
-  results.sort((a, b) => b.validThermalFraction - a.validThermalFraction || b.validThermalPixels - a.validThermalPixels || a.daysFromSr2d4 - b.daysFromSr2d4);
-  const best = results[0];
-  onProgress?.(`Cena escolhida: ${best.itemId} · ${best.validThermalPixels.toLocaleString()} pixels válidos · cobertura ${(best.validThermalFraction * 100).toFixed(1)}%`);
+  // First require a usable spatial mask; among scenes meeting that threshold,
+  // prefer the date closest to SR2D4. If none reach it, choose the best available
+  // coverage and explicitly warn rather than silently prioritizing a distant date.
+  const adequate = results.filter((scene) => scene.validThermalFraction >= MIN_USABLE_THERMAL_FRACTION);
+  const selectionPool = adequate.length ? adequate : results;
+  selectionPool.sort((a, b) => adequate.length
+    ? a.daysFromSr2d4 - b.daysFromSr2d4 || b.validThermalFraction - a.validThermalFraction
+    : b.validThermalFraction - a.validThermalFraction || a.daysFromSr2d4 - b.daysFromSr2d4);
+  const best = selectionPool[0];
+  if (!adequate.length) {
+    onProgress?.(`Aviso: nenhuma cena alcançou ${(MIN_USABLE_THERMAL_FRACTION * 100).toFixed(0)}% de cobertura térmica válida; a seleção prioriza a melhor cobertura disponível.`);
+  }
+  onProgress?.(`Cena escolhida: ${best.itemId} · data ${best.acquisitionDate} · ${best.daysFromSr2d4.toFixed(0)} dia(s) da SR2D4 · ${best.validThermalPixels.toLocaleString()} pixels válidos · cobertura ${(best.validThermalFraction * 100).toFixed(1)}%`);
   return best;
 }
