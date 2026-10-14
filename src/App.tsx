@@ -58,7 +58,13 @@ async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, num
   onProgress?.(`SR2D4 lido: ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · calculando extensão geográfica…`);
   const landsat = await fetchNearestLandsatThermal(file.name, bounds, onProgress);
   onProgress?.('Calculando NDVI, NDBI e NDMI nas bandas selecionadas…');
-  const indices = calculateOpticalIndices(red, nir, swir);
+  // This named SR2D4/MS x10 product uses the documented 10-layer order.
+  // Only trust Green if metadata-derived labels identify the selected layer as B03.
+  const greenIndex = tiff.bandLabels.findIndex((label) => /B03\s+Green/i.test(label));
+  const green = greenIndex >= 0 ? tiff.rasters[greenIndex] as Float32Array : undefined;
+  const indices = calculateOpticalIndices(red, nir, swir, green);
+  onProgress?.(green ? 'Índices calculados: NDVI (B08/B04), NDBI (SWIR/B08) e NDWI (B03/B08).' :
+    'Aviso: B03/Green não identificada; o modelo usará fallback sem NDWI independente.');
   onProgress?.('Executando TsHARP: agregando índices à grade térmica, ajustando LST–NDVI e conservando residual por célula…');
   const result = downscaleLandsatLST(landsat.lstCelsius, landsat.width, landsat.height, landsat.bounds, indices, tiff.width, tiff.height, bounds);
   const resolutionLabel = tiff.isProjected ? `${Math.abs(tiff.resolution[0]).toFixed(2)} m/pixel` : `${Math.abs(tiff.resolution[0]).toFixed(6)} graus/pixel`;
