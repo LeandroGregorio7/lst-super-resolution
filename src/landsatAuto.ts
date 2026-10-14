@@ -28,6 +28,8 @@ export type LandsatThermalSubset = {
   width: number;
   height: number;
   bounds: RasterBounds;
+  origin: number[];
+  resolution: number[];
   epsg: number;
 };
 
@@ -90,7 +92,7 @@ function nativeBbox(bounds: RasterBounds, epsg: number): [number, number, number
   let west = Infinity; let south = Infinity; let east = -Infinity; let north = -Infinity; for (const point of points) { west = Math.min(west, point[0]); south = Math.min(south, point[1]); east = Math.max(east, point[0]); north = Math.max(north, point[1]); } return [west, south, east, north];
 }
 
-async function readSubset(url: string, bbox: [number, number, number, number], sample: number, epsg: number): Promise<{ data: Float32Array | Uint16Array; width: number; height: number; bounds: RasterBounds }> {
+async function readSubset(url: string, bbox: [number, number, number, number], sample: number, epsg: number): Promise<{ data: Float32Array | Uint16Array; width: number; height: number; bounds: RasterBounds; origin: number[]; resolution: number[] }> {
   const tiff = await GeoTIFF.fromUrl(url);
   const image = await tiff.getImage();
   const imageBox = image.getBoundingBox();
@@ -114,7 +116,9 @@ async function readSubset(url: string, bbox: [number, number, number, number], s
   const toWgs84 = (x: number, y: number): [number, number] =>
     proj4(`EPSG:${epsg}`, 'EPSG:4326', [x, y]) as [number, number];
   const subsetBounds = [toWgs84(left, top), toWgs84(right, top), toWgs84(right, bottom), toWgs84(left, bottom)] as RasterBounds;
-  return { data: result, width, height, bounds: subsetBounds };
+  const subsetOrigin = [left, top];
+  const subsetResolution = [resolution[0], resolution[1]];
+  return { data: result, width, height, bounds: subsetBounds, origin: subsetOrigin, resolution: subsetResolution };
 }
 
 async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
@@ -144,7 +148,7 @@ async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds,
   }
   const satellite = item.id.startsWith('LC08') ? 'Landsat 8' : 'Landsat 9';
   onProgress?.(`${item.id}: ${validThermalPixels.toLocaleString()} pixels térmicos válidos (${(validThermalPixels / Math.max(thermal.data.length, 1) * 100).toFixed(1)}%)`);
-  return { itemId: item.id, satellite, acquisitionDate: isoDay(acquisition), sourceDate: isoDay(srDate), daysFromSr2d4: dayDistance(acquisition, srDate), cloudCover: Number(item.properties['eo:cloud_cover'] ?? 100), validThermalPixels, validThermalFraction: thermal.data.length ? validThermalPixels / thermal.data.length : 0, lstCelsius, qaPixel, width: thermal.width, height: thermal.height, bounds: thermal.bounds, epsg };
+  return { itemId: item.id, satellite, acquisitionDate: isoDay(acquisition), sourceDate: isoDay(srDate), daysFromSr2d4: dayDistance(acquisition, srDate), cloudCover: Number(item.properties['eo:cloud_cover'] ?? 100), validThermalPixels, validThermalFraction: thermal.data.length ? validThermalPixels / thermal.data.length : 0, lstCelsius, qaPixel, width: thermal.width, height: thermal.height, bounds: thermal.bounds, origin: thermal.origin, resolution: thermal.resolution, epsg };
 }
 
 export async function fetchNearestLandsatThermal(fileName: string, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
