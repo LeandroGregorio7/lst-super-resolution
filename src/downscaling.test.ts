@@ -4,6 +4,10 @@ import { downscaleLandsatLST } from './downscaling';
 import type { RasterBounds } from './rasterGeo';
 
 const bounds: RasterBounds = [[0, 1], [1, 1], [1, 0], [0, 0]];
+const gridAlignment = {
+  fine: { origin: [0, 60], resolution: [1, -1], epsg: 32631 },
+  coarse: { origin: [0, 60], resolution: [10, -10], epsg: 32631 },
+};
 
 function makeFeatures(width: number, height: number, withNdwi = true) {
   const ndvi = new Float32Array(width * height);
@@ -86,7 +90,7 @@ describe('LST coarse-to-fine downscaling', () => {
     const thermal = makeCoarseTarget(features, fineWidth, fineHeight, coarseWidth, coarseHeight);
     const result = downscaleLandsatLST(
       thermal, coarseWidth, coarseHeight, bounds,
-      features, fineWidth, fineHeight, bounds,
+      features, fineWidth, fineHeight, bounds, gridAlignment,
     );
 
     expect(result.model).toBe('multivariate-NDVI-NDBI-NDWI');
@@ -119,7 +123,7 @@ describe('LST coarse-to-fine downscaling', () => {
     const thermal = makeCoarseTarget(features, fineWidth, fineHeight, coarseWidth, coarseHeight);
     const result = downscaleLandsatLST(
       thermal, coarseWidth, coarseHeight, bounds,
-      features, fineWidth, fineHeight, bounds,
+      features, fineWidth, fineHeight, bounds, gridAlignment,
     );
 
     expect(result.model).toBe('multivariate-NDVI-NDBI');
