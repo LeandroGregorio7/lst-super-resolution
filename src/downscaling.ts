@@ -117,6 +117,14 @@ export function downscaleLandsatLST(
   const coefficients = fitModel(rows, target);
   if (!coefficients) throw new Error('Não foi possível ajustar a relação LST–índices na grade Landsat.');
 
+  // In-sample R² is reported as a diagnostic only; independent thermal data
+  // are still required for accuracy validation.
+  const fittedTargets = rows.map((row) => row.reduce((sum, value, index) => sum + value * coefficients[index], 0));
+  const targetMean = target.reduce((sum, value) => sum + value, 0) / target.length;
+  const residualSumSquares = target.reduce((sum, value, index) => sum + (value - fittedTargets[index]) ** 2, 0);
+  const totalSumSquares = target.reduce((sum, value) => sum + (value - targetMean) ** 2, 0);
+  const fitR2 = totalSumSquares > 1e-12 ? 1 - residualSumSquares / totalSumSquares : NaN;
+
   const predict = (index: number) => {
     const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndwi = fineFeatures.ndwi[index];
     if (!Number.isFinite(ndvi)) return NaN;
@@ -179,7 +187,7 @@ export function downscaleLandsatLST(
   if (fineSignalRange < 0.01 && finePredictionValues.length > 0) throw new Error(`TsHARP não gerou detalhe espectral mensurável (amplitude ${fineSignalRange.toFixed(3)} °C). A execução foi interrompida para não apresentar a TIRS como super-resolução.`);
   return {
     lstDownscaled: output, slope: coefficients[1] ?? 0, intercept: coefficients[0] ?? 0,
-    r2: 0, sharpened: true, validCount: validCells.length,
+    r2: fitR2, sharpened: true, validCount: validCells.length,
     model: useNdwiModel ? 'multivariate-NDVI-NDBI-NDWI' : useNdbiModel ? 'multivariate-NDVI-NDBI' : 'TsHARP-NDVI-polynomial',
     coarseRange: range(coarseValues), fineRange: range(output), fineSignalRange,
     conservationMae: conservationCount ? conservationError / conservationCount : NaN,
