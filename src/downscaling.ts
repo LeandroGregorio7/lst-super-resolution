@@ -8,7 +8,7 @@ export type TsHarpResult = {
   r2: number;
   sharpened: boolean;
   validCount: number;
-  model: 'TsHARP-NDVI-polynomial' | 'multivariate-NDVI-NDBI-NDMI' | 'coarse-fallback';
+  model: 'TsHARP-NDVI-polynomial' | 'multivariate-NDVI-NDBI' | 'multivariate-NDVI-NDBI-NDWI' | 'coarse-fallback';
   coarseRange: number;
   fineRange: number;
   fineSignalRange: number;
@@ -17,8 +17,8 @@ export type TsHarpResult = {
   coarseHeight: number;
 };
 
-type Features = { ndvi: Float32Array; ndbi: Float32Array; ndmi: Float32Array };
-type CellStats = { count: number; sumNdvi: number; sumNdbi: number; sumNdmi: number };
+type Features = { ndvi: Float32Array; ndbi: Float32Array; ndwi: Float32Array };
+type CellStats = { count: number; sumNdvi: number; sumNdbi: number; countNdwi: number; sumNdwi: number };
 
 function solveRidge(matrix: number[][], vector: number[], ridge = 1e-8) {
   const n = vector.length;
@@ -73,7 +73,7 @@ export function downscaleLandsatLST(
   const coarse = boundsExtent(coarseBounds);
   const fine = boundsExtent(fineBounds);
   const nCells = coarseWidth * coarseHeight;
-  const cells: CellStats[] = Array.from({ length: nCells }, () => ({ count: 0, sumNdvi: 0, sumNdbi: 0, sumNdmi: 0 }));
+  const cells: CellStats[] = Array.from({ length: nCells }, () => ({ count: 0, sumNdvi: 0, sumNdbi: 0, countNdwi: 0, sumNdwi: 0 }));
   const fineCell = new Int32Array(fineWidth * fineHeight);
   fineCell.fill(-1);
 
@@ -86,9 +86,10 @@ export function downscaleLandsatLST(
     const cell = cy * coarseWidth + cx;
     const index = y * fineWidth + x;
     fineCell[index] = cell;
-    const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndmi = fineFeatures.ndmi[index];
-    if (Number.isFinite(ndvi) && Number.isFinite(ndbi) && Number.isFinite(ndmi)) {
-      const stats = cells[cell]; stats.count += 1; stats.sumNdvi += ndvi; stats.sumNdbi += ndbi; stats.sumNdmi += ndmi;
+    const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndwi = fineFeatures.ndwi[index];
+    if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
+      const stats = cells[cell]; stats.count += 1; stats.sumNdvi += ndvi; stats.sumNdbi += ndbi;
+      if (Number.isFinite(ndwi)) { stats.countNdwi += 1; stats.sumNdwi += ndwi; }
     }
   }
 
@@ -97,27 +98,31 @@ export function downscaleLandsatLST(
   for (let cell = 0; cell < nCells; cell += 1) {
     const stats = cells[cell]; const temperature = coarseLST[cell];
     if (!Number.isFinite(temperature) || stats.count < 1) continue;
-    const ndvi = stats.sumNdvi / stats.count; const ndbi = stats.sumNdbi / stats.count; const ndmi = stats.sumNdmi / stats.count;
-    means[cell] = [ndvi, ndbi, ndmi];
+    const ndvi = stats.sumNdvi / stats.count; const ndbi = stats.sumNdbi / stats.count; const ndwi = stats.countNdwi ? stats.sumNdwi / stats.countNdwi : NaN;
+    means[cell] = [ndvi, ndbi, ndwi];
     validCells.push(cell);
   }
   if (!validCells.length) throw new Error('Nenhuma célula térmica Landsat válida após a máscara QA e a verificação dos índices ópticos.');
 
-  // NDVI polynomial is the canonical TsHARP basis. NDBI and NDMI are added
-  // only when the scene has enough independent coarse cells to support them.
-  const useMultivariate = validCells.length >= 12;
+  // NDVI polynomial is the canonical TsHARP basis. Add NDBI and a truly
+  // independent green-NIR NDWI only when they are available and sample size allows.
+  const ndwiCellCount = validCells.filter((cell) => Number.isFinite(means[cell][2])).length;
+  const useNdwiModel = validCells.length >= 12 && ndwiCellCount >= 12;
+  const useNdbiModel = !useNdwiModel && validCells.length >= 8;
   const rows = validCells.map((cell) => {
-    const [ndvi, ndbi, ndmi] = means[cell];
-    return useMultivariate ? [1, ndvi, ndbi, ndmi] : [1, ndvi, ndvi * ndvi];
+    const [ndvi, ndbi, ndwi] = means[cell];
+    return useNdwiModel ? [1, ndvi, ndbi, ndwi] : useNdbiModel ? [1, ndvi, ndbi] : [1, ndvi, ndvi * ndvi];
   });
   const target = validCells.map((cell) => coarseLST[cell]);
   const coefficients = fitModel(rows, target);
   if (!coefficients) throw new Error('Não foi possível ajustar a relação LST–índices na grade Landsat.');
 
   const predict = (index: number) => {
-    const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndmi = fineFeatures.ndmi[index];
-    if (!Number.isFinite(ndvi) || !Number.isFinite(ndbi) || !Number.isFinite(ndmi)) return NaN;
-    return useMultivariate ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi + coefficients[3] * ndmi : coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndvi * ndvi;
+    const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndwi = fineFeatures.ndwi[index];
+    if (!Number.isFinite(ndvi)) return NaN;
+    if (useNdwiModel) return Number.isFinite(ndbi) && Number.isFinite(ndwi) ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi + coefficients[3] * ndwi : NaN;
+    if (useNdbiModel) return Number.isFinite(ndbi) ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi : NaN;
+    return coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndvi * ndvi;
   };
 
   // Predict on the actual SR2D4 grid first. A coarse residual alone is not
@@ -175,7 +180,7 @@ export function downscaleLandsatLST(
   return {
     lstDownscaled: output, slope: coefficients[1] ?? 0, intercept: coefficients[0] ?? 0,
     r2: 0, sharpened: true, validCount: validCells.length,
-    model: useMultivariate ? 'multivariate-NDVI-NDBI-NDMI' : 'TsHARP-NDVI-polynomial',
+    model: useNdwiModel ? 'multivariate-NDVI-NDBI-NDWI' : useNdbiModel ? 'multivariate-NDVI-NDBI' : 'TsHARP-NDVI-polynomial',
     coarseRange: range(coarseValues), fineRange: range(output), fineSignalRange,
     conservationMae: conservationCount ? conservationError / conservationCount : NaN,
     coarseWidth, coarseHeight,
