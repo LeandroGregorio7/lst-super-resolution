@@ -76,6 +76,14 @@ async function signedHref(href: string): Promise<string> {
   return body.href;
 }
 
+function defaultUtmEpsg(bounds: RasterBounds): number {
+  const extent = boundsExtent(bounds);
+  const lon = (extent.west + extent.east) / 2;
+  const lat = (extent.south + extent.north) / 2;
+  const zone = Math.min(60, Math.max(1, Math.floor((lon + 180) / 6) + 1));
+  return (lat >= 0 ? 32600 : 32700) + zone;
+}
+
 function nativeBbox(bounds: RasterBounds, epsg: number): [number, number, number, number] {
   const transform = (point: [number, number]) => proj4('EPSG:4326', `EPSG:${epsg}`, point) as [number, number];
   const points = bounds.map(transform);
@@ -112,7 +120,8 @@ async function readSubset(url: string, bbox: [number, number, number, number], s
 async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
   const acquisition = new Date(String(item.properties.datetime));
   onProgress?.(`Lendo ${item.id} · ST_B10 e QA_PIXEL…`);
-  const epsg = Number(item.properties['proj:epsg'] ?? 32623);
+  const declaredEpsg = Number(item.properties['proj:epsg']);
+  const epsg = Number.isFinite(declaredEpsg) && declaredEpsg > 0 ? declaredEpsg : defaultUtmEpsg(bounds);
   const bbox = nativeBbox(bounds, epsg);
   const thermalUrl = await signedHref(String(item.assets.lwir11.href));
   const qaUrl = await signedHref(String(item.assets.qa_pixel.href));
