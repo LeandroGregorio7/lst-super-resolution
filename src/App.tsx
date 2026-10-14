@@ -66,7 +66,14 @@ async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, num
   onProgress?.(green ? 'Índices calculados: NDVI (B08/B04), NDBI (SWIR/B08) e NDWI (B03/B08).' :
     'Aviso: B03/Green não identificada; o modelo usará fallback sem NDWI independente.');
   onProgress?.('Executando TsHARP: agregando índices à grade térmica, ajustando LST–NDVI e conservando residual por célula…');
-  const result = downscaleLandsatLST(landsat.lstCelsius, landsat.width, landsat.height, landsat.bounds, indices, tiff.width, tiff.height, bounds);
+  const result = downscaleLandsatLST(
+    landsat.lstCelsius, landsat.width, landsat.height, landsat.bounds,
+    indices, tiff.width, tiff.height, bounds,
+    {
+      fine: { origin: tiff.origin, resolution: tiff.resolution, epsg: tiff.epsg },
+      coarse: { origin: landsat.origin, resolution: landsat.resolution, epsg: landsat.epsg },
+    },
+  );
   const resolutionLabel = tiff.isProjected ? `${Math.abs(tiff.resolution[0]).toFixed(2)} m/pixel` : `${Math.abs(tiff.resolution[0]).toFixed(6)} graus/pixel`;
   onProgress?.(`Fusão concluída: ${result.model} · ${result.validCount} células coarse · coef. NDVI ${result.slope.toFixed(4)} · R² ajuste coarse ${Number.isFinite(result.r2) ? result.r2.toFixed(3) : 'n/a'} · saída ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · resolução ${resolutionLabel}`);
   onProgress?.(`Prova numérica: LST coarse ${result.coarseRange.toFixed(2)} °C · LST fina ${result.fineRange.toFixed(2)} °C · sinal transferido do SR2D4 ${result.fineSignalRange.toFixed(2)} °C · erro médio de conservação ${result.conservationMae.toFixed(3)} °C`);
