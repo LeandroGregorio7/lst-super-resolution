@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { calculateOpticalIndices } from './opticalIndices';
 import { downscaleLandsatLST } from './downscaling';
+import { chooseBestThermalScene } from './landsatAuto';
 import type { RasterBounds } from './rasterGeo';
 
 const bounds: RasterBounds = [[0, 1], [1, 1], [1, 0], [0, 0]];
@@ -129,5 +130,28 @@ describe('LST coarse-to-fine downscaling', () => {
     expect(result.model).toBe('multivariate-NDVI-NDBI');
     expect(result.conservationMae).toBeLessThan(1e-4);
     expect(result.fineSignalRange).toBeGreaterThan(0.01);
+  });
+});
+
+describe('Landsat scene selection', () => {
+  it('prefers the closest date among scenes with adequate valid thermal coverage', () => {
+    const scenes = [
+      { itemId: 'far-good', daysFromSr2d4: 20, validThermalFraction: 0.96 },
+      { itemId: 'near-usable', daysFromSr2d4: 5, validThermalFraction: 0.84 },
+      { itemId: 'nearest-cloudy', daysFromSr2d4: 1, validThermalFraction: 0.35 },
+    ];
+    const selection = chooseBestThermalScene(scenes);
+    expect(selection.best.itemId).toBe('near-usable');
+    expect(selection.adequateCoverageFound).toBe(true);
+  });
+
+  it('falls back to the best spatial coverage if no scene reaches the threshold', () => {
+    const scenes = [
+      { itemId: 'near-poor', daysFromSr2d4: 1, validThermalFraction: 0.35 },
+      { itemId: 'far-better', daysFromSr2d4: 9, validThermalFraction: 0.68 },
+    ];
+    const selection = chooseBestThermalScene(scenes);
+    expect(selection.best.itemId).toBe('far-better');
+    expect(selection.adequateCoverageFound).toBe(false);
   });
 });
