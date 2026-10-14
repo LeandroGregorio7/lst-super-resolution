@@ -9,6 +9,18 @@ const MAX_CANDIDATES_TO_TEST = 12;
 const MIN_USABLE_THERMAL_FRACTION = 0.8;
 export type ThermalProgress = (message: string) => void;
 
+export function chooseBestThermalScene<T extends { daysFromSr2d4: number; validThermalFraction: number }>(
+  scenes: T[],
+): { best: T; adequateCoverageFound: boolean } {
+  if (!scenes.length) throw new Error('Nenhuma cena térmica disponível para seleção.');
+  const adequate = scenes.filter((scene) => scene.validThermalFraction >= MIN_USABLE_THERMAL_FRACTION);
+  const pool = (adequate.length ? adequate : scenes).slice();
+  pool.sort((a, b) => adequate.length
+    ? a.daysFromSr2d4 - b.daysFromSr2d4 || b.validThermalFraction - a.validThermalFraction
+    : b.validThermalFraction - a.validThermalFraction || a.daysFromSr2d4 - b.daysFromSr2d4);
+  return { best: pool[0], adequateCoverageFound: adequate.length > 0 };
+}
+
 type StacItem = {
   id: string;
   properties: Record<string, unknown>;
@@ -172,13 +184,8 @@ export async function fetchNearestLandsatThermal(fileName: string, bounds: Raste
   // First require a usable spatial mask; among scenes meeting that threshold,
   // prefer the date closest to SR2D4. If none reach it, choose the best available
   // coverage and explicitly warn rather than silently prioritizing a distant date.
-  const adequate = results.filter((scene) => scene.validThermalFraction >= MIN_USABLE_THERMAL_FRACTION);
-  const selectionPool = adequate.length ? adequate : results;
-  selectionPool.sort((a, b) => adequate.length
-    ? a.daysFromSr2d4 - b.daysFromSr2d4 || b.validThermalFraction - a.validThermalFraction
-    : b.validThermalFraction - a.validThermalFraction || a.daysFromSr2d4 - b.daysFromSr2d4);
-  const best = selectionPool[0];
-  if (!adequate.length) {
+  const { best, adequateCoverageFound } = chooseBestThermalScene(results);
+  if (!adequateCoverageFound) {
     onProgress?.(`Aviso: nenhuma cena alcançou ${(MIN_USABLE_THERMAL_FRACTION * 100).toFixed(0)}% de cobertura térmica válida; a seleção prioriza a melhor cobertura disponível.`);
   }
   onProgress?.(`Cena escolhida: ${best.itemId} · data ${best.acquisitionDate} · ${best.daysFromSr2d4.toFixed(0)} dia(s) da SR2D4 · ${best.validThermalPixels.toLocaleString()} pixels válidos · cobertura ${(best.validThermalFraction * 100).toFixed(1)}%`);
