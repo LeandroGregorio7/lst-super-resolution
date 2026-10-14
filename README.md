@@ -12,7 +12,7 @@ O nome esperado do produto é, por exemplo, `S2L3Ax10_T23KLQ-5ee4de6e7-20260904_
 4. seleciona a cena Landsat 8/9 mais próxima, priorizando menor distância temporal e filtrando cenas com nuvens excessivas;
 5. acessa os COGs `ST_B10` e `QA_PIXEL`, assinados pelo Planetary Computer, somente na janela espacial necessária;
 6. aplica a escala oficial `ST[K] = DN × 0.00341802 + 149.0`, converte para °C e elimina pixels fill, nuvem, cirrus, sombra e neve;
-7. agrega NDVI, NDBI e NDWI do SR2D4 para a escala Landsat, ajusta a relação multivariada na escala coarse e transfere-a para a grade fina;
+7. agrega NDVI, NDBI e NDWI (Green/NIR) do SR2D4 para a escala Landsat, ajusta o modelo coarse e transfere-o para a grade fina;
 8. adiciona o residual Landsat de cada célula coarse ao resultado fino, preservando a observação térmica agregada.
 
 Não há input de banda térmica Landsat no app. O usuário seleciona apenas Red, NIR e SWIR do próprio SR2D4. A busca térmica é automática.
@@ -50,7 +50,7 @@ A literatura recente mostra que integrar reflectância, índices de vegetação 
 
 ## TsHARP/downscaling
 
-A implementação coarse-to-fine ajusta a regressão com médias dos predictores SR2D4 dentro de cada célula Landsat e aplica os coeficientes aos pixels finos. O residual observado da célula coarse é adicionado ao campo fino, evitando que a regressão invente um viés médio incompatível com a LST Landsat. NDVI isolado não é usado como temperatura; NDBI e NDWI ajudam a distinguir vegetação, superfícies construídas/solo e água.
+A implementação coarse-to-fine ajusta a regressão com médias dos predictores SR2D4 dentro de cada célula Landsat e aplica os coeficientes aos pixels finos. A associação espacial usa os centros dos pixels e as transformações nativas de origem/resolução/EPSG, em vez de estimar a grade somente por uma caixa envolvente latitude/longitude. O residual é calculado a partir da média das previsões finas realmente produzidas em cada célula; assim, a média final por célula coincide com a ST_B10 válida dentro da precisão numérica. NDVI isolado não é usado como temperatura; NDBI e NDWI independente ajudam a distinguir superfícies construídas/solo e água. Neste app, NDWI é (Green − NIR)/(Green + NIR), enquanto NDMI é (NIR − SWIR)/(NIR + SWIR). NDBI e NDMI são opostos matemáticos se usam o mesmo NIR/SWIR e não devem entrar juntos como preditores independentes.
 
 A compatibilidade da cena deve ser examinada quando a diferença temporal for grande, houver nuvens na área, mudança de iluminação ou diferença de horário de passagem. Se não houver cena adequada, o app deve interromper o processamento em vez de fabricar temperatura.
 
@@ -92,3 +92,8 @@ MIT.
 A busca Landsat não usa mais somente a cena temporalmente mais próxima. Ela consulta até 12 cenas em uma janela de ±32 dias, lê `ST_B10` e `QA_PIXEL` de cada uma, conta os pixels térmicos válidos dentro da área e escolhe a cena com maior cobertura térmica válida. A máscara usa os bits 0–5 do `QA_PIXEL` para excluir preenchimento, nuvem dilatada, cirrus, nuvem, sombra e neve; o bit 6 (`clear`) não é tratado como nuvem.
 
 Se a área ainda tiver menos de oito células Landsat válidas para ajustar quatro parâmetros, o app não interrompe nem cria uma regressão instável. Ele usa uma transferência conservadora da LST coarse por célula e marca internamente o resultado como não-sharpened. Isso mantém a temperatura observada sem fabricar detalhe de 1 m. A regressão multivariada só é usada quando há amostra suficiente.
+
+
+## Validação matemática e logs de diagnóstico
+
+O CI executa testes automatizados de índices espectrais, seleção temporal de cena Landsat, geração de variação fina e conservação da média térmica por célula. O log informa o modelo ajustado, o R² de treinamento, a amplitude do sinal fino e o erro médio de conservação. O R² é uma métrica do ajuste coarse usado na execução; não substitui validação contra dados térmicos independentes. O mapeamento para grade de 1 m declara a resolução do raster de saída, não uma resolução térmica medida a 1 m.
