@@ -5,7 +5,8 @@ import { boundsExtent } from './rasterGeo';
 
 const STAC_SEARCH = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
 const STAC_SIGN = 'https://planetarycomputer.microsoft.com/api/sas/v1/sign';
-const MAX_CANDIDATES_TO_TEST = 12;
+const MAX_CANDIDATES_TO_TEST = 24;
+const SEARCH_WINDOW_DAYS = 90;
 const MIN_USABLE_THERMAL_FRACTION = 0.8;
 export type ThermalProgress = (message: string) => void;
 
@@ -59,8 +60,8 @@ function dayDistance(a: Date, b: Date) { return Math.abs(a.getTime() - b.getTime
 
 async function searchLandsat(date: Date, bounds: RasterBounds): Promise<StacItem[]> {
   const extent = boundsExtent(bounds);
-  const start = new Date(date.getTime() - 32 * 86400000);
-  const end = new Date(date.getTime() + 32 * 86400000);
+  const start = new Date(date.getTime() - SEARCH_WINDOW_DAYS * 86400000);
+  const end = new Date(date.getTime() + SEARCH_WINDOW_DAYS * 86400000);
   const response = await fetch(STAC_SEARCH, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -166,21 +167,38 @@ async function readCandidate(item: StacItem, srDate: Date, bounds: RasterBounds,
 
 export async function fetchNearestLandsatThermal(fileName: string, bounds: RasterBounds, onProgress?: ThermalProgress): Promise<LandsatThermalSubset> {
   const srDate = parseSr2d4Date(fileName);
-  onProgress?.(`Consultando catálogo Landsat em ±32 dias de ${isoDay(srDate)}…`);
+  onProgress?.(`Consultando catálogo Landsat em ±${SEARCH_WINDOW_DAYS} dias de ${isoDay(srDate)}…`);
   const candidates = await searchLandsat(srDate, bounds);
   onProgress?.(`${candidates.length} cenas candidatas encontradas; testando cobertura térmica…`);
-  if (!candidates.length) throw new Error(`Nenhuma cena Landsat 8/9 foi encontrada em ±32 dias de ${isoDay(srDate)}.`);
+  if (!candidates.length) throw new Error(`Nenhuma cena Landsat 8/9 foi encontrada em ±${SEARCH_WINDOW_DAYS} dias de ${isoDay(srDate)}.`);
   const results: LandsatThermalSubset[] = [];
+  const failures: string[] = [];
   for (const [index, candidate] of candidates.entries()) {
     try {
       onProgress?.(`Cena ${index + 1}/${candidates.length}: ${candidate.id}`);
       const result = await readCandidate(candidate, srDate, bounds, onProgress);
-      if (result.validThermalPixels > 0) results.push(result);
+      if (result.validThermalPixels > 0) {
+        results.push(result);
+      } else {
+        const message = `${candidate.id}: nenhum pixel térmico válido depois da máscara QA_PIXEL.`;
+        failures.push(message);
+        onProgress?.(`Cena descartada: ${message}`);
+      }
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = `${candidate.id}: ${detail}`;
+      failures.push(message);
       console.warn('Cena Landsat ignorada:', candidate.id, error);
+      onProgress?.(`Falha ao ler cena: ${message}`);
     }
   }
-  if (!results.length) throw new Error(`As cenas Landsat encontradas em ±32 dias não têm pixels ST_B10 válidos nesta área após a máscara QA_PIXEL.`);
+  if (!results.length) {
+    const summary = failures.slice(0, 4).join(' | ');
+    throw new Error(
+      `Nenhuma cena Landsat produziu pixels térmicos válidos na janela de ±${SEARCH_WINDOW_DAYS} dias. ` +
+      (summary ? `Detalhes: ${summary}` : 'O catálogo não retornou cenas utilizáveis.'),
+    );
+  }
   // First require a usable spatial mask; among scenes meeting that threshold,
   // prefer the date closest to SR2D4. If none reach it, choose the best available
   // coverage and explicitly warn rather than silently prioritizing a distant date.
