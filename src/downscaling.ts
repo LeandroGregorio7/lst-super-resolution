@@ -1,3 +1,4 @@
+import proj4 from 'proj4';
 import { boundsExtent } from './rasterGeo';
 import type { RasterBounds } from './rasterGeo';
 
@@ -18,6 +19,13 @@ export type TsHarpResult = {
 };
 
 type Features = { ndvi: Float32Array; ndbi: Float32Array; ndwi: Float32Array };
+
+export type GridGeometry = {
+  origin: number[];
+  resolution: number[];
+  epsg: number;
+};
+export type GridAlignment = { fine: GridGeometry; coarse: GridGeometry };
 type CellStats = { count: number; sumNdvi: number; sumNdbi: number; countNdwi: number; sumNdwi: number };
 
 function solveRidge(matrix: number[][], vector: number[], ridge = 1e-8) {
@@ -69,6 +77,7 @@ function range(values: ArrayLike<number>) {
 export function downscaleLandsatLST(
   coarseLST: Float32Array, coarseWidth: number, coarseHeight: number, coarseBounds: RasterBounds,
   fineFeatures: Features, fineWidth: number, fineHeight: number, fineBounds: RasterBounds,
+  gridAlignment?: GridAlignment,
 ): TsHarpResult {
   const coarse = boundsExtent(coarseBounds);
   const fine = boundsExtent(fineBounds);
@@ -78,10 +87,25 @@ export function downscaleLandsatLST(
   fineCell.fill(-1);
 
   for (let y = 0; y < fineHeight; y += 1) for (let x = 0; x < fineWidth; x += 1) {
-    const lon = fine.west + (x + 0.5) / fineWidth * (fine.east - fine.west);
-    const lat = fine.north - (y + 0.5) / fineHeight * (fine.north - fine.south);
-    const cx = Math.floor((lon - coarse.west) / (coarse.east - coarse.west) * coarseWidth);
-    const cy = Math.floor((coarse.north - lat) / (coarse.north - coarse.south) * coarseHeight);
+    let cx: number;
+    let cy: number;
+    if (gridAlignment) {
+      // Map pixel centers through the native grid transforms. This avoids
+      // approximating projected pixel geometry with an axis-aligned lon/lat box.
+      const fineX = gridAlignment.fine.origin[0] + (x + 0.5) * gridAlignment.fine.resolution[0];
+      const fineY = gridAlignment.fine.origin[1] + (y + 0.5) * gridAlignment.fine.resolution[1];
+      const [coarseX, coarseY] = gridAlignment.fine.epsg === gridAlignment.coarse.epsg
+        ? [fineX, fineY]
+        : proj4(`EPSG:${gridAlignment.fine.epsg}`, `EPSG:${gridAlignment.coarse.epsg}`, [fineX, fineY]) as [number, number];
+      cx = Math.floor((coarseX - gridAlignment.coarse.origin[0]) / gridAlignment.coarse.resolution[0]);
+      cy = Math.floor((coarseY - gridAlignment.coarse.origin[1]) / gridAlignment.coarse.resolution[1]);
+    } else {
+      // Legacy compatibility path; the app supplies exact native grid transforms.
+      const lon = fine.west + (x + 0.5) / fineWidth * (fine.east - fine.west);
+      const lat = fine.north - (y + 0.5) / fineHeight * (fine.north - fine.south);
+      cx = Math.floor((lon - coarse.west) / (coarse.east - coarse.west) * coarseWidth);
+      cy = Math.floor((coarse.north - lat) / (coarse.north - coarse.south) * coarseHeight);
+    }
     if (cx < 0 || cy < 0 || cx >= coarseWidth || cy >= coarseHeight) continue;
     const cell = cy * coarseWidth + cx;
     const index = y * fineWidth + x;
