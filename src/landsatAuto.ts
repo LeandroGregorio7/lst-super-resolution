@@ -5,7 +5,7 @@ import { boundsExtent } from './rasterGeo';
 
 const STAC_SEARCH = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
 const STAC_SIGN = 'https://planetarycomputer.microsoft.com/api/sas/v1/sign';
-const MAX_CANDIDATES_TO_TEST = 24;
+const MAX_CANDIDATES_TO_TEST = 40;
 const SEARCH_WINDOW_DAYS = 90;
 const MIN_USABLE_THERMAL_FRACTION = 0.8;
 export type ThermalProgress = (message: string) => void;
@@ -205,6 +205,9 @@ export async function fetchNearestLandsatThermal(fileName: string, bounds: Raste
   const { best, adequateCoverageFound } = chooseBestThermalScene(results);
   if (!adequateCoverageFound) {
     onProgress?.(`Aviso: nenhuma cena alcançou ${(MIN_USABLE_THERMAL_FRACTION * 100).toFixed(0)}% de cobertura térmica válida; a seleção prioriza a melhor cobertura disponível.`);
+  }
+  if (best.daysFromSr2d4 > 32) {
+    onProgress?.(`Atenção: a cena Landsat selecionada está a ${best.daysFromSr2d4.toFixed(0)} dias da data SR2D4. O resultado é uma estimativa e pode refletir condições térmicas de outra época.`);
   }
   onProgress?.(`Cena escolhida: ${best.itemId} · data ${best.acquisitionDate} · ${best.daysFromSr2d4.toFixed(0)} dia(s) da SR2D4 · ${best.validThermalPixels.toLocaleString()} pixels válidos · cobertura ${(best.validThermalFraction * 100).toFixed(1)}%`);
   return best;
