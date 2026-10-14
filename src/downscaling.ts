@@ -1,3 +1,4 @@
+import proj4 from 'proj4';
 import { boundsExtent } from './rasterGeo';
 import type { RasterBounds } from './rasterGeo';
 
@@ -8,7 +9,7 @@ export type TsHarpResult = {
   r2: number;
   sharpened: boolean;
   validCount: number;
-  model: 'TsHARP-NDVI-polynomial' | 'multivariate-NDVI-NDBI-NDWI' | 'coarse-fallback';
+  model: 'TsHARP-NDVI-polynomial' | 'multivariate-NDVI-NDBI' | 'multivariate-NDVI-NDBI-NDWI' | 'coarse-fallback';
   coarseRange: number;
   fineRange: number;
   fineSignalRange: number;
@@ -18,7 +19,14 @@ export type TsHarpResult = {
 };
 
 type Features = { ndvi: Float32Array; ndbi: Float32Array; ndwi: Float32Array };
-type CellStats = { count: number; sumNdvi: number; sumNdbi: number; sumNdwi: number };
+
+export type GridGeometry = {
+  origin: number[];
+  resolution: number[];
+  epsg: number;
+};
+export type GridAlignment = { fine: GridGeometry; coarse: GridGeometry };
+type CellStats = { count: number; sumNdvi: number; sumNdbi: number; countNdwi: number; sumNdwi: number };
 
 function solveRidge(matrix: number[][], vector: number[], ridge = 1e-8) {
   const n = vector.length;
@@ -69,26 +77,43 @@ function range(values: ArrayLike<number>) {
 export function downscaleLandsatLST(
   coarseLST: Float32Array, coarseWidth: number, coarseHeight: number, coarseBounds: RasterBounds,
   fineFeatures: Features, fineWidth: number, fineHeight: number, fineBounds: RasterBounds,
+  gridAlignment?: GridAlignment,
 ): TsHarpResult {
   const coarse = boundsExtent(coarseBounds);
   const fine = boundsExtent(fineBounds);
   const nCells = coarseWidth * coarseHeight;
-  const cells: CellStats[] = Array.from({ length: nCells }, () => ({ count: 0, sumNdvi: 0, sumNdbi: 0, sumNdwi: 0 }));
+  const cells: CellStats[] = Array.from({ length: nCells }, () => ({ count: 0, sumNdvi: 0, sumNdbi: 0, countNdwi: 0, sumNdwi: 0 }));
   const fineCell = new Int32Array(fineWidth * fineHeight);
   fineCell.fill(-1);
 
   for (let y = 0; y < fineHeight; y += 1) for (let x = 0; x < fineWidth; x += 1) {
-    const lon = fine.west + (x + 0.5) / fineWidth * (fine.east - fine.west);
-    const lat = fine.north - (y + 0.5) / fineHeight * (fine.north - fine.south);
-    const cx = Math.floor((lon - coarse.west) / (coarse.east - coarse.west) * coarseWidth);
-    const cy = Math.floor((coarse.north - lat) / (coarse.north - coarse.south) * coarseHeight);
+    let cx: number;
+    let cy: number;
+    if (gridAlignment) {
+      // Map pixel centers through the native grid transforms. This avoids
+      // approximating projected pixel geometry with an axis-aligned lon/lat box.
+      const fineX = gridAlignment.fine.origin[0] + (x + 0.5) * gridAlignment.fine.resolution[0];
+      const fineY = gridAlignment.fine.origin[1] + (y + 0.5) * gridAlignment.fine.resolution[1];
+      const [coarseX, coarseY] = gridAlignment.fine.epsg === gridAlignment.coarse.epsg
+        ? [fineX, fineY]
+        : proj4(`EPSG:${gridAlignment.fine.epsg}`, `EPSG:${gridAlignment.coarse.epsg}`, [fineX, fineY]) as [number, number];
+      cx = Math.floor((coarseX - gridAlignment.coarse.origin[0]) / gridAlignment.coarse.resolution[0]);
+      cy = Math.floor((coarseY - gridAlignment.coarse.origin[1]) / gridAlignment.coarse.resolution[1]);
+    } else {
+      // Legacy compatibility path; the app supplies exact native grid transforms.
+      const lon = fine.west + (x + 0.5) / fineWidth * (fine.east - fine.west);
+      const lat = fine.north - (y + 0.5) / fineHeight * (fine.north - fine.south);
+      cx = Math.floor((lon - coarse.west) / (coarse.east - coarse.west) * coarseWidth);
+      cy = Math.floor((coarse.north - lat) / (coarse.north - coarse.south) * coarseHeight);
+    }
     if (cx < 0 || cy < 0 || cx >= coarseWidth || cy >= coarseHeight) continue;
     const cell = cy * coarseWidth + cx;
     const index = y * fineWidth + x;
     fineCell[index] = cell;
     const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndwi = fineFeatures.ndwi[index];
-    if (Number.isFinite(ndvi) && Number.isFinite(ndbi) && Number.isFinite(ndwi)) {
-      const stats = cells[cell]; stats.count += 1; stats.sumNdvi += ndvi; stats.sumNdbi += ndbi; stats.sumNdwi += ndwi;
+    if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
+      const stats = cells[cell]; stats.count += 1; stats.sumNdvi += ndvi; stats.sumNdbi += ndbi;
+      if (Number.isFinite(ndwi)) { stats.countNdwi += 1; stats.sumNdwi += ndwi; }
     }
   }
 
@@ -97,45 +122,82 @@ export function downscaleLandsatLST(
   for (let cell = 0; cell < nCells; cell += 1) {
     const stats = cells[cell]; const temperature = coarseLST[cell];
     if (!Number.isFinite(temperature) || stats.count < 1) continue;
-    const ndvi = stats.sumNdvi / stats.count; const ndbi = stats.sumNdbi / stats.count; const ndwi = stats.sumNdwi / stats.count;
+    const ndvi = stats.sumNdvi / stats.count; const ndbi = stats.sumNdbi / stats.count; const ndwi = stats.countNdwi ? stats.sumNdwi / stats.countNdwi : NaN;
     means[cell] = [ndvi, ndbi, ndwi];
-    if (!(ndwi > 0.25 && ndvi < 0.25)) validCells.push(cell);
+    validCells.push(cell);
   }
-  if (!validCells.length) throw new Error('Nenhuma célula térmica Landsat válida após a máscara e a exclusão de água do ajuste TsHARP.');
+  if (!validCells.length) throw new Error('Nenhuma célula térmica Landsat válida após a máscara QA e a verificação dos índices ópticos.');
 
-  // NDVI polynomial is the canonical TsHARP basis. NDBI and NDWI are added
-  // only when the scene has enough independent coarse cells to support them.
-  const useMultivariate = validCells.length >= 12;
+  // NDVI polynomial is the canonical TsHARP basis. Add NDBI and a truly
+  // independent green-NIR NDWI only when they are available and sample size allows.
+  const ndwiCellCount = validCells.filter((cell) => Number.isFinite(means[cell][2])).length;
+  const useNdwiModel = validCells.length >= 12 && ndwiCellCount === validCells.length;
+  const useNdbiModel = !useNdwiModel && validCells.length >= 8;
   const rows = validCells.map((cell) => {
     const [ndvi, ndbi, ndwi] = means[cell];
-    return useMultivariate ? [1, ndvi, ndbi, ndwi] : [1, ndvi, ndvi * ndvi];
+    return useNdwiModel ? [1, ndvi, ndbi, ndwi] : useNdbiModel ? [1, ndvi, ndbi] : [1, ndvi, ndvi * ndvi];
   });
   const target = validCells.map((cell) => coarseLST[cell]);
   const coefficients = fitModel(rows, target);
   if (!coefficients) throw new Error('Não foi possível ajustar a relação LST–índices na grade Landsat.');
 
+  // In-sample R² is reported as a diagnostic only; independent thermal data
+  // are still required for accuracy validation.
+  const fittedTargets = rows.map((row) => row.reduce((sum, value, index) => sum + value * coefficients[index], 0));
+  const targetMean = target.reduce((sum, value) => sum + value, 0) / target.length;
+  const residualSumSquares = target.reduce((sum, value, index) => sum + (value - fittedTargets[index]) ** 2, 0);
+  const totalSumSquares = target.reduce((sum, value) => sum + (value - targetMean) ** 2, 0);
+  const fitR2 = totalSumSquares > 1e-12 ? 1 - residualSumSquares / totalSumSquares : NaN;
+
   const predict = (index: number) => {
     const ndvi = fineFeatures.ndvi[index]; const ndbi = fineFeatures.ndbi[index]; const ndwi = fineFeatures.ndwi[index];
-    if (!Number.isFinite(ndvi) || !Number.isFinite(ndbi) || !Number.isFinite(ndwi)) return NaN;
-    return useMultivariate ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi + coefficients[3] * ndwi : coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndvi * ndvi;
+    if (!Number.isFinite(ndvi)) return NaN;
+    if (useNdwiModel) return Number.isFinite(ndbi) && Number.isFinite(ndwi) ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi + coefficients[3] * ndwi : NaN;
+    if (useNdbiModel) return Number.isFinite(ndbi) ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi : NaN;
+    return coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndvi * ndvi;
   };
 
-  const residuals = new Float32Array(nCells); residuals.fill(NaN);
-  const coarsePredictions = new Float32Array(nCells); coarsePredictions.fill(NaN);
-  for (let cell = 0; cell < nCells; cell += 1) {
-    const [ndvi, ndbi, ndwi] = means[cell]; const temperature = coarseLST[cell];
-    if (!Number.isFinite(temperature) || !Number.isFinite(ndvi)) continue;
-    const predicted = useMultivariate ? coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndbi + coefficients[3] * ndwi : coefficients[0] + coefficients[1] * ndvi + coefficients[2] * ndvi * ndvi;
-    coarsePredictions[cell] = predicted; residuals[cell] = temperature - predicted;
+  // Predict on the actual SR2D4 grid first. A coarse residual alone is not
+  // sufficient for conservation: fine-pixel sampling and missing values can make
+  // the mean of the predictions differ from the coarse model prediction.
+  const finePredictions = new Float32Array(fineWidth * fineHeight);
+  finePredictions.fill(NaN);
+  const predictionSums = new Float64Array(nCells);
+  const predictionCounts = new Uint32Array(nCells);
+  for (let index = 0; index < finePredictions.length; index += 1) {
+    const cell = fineCell[index];
+    if (cell < 0 || !Number.isFinite(coarseLST[cell])) continue;
+    const predicted = predict(index);
+    if (!Number.isFinite(predicted)) continue;
+    finePredictions[index] = predicted;
+    predictionSums[cell] += predicted;
+    predictionCounts[cell] += 1;
   }
 
-  const output = new Float32Array(fineWidth * fineHeight); output.fill(NaN);
-  const finePredictionValues: number[] = []; const signalValues: number[] = []; const coarseValues: number[] = [];
+  // Cell-wise additive residual is estimated from the *mean of fine predictions*
+  // in that exact Landsat cell. This enforces the coarse observation constraint:
+  // mean(T_fine | cell) == T_Landsat, up to Float32 rounding.
+  const cellCorrections = new Float32Array(nCells);
+  cellCorrections.fill(NaN);
+  for (let cell = 0; cell < nCells; cell += 1) {
+    if (predictionCounts[cell] && Number.isFinite(coarseLST[cell])) {
+      cellCorrections[cell] = coarseLST[cell] - predictionSums[cell] / predictionCounts[cell];
+    }
+  }
+
+  const output = new Float32Array(fineWidth * fineHeight);
+  output.fill(NaN);
+  const finePredictionValues: number[] = [];
+  const signalValues: number[] = [];
+  const coarseValues: number[] = [];
   for (let index = 0; index < output.length; index += 1) {
-    const cell = fineCell[index]; const predicted = predict(index);
-    if (cell < 0 || !Number.isFinite(predicted) || !Number.isFinite(residuals[cell])) continue;
-    output[index] = predicted + residuals[cell];
-    finePredictionValues.push(predicted); signalValues.push(output[index] - coarseLST[cell]); coarseValues.push(coarseLST[cell]);
+    const cell = fineCell[index];
+    const predicted = finePredictions[index];
+    if (cell < 0 || !Number.isFinite(predicted) || !Number.isFinite(cellCorrections[cell])) continue;
+    output[index] = predicted + cellCorrections[cell];
+    finePredictionValues.push(predicted);
+    signalValues.push(output[index] - coarseLST[cell]);
+    coarseValues.push(coarseLST[cell]);
   }
 
   // Numerical proof that the output is not just the coarse image repeated.
@@ -149,8 +211,8 @@ export function downscaleLandsatLST(
   if (fineSignalRange < 0.01 && finePredictionValues.length > 0) throw new Error(`TsHARP não gerou detalhe espectral mensurável (amplitude ${fineSignalRange.toFixed(3)} °C). A execução foi interrompida para não apresentar a TIRS como super-resolução.`);
   return {
     lstDownscaled: output, slope: coefficients[1] ?? 0, intercept: coefficients[0] ?? 0,
-    r2: 0, sharpened: true, validCount: validCells.length,
-    model: useMultivariate ? 'multivariate-NDVI-NDBI-NDWI' : 'TsHARP-NDVI-polynomial',
+    r2: fitR2, sharpened: true, validCount: validCells.length,
+    model: useNdwiModel ? 'multivariate-NDVI-NDBI-NDWI' : useNdbiModel ? 'multivariate-NDVI-NDBI' : 'TsHARP-NDVI-polynomial',
     coarseRange: range(coarseValues), fineRange: range(output), fineSignalRange,
     conservationMae: conservationCount ? conservationError / conservationCount : NaN,
     coarseWidth, coarseHeight,

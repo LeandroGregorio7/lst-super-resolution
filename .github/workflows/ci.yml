@@ -27,5 +27,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test thermal sharpening mathematics
+        run: npm test
+
       - name: Build web application
         run: npm run build
