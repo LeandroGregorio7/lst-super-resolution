@@ -10,8 +10,9 @@ export type ThermalDecodeResult = {
 };
 
 /**
- * Decodifica uma banda térmica real (Landsat Collection 2 Level-2 ST_B10)
- * e remove outliers radiométricos de borda de nuvem e falhas de emissividade ASTER GED.
+ * Decodifica a banda térmica (Landsat Collection 2 Level-2 ST_B10)
+ * com compressão radiométrica suave (Soft-Shoulder) nas caudas do histograma,
+ * evitando platôs chapados ("borrões") nas zonas muito quentes ou muito frias.
  *
  * Escala oficial USGS:
  *   ST[K] = DN * 0.00341802 + 149.0
@@ -24,7 +25,7 @@ export function decodeThermalInput(
   const lstCelsius = new Float32Array(raw.length);
   const tempValues: number[] = [];
 
-  // 1ª Passagem: Decodificação física e corte de limites terrestres realistas
+  // 1ª Passagem: Decodificação física e filtro de limites terrestres
   for (let i = 0; i < raw.length; i += 1) {
     const dn = raw[i];
     let value: number;
@@ -38,7 +39,6 @@ export function decodeThermalInput(
       value = dn;
     }
 
-    // Filtra valores fisicamente impossíveis ou contaminação severa de nuvem alta (< 2°C ou > 62°C)
     if (!Number.isFinite(value) || value < 2 || value > 62) {
       lstCelsius[i] = NaN;
       continue;
@@ -52,19 +52,20 @@ export function decodeThermalInput(
     throw new Error('Nenhum pixel térmico válido foi encontrado.');
   }
 
-  // 2ª Passagem: Corte estatístico robusto (IQR / Percentis P1 a P99)
-  // Elimina bordas frias de sombra/nuvem não pegas pelo QA_PIXEL e picos metálicos espúrios
+  // 2ª Passagem: Estatística robusta (Mediana e IQR) e compressão Soft-Shoulder
   tempValues.sort((a, b) => a - b);
   const n = tempValues.length;
+  const median = tempValues[Math.floor(n * 0.5)];
   const q25 = tempValues[Math.floor(n * 0.25)];
   const q75 = tempValues[Math.floor(n * 0.75)];
-  const iqr = Math.max(1.5, q75 - q25);
+  const iqr = Math.max(1.2, q75 - q25);
 
-  const p01 = tempValues[Math.floor(n * 0.01)];
-  const p99 = tempValues[Math.floor(n * 0.99)];
-
-  const lowerBound = Math.max(p01, q25 - 2.2 * iqr);
-  const upperBound = Math.min(p99, q75 + 2.2 * iqr);
+  // Limite onde começa a compressão suave (preserva 100% da linearidade no miolo)
+  const knee = 1.35 * iqr;
+  //Teto máximo de compressão suave nas caudas (impede platô chapado)
+  const tailSpan = 0.85 * iqr;
+  // Corte de anomalias severas (borda de nuvem / erro grosseiro de emissividade)
+  const hardOutlierCut = 2.8 * iqr;
 
   let validCount = 0;
   let min = Infinity;
@@ -74,21 +75,31 @@ export function decodeThermalInput(
     const val = lstCelsius[i];
     if (!Number.isFinite(val)) continue;
 
-    if (val < lowerBound - 1.5 || val > upperBound + 1.5) {
-      // Descarta pixel anômalo de borda de nuvem para que o interpolador preencha suavemente
+    const diff = val - median;
+    const absDiff = Math.abs(diff);
+
+    // Se for contaminação severa de nuvem/sombra, marca como NaN para o inpainting corrigir
+    if (absDiff > hardOutlierCut) {
       lstCelsius[i] = NaN;
       continue;
     }
 
-    const clamped = Math.max(lowerBound, Math.min(upperBound, val));
-    lstCelsius[i] = clamped;
+    // Se passar do joelho (knee), comprime suavemente via tanh sem achatar o gradiente interno
+    let adjusted = val;
+    if (absDiff > knee) {
+      const sign = diff >= 0 ? 1 : -1;
+      const excess = absDiff - knee;
+      adjusted = median + sign * (knee + tailSpan * Math.tanh(excess / tailSpan));
+    }
+
+    lstCelsius[i] = adjusted;
     validCount += 1;
-    if (clamped < min) min = clamped;
-    if (clamped > max) max = clamped;
+    if (adjusted < min) min = adjusted;
+    if (adjusted > max) max = adjusted;
   }
 
   if (validCount === 0) {
-    throw new Error('Nenhum pixel térmico válido restou após filtragem de ruído.');
+    throw new Error('Nenhum pixel térmico válido restou após filtragem radiométrica.');
   }
 
   return { lstCelsius, validCount, min, max };
