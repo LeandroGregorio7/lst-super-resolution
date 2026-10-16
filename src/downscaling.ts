@@ -471,7 +471,7 @@ export function downscaleLandsatLST(
     const is3DBuilding = !isWater && ndvi < 0.18 && ndbi > 0.02 && sat >= 0.38;
 
     let classAdjust = 0;
-    let volHeight = 0;
+    let volHeight: number;
 
     if (isWater) {
       classAdjust = -2.4;
