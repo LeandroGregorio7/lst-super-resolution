@@ -68,11 +68,6 @@ function range(values: ArrayLike<number>): number {
   return min !== Infinity ? max - min : 0;
 }
 
-/**
- * Filtro Bilateral Rápido com Parada de Borda (Edge-Stopping Bilateral Filter).
- * Preserva bordas de 1m entre classes distintas (prédios, árvores, ruas, rios)
- * e impede propagação de NaN.
- */
 function edgeStoppingBilateralFilter(
   signal: Float32Array,
   guideNdvi: Float32Array,
@@ -134,10 +129,6 @@ function edgeStoppingBilateralFilter(
   return out;
 }
 
-/**
- * Limpa outliers da grade Landsat (100m), preenche falhas de nuvem e gera
- * o campo térmico macro contínuo.
- */
 function cleanAndSmoothCoarseGrid(
   rawCoarse: Float32Array,
   w: number,
@@ -309,10 +300,6 @@ function sampleBilinear(
   return wSum > 0 ? sum / wSum : fallback;
 }
 
-/**
- * TsHARP + Filtro Bilateral Edge-Stopping + Anisotropia Volumétrica Solar 3D (Voogt & Oke)
- * + Oclusão de Cânion Urbano (SVF) com Conservação de Energia TIRS.
- */
 export function downscaleLandsatLST(
   coarseLST: Float32Array,
   coarseWidth: number,
@@ -328,7 +315,6 @@ export function downscaleLandsatLST(
   const nCells = coarseWidth * coarseHeight;
   const nFine = fineWidth * fineHeight;
 
-  // 1. Limpa e suaviza a grade Landsat
   const {
     cleaned: smoothCoarseLST,
     validMask,
@@ -336,7 +322,6 @@ export function downscaleLandsatLST(
     stdCoarse,
   } = cleanAndSmoothCoarseGrid(coarseLST, coarseWidth, coarseHeight);
 
-  // 2. Agrega índices para a grade Landsat
   const cells: CellStats[] = Array.from({ length: nCells }, () => ({
     count: 0,
     sumNdvi: 0,
@@ -424,7 +409,6 @@ export function downscaleLandsatLST(
   const fallbackNdbi = sumMeanNdbi / Math.max(1, validCells.length);
   const fallbackNdwi = sumMeanNdwi / Math.max(1, validCells.length);
 
-  // 3. Regressão TsHARP na escala Landsat
   const useMultivariate = validCells.length >= 12;
   const rows = validCells.map((cell) => {
     const ndvi = coarseNdviGrid[cell];
@@ -456,7 +440,6 @@ export function downscaleLandsatLST(
   }
   const r2 = ssTot > 1e-6 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
 
-  // 4. Potencial Térmico Base + Mapa de Volume 3D (Edificações e Copas vs Ruas, Pista e Rios)
   const rawThermalSignal = new Float32Array(nFine);
   const volumeProxy = new Float32Array(nFine);
 
@@ -514,7 +497,6 @@ export function downscaleLandsatLST(
     volumeProxy[i] = volHeight;
   }
 
-  // 5. Filtragem Bilateral Edge-Stopping (alisa áreas planas e trava bordas de 1m)
   const bilateralSignal = edgeStoppingBilateralFilter(
     rawThermalSignal,
     fineFeatures.ndvi,
@@ -523,7 +505,6 @@ export function downscaleLandsatLST(
     fineHeight,
   );
 
-  // 6. Síntese 1m com Anisotropia Solar 3D + Oclusão SVF + Conservação de Energia
   const output = new Float32Array(nFine);
   output.fill(NaN);
 
@@ -576,12 +557,10 @@ export function downscaleLandsatLST(
       const sSouth = Number.isFinite(bilateralSignal[yNext + x]) ? bilateralSignal[yNext + x] : pClean;
       const sNorth = Number.isFinite(bilateralSignal[yPrev + x]) ? bilateralSignal[yPrev + x] : pClean;
 
-      // A) Barreira de Borda Espectral (Sobel) sem propagação de NaN
       const gxSpec = sEast - sWest;
       const gySpec = sSouth - sNorth;
       const edgeBarrier = Math.min(3.0, Math.sqrt(gxSpec * gxSpec + gySpec * gySpec));
 
-      // B) Anisotropia Volumétrica Solar 3D (Voogt & Oke)
       const vCenter = volumeProxy[index];
       const vEast = volumeProxy[rowOffset + xNext];
       const vWest = volumeProxy[rowOffset + xPrev];
@@ -592,12 +571,10 @@ export function downscaleLandsatLST(
       const dVolDy = (vSouth - vNorth) * 0.5;
       const solarVolumeShading = (dVolDx * sunDirX + dVolDy * sunDirY) * 1.55;
 
-      // C) Oclusão de Cânion Urbano / Fator de Visão do Céu (SVF)
       const avgNeighborVol = 0.25 * (vEast + vWest + vSouth + vNorth);
       const canyonOcclusion = (vCenter - avgNeighborVol) * 1.10;
       const microCrisp = (rawThermalSignal[index] - pClean) * 0.40;
 
-      // Amostragem bilinear da grade Landsat
       const tCoarseRaw = sampleBilinear(smoothCoarseLST, coarseWidth, coarseHeight, fx, fy, coarseMedian);
       const ndviCoarseLocal = sampleBilinear(coarseNdviGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdvi);
       const ndbiCoarseLocal = sampleBilinear(coarseNdbiGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdbi);
@@ -611,7 +588,6 @@ export function downscaleLandsatLST(
 
       const edgeContrastBoost = 1.0 + 0.32 * Math.min(1.8, edgeBarrier);
 
-      // Sinal fino de 1m com compressão Soft-Knee para não estourar telhados nem matas
       const rawDeltaT =
         0.74 * (pClean - pCoarseLocal) * edgeContrastBoost +
         solarVolumeShading +
@@ -620,9 +596,8 @@ export function downscaleLandsatLST(
 
       const deltaT =
         anomalyCap * Math.tanh(rawDeltaT / anomalyCap) * 0.78 +
-        rawDeltaT * 0.22;
+        rawDeltaT * 0.24;
 
-      // Reduz levemente a amplitude extrema do fundo macro apenas nas bordas fortes
       const macroBlend = 1.0 / (1.0 + 0.25 * edgeBarrier);
       const tBase = coarseMedian + (0.68 + 0.32 * macroBlend) * (tCoarseRaw - coarseMedian);
 
@@ -675,7 +650,6 @@ export function downscaleLandsatLST(
   };
 }
 
-/** Compatibilidade para arquivos legados; não é usado no fluxo automático. */
 export function applyTsHARP(ndvi: Float32Array, lstBase: Float32Array): TsHarpResult {
   if (ndvi.length !== lstBase.length) throw new Error('NDVI e LST precisam estar na mesma grade.');
   const output = new Float32Array(lstBase);
