@@ -69,8 +69,7 @@ function range(values: ArrayLike<number>): number {
 }
 
 /**
- * Filtro Box Separável O(1) para extrair o fundo local em múltiplas escalas (7m e 37m).
- * Isola telhados, ruas e copas de árvores eliminando o borrão de 20m do SWIR.
+ * Filtro Box Separável O(1) para decomposição de textura multiescala em 1m.
  */
 function fastSeparableBlur(
   src: Float32Array,
@@ -168,8 +167,8 @@ function cleanAndSmoothCoarseGrid(
   const q75 = count > 3 ? sampleVals[Math.floor(count * 0.75)] : median + 2.2;
   const iqr = Math.max(1.0, q75 - q25);
 
-  const lowCut = q25 - 1.2 * iqr;
-  const highCut = q75 + 1.2 * iqr;
+  const lowCut = q25 - 1.35 * iqr;
+  const highCut = q75 + 1.35 * iqr;
 
   let current = new Float32Array(n);
   let sumSq = 0;
@@ -190,7 +189,7 @@ function cleanAndSmoothCoarseGrid(
     }
   }
 
-  const stdCoarse = validCnt > 1 ? Math.max(1.8, Math.min(3.4, Math.sqrt(sumSq / validCnt))) : 2.4;
+  const stdCoarse = validCnt > 1 ? Math.max(1.6, Math.min(3.2, Math.sqrt(sumSq / validCnt))) : 2.2;
 
   for (let iter = 0; iter < 12; iter += 1) {
     let anyNaN = false;
@@ -227,9 +226,9 @@ function cleanAndSmoothCoarseGrid(
     if (!Number.isFinite(current[i])) current[i] = median;
   }
 
-  // Suavização forte (4 passagens) para que o Landsat funcione apenas como tendência macro sem manchas
+  // Suavização Gaussiana (3 passagens) preserva os hotspots reais do Landsat sem blocos quadrados
   const kernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
-  for (let pass = 0; pass < 4; pass += 1) {
+  for (let pass = 0; pass < 3; pass += 1) {
     const next = new Float32Array(n);
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
@@ -291,9 +290,10 @@ function sampleBilinear(
 }
 
 /**
- * Guided Multi-Scale Morphological Unmixing (GMMU) + Particionamento Biofísico em 1 Metro.
- * Elimina os borrões amarelos de 20m/100m e separa nitidamente:
- * Rio -> Copas de Árvores -> Gramado -> Ruas/Pista/Ferrovia -> Casas/Prédios -> Grandes Galpões.
+ * TsHARP + Decomposição Biofísica Multiescala com Conservação Estrita da LST Landsat:
+ * - Preserva as manchas claras de alta temperatura reais (Anhembi, hangares, telhados quentes)
+ * - Elimina a saturação roxa na vegetação (mostra textura de copas, clareiras e umidade em 1m)
+ * - Realça forma, volume 3D solar e bordas sem criar picos que distorçam a escala de cores.
  */
 export function downscaleLandsatLST(
   coarseLST: Float32Array,
@@ -329,9 +329,6 @@ export function downscaleLandsatLST(
   const fineSpanX = fine.east - fine.west;
   const fineSpanY = fine.north - fine.south;
 
-  let sumGlobalNdbi = 0;
-  let countGlobalValid = 0;
-
   for (let y = 0; y < fineHeight; y += 1) {
     const lat = fine.north - ((y + 0.5) / fineHeight) * fineSpanY;
     const cy = Math.floor(((coarse.north - lat) / coarseSpanY) * coarseHeight);
@@ -354,13 +351,9 @@ export function downscaleLandsatLST(
         stats.sumNdvi += ndvi;
         stats.sumNdbi += ndbi;
         stats.sumNdwi += ndwi;
-        sumGlobalNdbi += ndbi;
-        countGlobalValid += 1;
       }
     }
   }
-
-  const meanGlobalNdbi = countGlobalValid > 0 ? sumGlobalNdbi / countGlobalValid : 0.02;
 
   const coarseNdviGrid = new Float32Array(nCells);
   const coarseNdbiGrid = new Float32Array(nCells);
@@ -370,6 +363,10 @@ export function downscaleLandsatLST(
   coarseNdwiGrid.fill(NaN);
 
   const validCells: number[] = [];
+  let sumMeanNdvi = 0;
+  let sumMeanNdbi = 0;
+  let sumMeanNdwi = 0;
+
   for (let cell = 0; cell < nCells; cell += 1) {
     const stats = cells[cell];
     if (stats.count < 1) continue;
@@ -380,6 +377,10 @@ export function downscaleLandsatLST(
     coarseNdviGrid[cell] = mNdvi;
     coarseNdbiGrid[cell] = mNdbi;
     coarseNdwiGrid[cell] = mNdwi;
+
+    sumMeanNdvi += mNdvi;
+    sumMeanNdbi += mNdbi;
+    sumMeanNdwi += mNdwi;
 
     if (validMask[cell] === 1 && !(mNdwi > 0.2 && mNdvi < 0.15)) {
       validCells.push(cell);
@@ -399,6 +400,10 @@ export function downscaleLandsatLST(
     throw new Error('Nenhuma célula térmica Landsat válida encontrada na extensão do SR2D4.');
   }
 
+  const fallbackNdvi = sumMeanNdvi / Math.max(1, validCells.length);
+  const fallbackNdbi = sumMeanNdbi / Math.max(1, validCells.length);
+  const fallbackNdwi = sumMeanNdwi / Math.max(1, validCells.length);
+
   const useMultivariate = validCells.length >= 12;
   const rows = validCells.map((cell) => {
     const ndvi = coarseNdviGrid[cell];
@@ -407,16 +412,16 @@ export function downscaleLandsatLST(
     return useMultivariate ? [1, ndvi, ndbi, ndwi] : [1, ndvi, ndvi * ndvi];
   });
   const target = validCells.map((cell) => smoothCoarseLST[cell]);
-  const rawCoeffs = fitModel(rows, target) ?? [coarseMedian, -5.4, 4.2, -1.6];
+  const rawCoeffs = fitModel(rows, target) ?? [coarseMedian, -5.0, 3.8, -1.5];
 
   const b0 = Number.isFinite(rawCoeffs[0]) ? rawCoeffs[0] : coarseMedian;
-  const bNdvi = Math.max(-8.8, Math.min(-4.2, Number.isFinite(rawCoeffs[1]) ? rawCoeffs[1] : -5.4));
+  const bNdvi = Math.max(-7.5, Math.min(-3.8, Number.isFinite(rawCoeffs[1]) ? rawCoeffs[1] : -4.8));
   const bNdbi = useMultivariate
-    ? Math.min(7.8, Math.max(3.4, Number.isFinite(rawCoeffs[2]) ? rawCoeffs[2] : 4.2))
-    : 3.8;
+    ? Math.min(6.8, Math.max(3.2, Number.isFinite(rawCoeffs[2]) ? rawCoeffs[2] : 3.8))
+    : 3.6;
   const bNdwi = useMultivariate
-    ? Math.max(-4.2, Math.min(-0.8, Number.isFinite(rawCoeffs[3]) ? rawCoeffs[3] : -1.6))
-    : -1.5;
+    ? Math.max(-3.5, Math.min(-0.8, Number.isFinite(rawCoeffs[3]) ? rawCoeffs[3] : -1.4))
+    : -1.2;
 
   let ssTot = 0;
   let ssRes = 0;
@@ -430,16 +435,14 @@ export function downscaleLandsatLST(
   }
   const r2 = ssTot > 1e-6 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
 
-  // 4. Decomposição Multiescala em 1 Metro (Remove o borrão de 20m do SWIR e destaca objetos de 1m)
-  //    - Micro (raio 3m = janela 7x7m): separa casas, muros, calçadas e copas individuais
-  //    - Meso (raio 18m = janela 37x37m): remove o viés de bairro do SWIR, isolando ruas vs telhados
-  const ndviMicroBlur = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 3);
-  const ndviMesoBlur = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 18);
-  const ndbiMicroBlur = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 3);
-  const ndbiMesoBlur = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 18);
+  // Decomposição Multiescala em 1m (3m micro para copas/telhados e 14m meso para quadras/pátios)
+  const ndviMicro = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 2);
+  const ndviMeso = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 12);
+  const ndbiMicro = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 2);
+  const ndbiMeso = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 12);
 
-  // 5. Particionamento Biofísico por Regimes (Score Estrutural de Alta Definição em 1m)
-  const structuralScore = new Float32Array(nFine);
+  // Construção do Índice Biofísico de Superfície Contínuo (sem saturar vegetação e destacando hotspots)
+  const bioIndex = new Float32Array(nFine);
 
   for (let i = 0; i < nFine; i += 1) {
     const ndvi = fineFeatures.ndvi[i];
@@ -447,70 +450,57 @@ export function downscaleLandsatLST(
     const ndwi = fineFeatures.ndwi[i];
 
     if (!Number.isFinite(ndvi) || !Number.isFinite(ndbi) || !Number.isFinite(ndwi)) {
-      structuralScore[i] = 0;
+      bioIndex[i] = 0;
       continue;
     }
 
-    // Contrastes locais em 1m livres de manchas de bairro
-    const dNdviMicro = ndvi - ndviMicroBlur[i];
-    const dNdviMeso = ndvi - ndviMesoBlur[i];
-    const dNdbiMicro = ndbi - ndbiMicroBlur[i];
-    const dNdbiLocal = ndbi - (0.72 * ndbiMesoBlur[i] + 0.28 * meanGlobalNdbi);
+    // Texturas locais de 1 metro (preserva nuances de copas, clareiras, ruas e telhados)
+    const dNdviMicro = ndvi - ndviMicro[i];
+    const dNdviMeso = ndviMicro[i] - ndviMeso[i];
+    const dNdbiMicro = ndbi - ndbiMicro[i];
+    const dNdbiMeso = ndbiMicro[i] - ndbiMeso[i];
 
-    let score: number;
+    let val: number;
 
-    // REGIME 1: Corpos d'Água (Rio Tietê, lagos, canais) -> Frio extremo e bem recortado
-    if (ndwi > 0.11 && ndvi < 0.15) {
-      const waterDepth = Math.min(1, (ndwi - 0.11) / 0.25);
-      score = -1.55 - 0.35 * waterDepth + 0.8 * dNdbiMicro;
-    } else if (ndvi >= 0.38) {
-      // REGIME 2: Dossel Arbóreo Denso (Mata do Campo de Marte, parques e árvores viárias)
-      // Saturação logarítmica do LAI + textura de copa em 1m (evita mancha roxa chapada)
-      const canopyVigor = Math.min(1, (ndvi - 0.38) / 0.42);
-      const crownRelief = 2.4 * dNdviMicro + 1.1 * dNdviMeso - 1.2 * dNdbiMicro;
-      score = -0.72 - 0.58 * Math.pow(canopyVigor, 0.7) + Math.max(-0.35, Math.min(0.35, crownRelief));
-    } else if (ndvi >= 0.19) {
-      // REGIME 3: Gramados, Canteiros e Solo Permeável (entorno da pista do Campo de Marte)
-      const grassFrac = (ndvi - 0.19) / 0.19;
-      const localTex = 1.8 * dNdbiLocal - 2.0 * dNdviMicro;
-      score = -0.08 - 0.58 * grassFrac + Math.max(-0.28, Math.min(0.28, localTex));
+    if (ndwi > 0.12 && ndvi < 0.14) {
+      // Água (Rio Tietê e lagos): resfriamento controlado com nuances internas
+      const waterIntensity = Math.min(1, (ndwi - 0.12) / 0.28);
+      val = -3.1 - 0.7 * waterIntensity + 1.4 * dNdbiMicro;
+    } else if (ndvi >= 0.22) {
+      // Vegetação (Gramados -> Árvores -> Mata Densa):
+      // Curva contínua e linearizada para NÃO saturar em roxo chapado!
+      // Diferencia claramente gramado ralo, clareiras, copas iluminadas e mata úmida densa.
+      const vegNorm = Math.min(1, (ndvi - 0.22) / 0.58);
+      const moistureCool = Math.max(-0.25, Math.min(0.25, ndwi * 0.9));
+      const canopyTexture = 3.8 * dNdviMicro + 2.2 * dNdviMeso - 2.0 * dNdbiMicro;
+      val = -0.35 - 2.45 * Math.pow(vegNorm, 0.85) - moistureCool - canopyTexture;
     } else {
-      // REGIME 4 & 5: Matriz Urbana Impermeável (75% da cidade: Ruas, Pista, Ferrovia, Casas, Prédios e Galpões)
-      // Aqui dedicamos a faixa [-0.08 a +1.95] para separar nitidamente ruas de telhados em 1 metro!
-      const impervStrength = Math.max(0, Math.min(1, (0.19 - ndvi) / 0.22));
-
-      // Contraste morfológico entre Telhado (NDBI local alto, NDVI local baixo) e Rua/Cânion
-      const roofVsStreet = 4.2 * dNdbiLocal + 2.6 * dNdbiMicro - 3.1 * dNdviMicro - 1.5 * dNdviMeso;
-
-      // Bónus restrito apenas a mega-estruturas impermeáveis contínuas (Anhembi, grandes hangares)
-      const macroHotspot = Math.max(0, ndbiMesoBlur[i] - (meanGlobalNdbi + 0.04)) * 2.2;
-
-      score = -0.05 + 0.52 * impervStrength + roofVsStreet + macroHotspot;
+      // Área Urbana Impermeável (Ruas, Pista, Ferrovia, Casas, Prédios e Grandes Hotspots):
+      // Destaca fortemente grandes coberturas quentes (Anhembi, hangares, galpões) no topo da escala!
+      const dryImpervious = Math.max(0, 0.22 - ndvi) * 3.2;
+      const roofHotspot = Math.max(0, ndbi - 0.02) * 5.8 + Math.max(0, -ndwi - 0.05) * 2.6;
+      const urbanStructure = 3.6 * dNdbiMicro + 2.4 * dNdbiMeso - 3.2 * dNdviMicro;
+      val = 0.20 + dryImpervious + roofHotspot + urbanStructure;
     }
 
-    // Compressão suave para manter todos os objetos dentro da faixa dinâmica ideal
-    structuralScore[i] = 2.05 * Math.tanh(score / 1.65);
+    bioIndex[i] = val;
   }
 
-  // 6. Síntese Térmica de 1 Metro com Realce de Bordas (Sobel) + Sombreamento Volumétrico 3D
+  // Síntese Térmica Final 1m com Volume 3D Solar + Conservação da Temperatura Landsat ST_B10
   const output = new Float32Array(nFine);
   output.fill(NaN);
 
-  const cellFineSums = new Float64Array(nCells);
-  const cellFineCounts = new Uint32Array(nCells);
+  const sunDirX = 0.766;
+  const sunDirY = -0.643;
+
+  // Histograma rápido (2000 bins entre -5°C e 65°C) para Winsorização Percentílica exata
+  const histBins = new Uint32Array(2000);
+  let totalValidFine = 0;
 
   let minSignal = Infinity;
   let maxSignal = -Infinity;
   let minCoarseUsed = Infinity;
   let maxCoarseUsed = -Infinity;
-
-  // Luz solar matinal do Landsat (~10h00, Nordeste) para dar relevo 3D a prédios e copas
-  const sunDirX = 0.766;
-  const sunDirY = -0.643;
-
-  // Peso do fundo de 100m do Landsat reduzido para 12% (elimina de vez os borrões amarelos nos bairros!)
-  const regionalWeight = 0.12;
-  const thermalScale = Math.max(2.3, stdCoarse * 1.15);
 
   for (let y = 0; y < fineHeight; y += 1) {
     const lat = fine.north - ((y + 0.5) / fineHeight) * fineSpanY;
@@ -540,41 +530,109 @@ export function downscaleLandsatLST(
       const xPrev = Math.max(0, x - 1);
       const xNext = Math.min(fineWidth - 1, x + 1);
 
-      const sCenter = structuralScore[index];
-      const sEast = structuralScore[rowOffset + xNext];
-      const sWest = structuralScore[rowOffset + xPrev];
-      const sSouth = structuralScore[yNext + x];
-      const sNorth = structuralScore[yPrev + x];
+      const bCenter = bioIndex[index];
+      const bEast = bioIndex[rowOffset + xNext];
+      const bWest = bioIndex[rowOffset + xPrev];
+      const bSouth = bioIndex[yNext + x];
+      const bNorth = bioIndex[yPrev + x];
 
-      // Gradiente direcional (Relevo 3D solar nas bordas de edifícios e copas de árvores)
-      const gx = (sEast - sWest) * 0.5;
-      const gy = (sSouth - sNorth) * 0.5;
-      const isVolumetric = ndviFine >= 0.38 || sCenter > 0.55;
-      const solarRelief3D = isVolumetric ? (gx * sunDirX + gy * sunDirY) * 0.45 : 0;
+      // Sombreamento Volumétrico 3D (Iluminação Solar NE sobre copas de árvores e edificações)
+      const gx = (bEast - bWest) * 0.5;
+      const gy = (bSouth - bNorth) * 0.5;
+      const hasVolume = ndviFine >= 0.32 || bCenter > 0.85;
+      const relief3D = hasVolume ? Math.max(-0.85, Math.min(0.85, (gx * sunDirX + gy * sunDirY) * 0.55)) : 0;
 
-      // Operador Laplaciano de Oclusão de Borda (separa com linha nítida de 1m cada telhado da rua)
-      const meanNeigh = 0.25 * (sEast + sWest + sSouth + sNorth);
-      const edgeCrispness = (sCenter - meanNeigh) * 0.65;
+      // Nitidez de Borda Controlada (delimita objetos sem criar espinhos que distorcem a paleta)
+      const meanNeigh = 0.25 * (bEast + bWest + bSouth + bNorth);
+      const edgeDetail = Math.max(-0.75, Math.min(0.75, (bCenter - meanNeigh) * 0.55));
 
-      const tCoarseRaw = sampleBilinear(smoothCoarseLST, coarseWidth, coarseHeight, fx, fy, coarseMedian);
+      // Amostragem bilinear da grade Landsat (100m)
+      const tCoarseLocal = sampleBilinear(smoothCoarseLST, coarseWidth, coarseHeight, fx, fy, coarseMedian);
+      const ndviCoarseLocal = sampleBilinear(coarseNdviGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdvi);
+      const ndbiCoarseLocal = sampleBilinear(coarseNdbiGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdbi);
 
-      // Temperatura base ancorada na mediana física do Landsat ST_B10 + 12% de tendência regional suave
-      const tRegional = coarseMedian + regionalWeight * (tCoarseRaw - coarseMedian);
+      // Valor biofísico esperado na escala coarse
+      const coarseBioExpected =
+        ndviCoarseLocal >= 0.22
+          ? -0.35 - 2.45 * Math.pow(Math.min(1, (ndviCoarseLocal - 0.22) / 0.58), 0.85)
+          : 0.20 + Math.max(0, 0.22 - ndviCoarseLocal) * 3.2 + Math.max(0, ndbiCoarseLocal - 0.02) * 5.8;
 
-      // Modulação física de 1 metro
-      const deltaT = thermalScale * (sCenter + solarRelief3D + edgeCrispness);
+      // Diferencial físico de 1m ancorado na temperatura real do Landsat (preserva hotspots reais!)
+      const rawDelta = (bCenter - 0.65 * coarseBioExpected) + relief3D + edgeDetail;
+      const deltaT = 3.8 * Math.tanh(rawDelta / 3.4);
 
-      const finalTemp = tRegional + deltaT;
+      // Combina 72% da variação local do Landsat ST_B10 com a estrutura de 1 metro
+      const tBase = coarseMedian + 0.72 * (tCoarseLocal - coarseMedian);
+      const finalTemp = tBase + deltaT;
+
       output[index] = finalTemp;
+      totalValidFine += 1;
+
+      const bin = Math.max(0, Math.min(1999, Math.floor(((finalTemp + 5) / 70) * 2000)));
+      histBins[bin] += 1;
 
       if (deltaT < minSignal) minSignal = deltaT;
       if (deltaT > maxSignal) maxSignal = deltaT;
-      if (tCoarseRaw < minCoarseUsed) minCoarseUsed = tCoarseRaw;
-      if (tCoarseRaw > maxCoarseUsed) maxCoarseUsed = tCoarseRaw;
+      if (tCoarseLocal < minCoarseUsed) minCoarseUsed = tCoarseLocal;
+      if (tCoarseLocal > maxCoarseUsed) maxCoarseUsed = tCoarseRawVal(tCoarseLocal);
+    }
+  }
 
-      const cell = cy * coarseWidth + cx;
-      cellFineSums[cell] += finalTemp;
-      cellFineCounts[cell] += 1;
+  // Winsorização Percentílica Suave (P0.6 a P99.4):
+  // Garante que manchas claras de alta temperatura (Anhembi, hangares, telhados quentes)
+  // ocupem o topo brilhante da paleta (amarelo/branco), sem serem esmagadas por ruído de 1 pixel!
+  let p LowTemp = coarseMedian - 2.5 * stdCoarse;
+  let pHighTemp = coarseMedian + 2.8 * stdCoarse;
+
+  if (totalValidFine > 100) {
+    const lowTarget = totalValidFine * 0.006;
+    const highTarget = totalValidFine * 0.994;
+    let acc = 0;
+    let foundLow = false;
+    for (let b = 0; b < 2000; b += 1) {
+      acc += histBins[b];
+      if (!foundLow && acc >= lowTarget) {
+        pLowTemp = -5 + (b / 2000) * 70;
+        foundLow = true;
+      }
+      if (acc >= highTarget) {
+        pHighTemp = -5 + (b / 2000) * 70;
+        break;
+      }
+    }
+  }
+
+  const cellFineSums = new Float64Array(nCells);
+  const cellFineCounts = new Uint32Array(nCells);
+
+  for (let y = 0; y < fineHeight; y += 1) {
+    const lat = fine.north - ((y + 0.5) / fineHeight) * fineSpanY;
+    const cy = Math.floor(((coarse.north - lat) / coarseSpanY) * coarseHeight);
+    if (cy < 0 || cy >= coarseHeight) continue;
+
+    const rowOffset = y * fineWidth;
+    for (let x = 0; x < fineWidth; x += 1) {
+      const idx = rowOffset + x;
+      const v = output[idx];
+      if (!Number.isFinite(v)) continue;
+
+      let clamped: number;
+      if (v < pLowTemp) {
+        clamped = pLowTemp - 0.25 * Math.tanh((pLowTemp - v) / 0.5);
+      } else if (v > pHighTemp) {
+        clamped = pHighTemp + 0.25 * Math.tanh((v - pHighTemp) / 0.5);
+      } else {
+        clamped = v;
+      }
+      output[idx] = clamped;
+
+      const lon = fine.west + ((x + 0.5) / fineWidth) * fineSpanX;
+      const cx = Math.floor(((lon - coarse.west) / coarseSpanX) * coarseWidth);
+      if (cx >= 0 && cx < coarseWidth) {
+        const cell = cy * coarseWidth + cx;
+        cellFineSums[cell] += clamped;
+        cellFineCounts[cell] += 1;
+      }
     }
   }
 
@@ -611,6 +669,10 @@ export function downscaleLandsatLST(
     coarseWidth,
     coarseHeight,
   };
+}
+
+function tCoarseRawVal(val: number): number {
+  return val;
 }
 
 export function applyTsHARP(ndvi: Float32Array, lstBase: Float32Array): TsHarpResult {
