@@ -5,7 +5,7 @@ import { calculateOpticalIndices } from './opticalIndices';
 import { downscaleLandsatLST } from './downscaling';
 import { fetchNearestLandsatThermal, type ThermalProgress } from './landsatAuto';
 import { readTiffPixels } from './tiffReader';
-import { renderLstToCanvas, renderRGBBasemapToCanvas, type PaletteType } from './colorMapper';
+import { renderRGBBasemapToCanvas, type PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { boundsExtent, rasterBoundsToWgs84, type RasterBounds } from './rasterGeo';
 import { buildUhiSurface, downloadUhiSurface, type UhiSurface } from './uhiSurface';
@@ -13,7 +13,17 @@ import { buildUhiSurface, downloadUhiSurface, type UhiSurface } from './uhiSurfa
 type Lang = 'pt' | 'en';
 type Theme = 'light' | 'dark';
 type Provider = 'osm' | 'esri';
+type UhiClusterMethod = 'zscore' | 'quantiles' | 'natural' | 'kernel';
 type SearchResult = { display_name: string; lat: string; lon: string };
+type RasterStats = {
+  min: number;
+  max: number;
+  mean: number;
+  stdDev: number;
+  q25: number;
+  q50: number;
+  q75: number;
+};
 type RasterState = {
   data: Float32Array;
   width: number;
@@ -23,7 +33,7 @@ type RasterState = {
   resolution: number[];
   epsg: number;
   isProjected: boolean;
-  stats: { min: number; max: number; mean: number; stdDev: number };
+  stats: RasterStats;
   ndvi: Float32Array;
   ndbi: Float32Array;
   fileName: string;
@@ -40,7 +50,7 @@ type ComparisonImage = {
   width: number;
   height: number;
   data: Float32Array;
-  stats: RasterState['stats'];
+  stats: RasterStats;
 };
 
 type IsothermFeature = {
@@ -64,10 +74,34 @@ type IsothermCollection = {
 };
 
 const COLAB_URL = 'https://colab.research.google.com/drive/1uKJohUXOqTmbNDZY7N8qVzyk1_laBKIg?usp=sharing';
+const DEFAULT_CUSTOM_COLORS = ['#0b2c7a', '#167288', '#48b574', '#f5d547', '#e86825', '#b81424'];
 const TILE_URLS: Record<Provider, string> = {
   osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   esri: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 };
+
+// Paradas de cores enriquecidas nas temperaturas frias/amenas para evitar concentração em tons parecidos
+const PALETTE_STOPS: Record<Exclude<PaletteType, 'custom' | 'uhi'>, string[]> = {
+  ironbow: ['#061342', '#103b8c', '#186d8a', '#522b96', '#961774', '#cf2226', '#f26d18', '#ffca28', '#ffffff'],
+  spectral: ['#323896', '#2668b8', '#2ba198', '#68c96e', '#c4e667', '#fee08b', '#f88d51', '#d53e4f', '#9e0142'],
+  jet: ['#00007f', '#0038ff', '#00aaff', '#14e6a0', '#7dff40', '#ffff00', '#ff8800', '#ff1900', '#800000'],
+  viridis: ['#300147', '#3b347a', '#2c688e', '#1f968b', '#38b977', '#7ad151', '#c2df23', '#fde725', '#fff89e'],
+  magma: ['#040418', '#1f114b', '#491570', '#782282', '#a8327d', '#d6456c', '#f37152', '#fca86b', '#fcfdbf'],
+  coolwarm: ['#1e3c96', '#386cb8', '#6da0d8', '#abd0e6', '#e6e8ed', '#f4b698', '#de6c56', '#b40426', '#7a0218'],
+  terrain: ['#15478c', '#1f7a8c', '#3ea362', '#82c458', '#d8cf6a', '#c98e4b', '#9e4f31', '#7d2822', '#fff5eb'],
+  grayscale: ['#080a0c', '#24292e', '#454c54', '#68707a', '#8c959f', '#b2bac2', '#d5dce3', '#ffffff'],
+};
+
+const UHI_STOPS: [number, number, number, number][] = [
+  [-1.65, 16, 62, 138],
+  [-1.05, 24, 122, 140],
+  [-0.45, 58, 174, 108],
+  [0.05, 186, 222, 118],
+  [0.50, 248, 214, 104],
+  [0.95, 244, 124, 48],
+  [1.40, 212, 32, 38],
+  [1.95, 255, 244, 184],
+];
 
 const copy = {
   pt: {
@@ -94,7 +128,7 @@ const copy = {
     max: 'máxima',
     mean: 'média',
     std: 'desvio',
-    histogram: 'Distribuição térmica',
+    histogram: 'Histograma de Cores & Temperatura',
     sample: 'Escala Térmica & Inspeção',
     aoi: 'Área de interesse',
     draw: 'Desenhar AOI',
@@ -157,7 +191,7 @@ const copy = {
     max: 'maximum',
     mean: 'mean',
     std: 'std dev',
-    histogram: 'Temperature distribution',
+    histogram: 'Color & Temperature Histogram',
     sample: 'Thermal Scale & Inspection',
     aoi: 'Area of interest',
     draw: 'Draw AOI',
@@ -198,15 +232,144 @@ const copy = {
   },
 } as const;
 
-const UHI_STOPS: [number, number, number, number][] = [
-  [-1.65, 24, 90, 157],
-  [-0.95, 43, 140, 104],
-  [-0.30, 138, 196, 110],
-  [0.15, 247, 226, 139],
-  [0.65, 244, 132, 56],
-  [1.20, 215, 38, 38],
-  [1.90, 255, 242, 175],
-];
+function hexToRgbTuple(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '').trim();
+  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
+  const num = Number.parseInt(full, 16);
+  if (Number.isNaN(num)) return [128, 128, 128];
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+/**
+ * Curva perceptual que expande a separação cromática nas temperaturas frias e amenas
+ * (0.0 a 0.55) mantendo o destaque nítido das temperaturas mais altas (0.55 a 1.0).
+ */
+function perceptualCoolExpansion(t: number): number {
+  const c = Math.max(0, Math.min(1, t));
+  if (c < 0.56) {
+    return 0.58 * Math.pow(c / 0.56, 0.72);
+  }
+  return 0.58 + 0.42 * Math.pow((c - 0.56) / 0.44, 1.08);
+}
+
+function getPaletteStopList(palette: PaletteType, customColors: string[]): string[] {
+  if (palette === 'custom') return customColors.length >= 2 ? customColors : DEFAULT_CUSTOM_COLORS;
+  if (palette === 'uhi') return ['#103e8a', '#187a8c', '#3aae6c', '#bade76', '#f8d668', '#f47c30', '#d42026', '#fff4b8'];
+  return PALETTE_STOPS[palette] || PALETTE_STOPS.ironbow;
+}
+
+function buildPaletteLut1024(palette: PaletteType, customColors: string[]): Uint8Array {
+  const stops = getPaletteStopList(palette, customColors).map(hexToRgbTuple);
+  const lut = new Uint8Array(1024 * 3);
+  const maxSeg = stops.length - 1;
+
+  for (let i = 0; i < 1024; i += 1) {
+    const rawT = i / 1023;
+    const t = perceptualCoolExpansion(rawT);
+    const pos = t * maxSeg;
+    const idx = Math.min(maxSeg - 1, Math.floor(pos));
+    const frac = pos - idx;
+    const [r0, g0, b0] = stops[idx];
+    const [r1, g1, b1] = stops[idx + 1];
+    lut[i * 3] = Math.round(r0 + (r1 - r0) * frac);
+    lut[i * 3 + 1] = Math.round(g0 + (g1 - g0) * frac);
+    lut[i * 3 + 2] = Math.round(b0 + (b1 - b0) * frac);
+  }
+  return lut;
+}
+
+function sampleCssColorAt(t: number, palette: PaletteType, customColors: string[], isUhi: boolean): string {
+  if (isUhi) {
+    const z = -1.65 + Math.max(0, Math.min(1, t)) * 3.6;
+    const [r, g, b] = sampleUhiColor(z);
+    return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+  }
+  const stops = getPaletteStopList(palette, customColors).map(hexToRgbTuple);
+  const maxSeg = stops.length - 1;
+  const p = perceptualCoolExpansion(t) * maxSeg;
+  const idx = Math.min(maxSeg - 1, Math.floor(p));
+  const frac = p - idx;
+  const [r0, g0, b0] = stops[idx];
+  const [r1, g1, b1] = stops[idx + 1];
+  return `rgb(${Math.round(r0 + (r1 - r0) * frac)}, ${Math.round(g0 + (g1 - g0) * frac)}, ${Math.round(b0 + (b1 - b0) * frac)})`;
+}
+
+function computeRasterStats(data: Float32Array): RasterStats | null {
+  let min = Infinity;
+  let max = -Infinity;
+  let sum = 0;
+  let count = 0;
+  const sample: number[] = [];
+  const step = Math.max(1, Math.floor(data.length / 25000));
+
+  for (let i = 0; i < data.length; i += 1) {
+    const v = data[i];
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+    count += 1;
+    if (i % step === 0) sample.push(v);
+  }
+
+  if (count === 0) return null;
+  const mean = sum / count;
+
+  let sqDiff = 0;
+  for (let i = 0; i < sample.length; i += 1) {
+    const d = sample[i] - mean;
+    sqDiff += d * d;
+  }
+  const stdDev = sample.length > 1 ? Math.sqrt(sqDiff / sample.length) : 1;
+
+  sample.sort((a, b) => a - b);
+  const q25 = sample[Math.floor(sample.length * 0.25)] ?? min;
+  const q50 = sample[Math.floor(sample.length * 0.5)] ?? mean;
+  const q75 = sample[Math.floor(sample.length * 0.75)] ?? max;
+
+  return { min, max, mean, stdDev, q25, q50, q75 };
+}
+
+function renderPerceptualLstToCanvas(
+  data: Float32Array,
+  width: number,
+  height: number,
+  canvas: HTMLCanvasElement,
+  palette: PaletteType,
+  customColors: string[],
+  existingStats?: RasterStats,
+): RasterStats | null {
+  const stats = existingStats ?? computeRasterStats(data);
+  if (!stats) return null;
+
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return stats;
+
+  const img = ctx.createImageData(width, height);
+  const out = img.data;
+  const lut = buildPaletteLut1024(palette, customColors);
+  const span = Math.max(1e-5, stats.max - stats.min);
+  const invSpan = 1023 / span;
+
+  for (let i = 0; i < data.length; i += 1) {
+    const v = data[i];
+    const px = i * 4;
+    if (!Number.isFinite(v)) {
+      out[px + 3] = 0;
+      continue;
+    }
+    const lutIdx = Math.max(0, Math.min(1023, Math.round((v - stats.min) * invSpan))) * 3;
+    out[px] = lut[lutIdx];
+    out[px + 1] = lut[lutIdx + 1];
+    out[px + 2] = lut[lutIdx + 2];
+    out[px + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return stats;
+}
 
 function sampleUhiColor(z: number): [number, number, number] {
   if (z <= UHI_STOPS[0][0]) {
@@ -217,7 +380,7 @@ function sampleUhiColor(z: number): [number, number, number] {
     const [z1, r1, g1, b1] = UHI_STOPS[s + 1];
     if (z <= z1) {
       const t = Math.max(0, Math.min(1, (z - z0) / (z1 - z0)));
-      const tStepped = 0.65 * t + 0.35 * (Math.round(t * 2) / 2);
+      const tStepped = 0.72 * t + 0.28 * (Math.round(t * 2) / 2);
       return [
         r0 + (r1 - r0) * tStepped,
         g0 + (g1 - g0) * tStepped,
@@ -229,13 +392,42 @@ function sampleUhiColor(z: number): [number, number, number] {
   return [last[1], last[2], last[3]];
 }
 
+function computeClusteredZ(
+  val: number,
+  neighborMean: number,
+  stats: RasterStats,
+  method: UhiClusterMethod,
+  power: number,
+): number {
+  const safeStd = Math.max(0.6, stats.stdDev);
+  const iqr = Math.max(0.5, stats.q75 - stats.q25);
+
+  let baseZ: number;
+  if (method === 'quantiles') {
+    baseZ = ((val - stats.q50) / (iqr * 0.68)) * 0.92;
+  } else if (method === 'natural') {
+    const norm = (val - stats.min) / Math.max(0.5, stats.max - stats.min);
+    const centered = (norm - 0.46) * 3.3;
+    baseZ = centered + 0.18 * Math.sin(centered * Math.PI);
+  } else if (method === 'kernel') {
+    const spatialBlend = 0.42 * val + 0.58 * neighborMean;
+    baseZ = ((spatialBlend - stats.mean) / safeStd) * 1.15;
+  } else {
+    baseZ = (val - stats.mean) / safeStd;
+  }
+
+  const sign = baseZ < 0 ? -1 : 1;
+  return sign * Math.pow(Math.abs(baseZ), power);
+}
+
 function renderHighDefUhiToCanvas(
   data: Float32Array,
   width: number,
   height: number,
   canvas: HTMLCanvasElement,
-  mean: number,
-  stdDev: number,
+  stats: RasterStats,
+  method: UhiClusterMethod,
+  power: number,
 ) {
   canvas.width = width;
   canvas.height = height;
@@ -243,12 +435,14 @@ function renderHighDefUhiToCanvas(
   if (!ctx) return;
   const img = ctx.createImageData(width, height);
   const out = img.data;
-  const safeStd = Math.max(0.8, stdDev);
+  const safeStd = Math.max(0.8, stats.stdDev);
 
   for (let y = 0; y < height; y += 1) {
     const row = y * width;
     const yPrev = Math.max(0, y - 1) * width;
     const yNext = Math.min(height - 1, y + 1) * width;
+    const yFarPrev = Math.max(0, y - 3) * width;
+    const yFarNext = Math.min(height - 1, y + 3) * width;
 
     for (let x = 0; x < width; x += 1) {
       const i = row + x;
@@ -260,14 +454,23 @@ function renderHighDefUhiToCanvas(
         continue;
       }
 
-      const z = (val - mean) / safeStd;
-
       const xPrev = Math.max(0, x - 1);
       const xNext = Math.min(width - 1, x + 1);
+      const xFarPrev = Math.max(0, x - 3);
+      const xFarNext = Math.min(width - 1, x + 3);
+
       const vE = Number.isFinite(data[row + xNext]) ? data[row + xNext] : val;
       const vW = Number.isFinite(data[row + xPrev]) ? data[row + xPrev] : val;
       const vS = Number.isFinite(data[yNext + x]) ? data[yNext + x] : val;
       const vN = Number.isFinite(data[yPrev + x]) ? data[yPrev + x] : val;
+
+      const vFarE = Number.isFinite(data[row + xFarNext]) ? data[row + xFarNext] : val;
+      const vFarW = Number.isFinite(data[row + xFarPrev]) ? data[row + xFarPrev] : val;
+      const vFarS = Number.isFinite(data[yFarNext + x]) ? data[yFarNext + x] : val;
+      const vFarN = Number.isFinite(data[yFarPrev + x]) ? data[yFarPrev + x] : val;
+
+      const neighborMean = 0.125 * (vE + vW + vS + vN + vFarE + vFarW + vFarS + vFarN);
+      const z = computeClusteredZ(val, neighborMean, stats, method, power);
 
       const slopeShade = ((vE - vW) * 0.7 - (vS - vN) * 0.7) / safeStd;
       const edgeLap = (val - 0.25 * (vE + vW + vS + vN)) / safeStd;
@@ -290,8 +493,9 @@ function buildMesoIsothermsGeoJSON(
   width: number,
   height: number,
   bounds: RasterBounds,
-  mean: number,
-  stdDev: number,
+  stats: RasterStats,
+  method: UhiClusterMethod,
+  power: number,
 ): IsothermCollection {
   const ext = boundsExtent(bounds);
   const gW = 96;
@@ -314,11 +518,12 @@ function buildMesoIsothermsGeoJSON(
 
   let grid = new Float32Array(gW * gH);
   for (let i = 0; i < grid.length; i += 1) {
-    grid[i] = counts[i] > 0 ? rawGrid[i] / counts[i] : mean;
+    grid[i] = counts[i] > 0 ? rawGrid[i] / counts[i] : stats.mean;
   }
 
+  const passes = method === 'kernel' ? 4 : 3;
   const kernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
-  for (let pass = 0; pass < 3; pass += 1) {
+  for (let pass = 0; pass < passes; pass += 1) {
     const next = new Float32Array(gW * gH);
     for (let y = 0; y < gH; y += 1) {
       for (let x = 0; x < gW; x += 1) {
@@ -339,22 +544,29 @@ function buildMesoIsothermsGeoJSON(
     grid = next;
   }
 
-  const safeStd = Math.max(0.8, stdDev);
-  const levels = [
-    { z: -0.95, label: 'Ilha de Frescor', color: '#38bdf8', kmlColor: 'fff8bd38' },
-    { z: -0.35, label: 'Zona Amenizada', color: '#34d399', kmlColor: 'ff99d334' },
-    { z: 0.20, label: 'Limiar UHI Leve', color: '#fde047', kmlColor: 'ff47e0fd' },
-    { z: 0.75, label: 'Cluster UHI Forte', color: '#fb923c', kmlColor: 'ff3c92fb' },
-    { z: 1.25, label: 'Hotspot Extremo', color: '#f43f5e', kmlColor: 'ff5e3ff4' },
+  const safeStd = Math.max(0.8, stats.stdDev);
+  const invPower = 1 / Math.max(0.5, power);
+  const baseZ = [-0.95, -0.35, 0.20, 0.75, 1.25];
+  const labels = [
+    { label: 'Ilha de Frescor', color: '#38bdf8', kmlColor: 'fff8bd38' },
+    { label: 'Zona Amenizada', color: '#34d399', kmlColor: 'ff99d334' },
+    { label: 'Limiar UHI Leve', color: '#fde047', kmlColor: 'ff47e0fd' },
+    { label: 'Cluster UHI Forte', color: '#fb923c', kmlColor: 'ff3c92fb' },
+    { label: 'Hotspot Extremo', color: '#f43f5e', kmlColor: 'ff5e3ff4' },
   ];
+
+  const centerRef = method === 'quantiles' ? stats.q50 : stats.mean;
+  const scaleRef = method === 'quantiles' ? Math.max(0.6, (stats.q75 - stats.q25) * 0.75) : safeStd;
 
   const toLng = (gx: number) => ext.west + ((gx + 0.5) / gW) * (ext.east - ext.west);
   const toLat = (gy: number) => ext.north - ((gy + 0.5) / gH) * (ext.north - ext.south);
 
   const features: IsothermFeature[] = [];
 
-  levels.forEach((lvl, idx) => {
-    const iso = Number((mean + lvl.z * safeStd).toFixed(2));
+  labels.forEach((lvl, idx) => {
+    const rawZ = baseZ[idx];
+    const zAdj = (rawZ < 0 ? -1 : 1) * Math.pow(Math.abs(rawZ), invPower);
+    const iso = Number((centerRef + zAdj * scaleRef).toFixed(2));
     const segments: [number, number][][] = [];
 
     for (let y = 0; y < gH - 1; y += 1) {
@@ -590,9 +802,9 @@ function renderDifferenceToCanvas(data: Float32Array, width: number, height: num
   return { min: count ? min : 0, max: count ? max : 0, maxAbs };
 }
 
-function uhiClassLabel(value: number, stats: { mean: number; stdDev: number }, lang: Lang) {
+function uhiClassLabel(value: number, stats: RasterStats, method: UhiClusterMethod, power: number, lang: Lang) {
   if (!Number.isFinite(value)) return '—';
-  const z = (value - stats.mean) / Math.max(0.8, stats.stdDev);
+  const z = computeClusteredZ(value, value, stats, method, power);
   if (z < -0.95) return lang === 'pt' ? 'Ilha de Frescor' : 'Cool Island';
   if (z < -0.30) return lang === 'pt' ? 'Amenizado' : 'Mitigated';
   if (z < 0.25) return lang === 'pt' ? 'Neutro' : 'Neutral';
@@ -607,18 +819,8 @@ function imageDateLabel(name: string, index: number) {
 }
 
 function paletteGradient(palette: PaletteType, customColors: string[]) {
-  const gradients: Record<string, string> = {
-    ironbow: '#000082, #780078, #cc0000, #ffcc00, #ffffff',
-    spectral: '#5e4fa2, #3288bd, #66c2a5, #fdd486, #f46d43, #9e0142',
-    jet: '#000082, #00ffff, #00ff00, #ffff00, #ff0000',
-    viridis: '#440154, #3b528b, #21918c, #5ec962, #fde725',
-    magma: '#000004, #340f4b, #7b206b, #ca464a, #fcfdbf',
-    coolwarm: '#3b4cc0, #dddddd, #b40426',
-    terrain: '#225ea8, #53a85d, #dcbe68, #8b261f',
-    grayscale: '#050505, #ffffff',
-    custom: customColors.join(', '),
-  };
-  return `linear-gradient(90deg, ${gradients[palette] || gradients.ironbow})`;
+  const samplePoints = Array.from({ length: 13 }, (_, idx) => sampleCssColorAt(idx / 12, palette, customColors, false));
+  return `linear-gradient(90deg, ${samplePoints.join(', ')})`;
 }
 
 function statsOf(data: Float32Array) {
@@ -649,8 +851,11 @@ export default function App() {
   const [opacity, setOpacity] = useState(0.96);
   const [contrast, setContrast] = useState(0);
   const [palette, setPalette] = useState<PaletteType>('ironbow');
-  const [customColors, setCustomColors] = useState(['#173f9d', '#2457b8', '#25a7a0', '#f5d547', '#e8752f', '#b62025']);
+  const [customColors, setCustomColors] = useState<string[]>(DEFAULT_CUSTOM_COLORS);
+  const [draftCustomColors, setDraftCustomColors] = useState<string[]>(DEFAULT_CUSTOM_COLORS);
   const [displayMode, setDisplayMode] = useState<'temperature' | 'uhi'>('temperature');
+  const [uhiMethod, setUhiMethod] = useState<UhiClusterMethod>('zscore');
+  const [uhiPower, setUhiPower] = useState(1.10);
   const [file, setFile] = useState<File | null>(null);
   const [bandCount, setBandCount] = useState(3);
   const [bandLabels, setBandLabels] = useState<string[]>([]);
@@ -710,6 +915,14 @@ export default function App() {
   const comparisonPrimary = comparisonImages[0] ?? null;
   const comparisonSecondary = comparisonImages[1] ?? null;
 
+  // Debounce de 140ms para que o seletor de cores Custom rode liso sem travar o navegador
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setCustomColors(draftCustomColors);
+    }, 140);
+    return () => window.clearTimeout(timer);
+  }, [draftCustomColors]);
+
   const differenceRender = useMemo(() => {
     if (!comparisonPrimary || !comparisonSecondary || !differenceReady) return null;
     const data = thermalDifference(comparisonPrimary, comparisonSecondary);
@@ -718,8 +931,8 @@ export default function App() {
     return { url: canvas.toDataURL('image/png'), stats };
   }, [comparisonPrimary, comparisonSecondary, differenceReady]);
 
-  const uhiGradient = 'linear-gradient(90deg, #185a9d, #2b8c68, #8ac46e, #f7e28b, #f48438, #d72626, #fff2af)';
-  const legendGradient = displayMode === 'uhi' ? uhiGradient : paletteGradient(palette, customColors);
+  const uhiGradient = 'linear-gradient(90deg, #103e8a, #187a8c, #3aae6c, #bade76, #f8d668, #f47c30, #d42026, #fff4b8)';
+  const legendGradient = displayMode === 'uhi' ? uhiGradient : paletteGradient(palette, draftCustomColors);
   const differenceStats = differenceRender?.stats ?? null;
   const differenceExtent = differenceStats ? Math.max(Math.abs(differenceStats.min), Math.abs(differenceStats.max)) : 0;
 
@@ -1013,24 +1226,24 @@ export default function App() {
   useEffect(() => {
     if (raster) {
       setUhiSurface(buildUhiSurface({ data: raster.data, width: raster.width, height: raster.height, bounds: raster.bounds, mean: raster.stats.mean, stdDev: raster.stats.stdDev }));
-      setIsotherms(buildMesoIsothermsGeoJSON(raster.data, raster.width, raster.height, raster.bounds, raster.stats.mean, raster.stats.stdDev));
+      setIsotherms(buildMesoIsothermsGeoJSON(raster.data, raster.width, raster.height, raster.bounds, raster.stats.mean ? raster.stats : raster.stats, uhiMethod, uhiPower));
     } else {
       setUhiSurface(null);
       setIsotherms(null);
     }
-  }, [raster]);
+  }, [raster, uhiMethod, uhiPower]);
 
   useEffect(() => {
     if (!raster) return;
     const canvas = document.createElement('canvas');
     if (displayMode === 'uhi') {
-      renderHighDefUhiToCanvas(raster.data, raster.width, raster.height, canvas, raster.stats.mean, raster.stats.stdDev);
+      renderHighDefUhiToCanvas(raster.data, raster.width, raster.height, canvas, raster.stats, uhiMethod, uhiPower);
     } else {
-      renderLstToCanvas(raster.data, raster.width, raster.height, canvas, palette, customColors);
+      renderPerceptualLstToCanvas(raster.data, raster.width, raster.height, canvas, palette, customColors, raster.stats);
     }
     lstCanvas.current = canvas;
     setLstUrl(canvas.toDataURL('image/png'));
-  }, [customColors, displayMode, palette, raster]);
+  }, [customColors, displayMode, palette, raster, uhiMethod, uhiPower]);
 
   useEffect(() => {
     const map = mapInstance.current;
@@ -1125,7 +1338,7 @@ export default function App() {
         const automatic = await buildAutomaticThermalRaster(selectedFile, [Number(bands[0]), Number(bands[1]), Number(bands[2])]);
         const lst = document.createElement('canvas');
         const optical = document.createElement('canvas');
-        const stats = renderLstToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, palette, customColors);
+        const stats = renderPerceptualLstToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, palette, customColors);
         renderRGBBasemapToCanvas(
           automatic.tiff.rasters[Number(bands[2])] as Float32Array,
           automatic.tiff.rasters[Number(bands[1])] as Float32Array,
@@ -1290,9 +1503,9 @@ export default function App() {
       );
       const lst = document.createElement('canvas');
       const optical = document.createElement('canvas');
-      const stats = renderLstToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, palette, customColors);
+      const stats = renderPerceptualLstToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, palette, customColors);
       if (displayMode === 'uhi' && stats) {
-        renderHighDefUhiToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, stats.mean, stats.stdDev);
+        renderHighDefUhiToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, stats, uhiMethod, uhiPower);
       }
       renderRGBBasemapToCanvas(
         automatic.tiff.rasters[Number(bands[2])] as Float32Array,
@@ -1335,35 +1548,40 @@ export default function App() {
     }
   };
 
-  const histogram = useMemo(() => {
+  // Histograma duplo de 24 faixas (Temperatura + Cores Perceptuais da Paleta Ativa)
+  const colorTempHistogram = useMemo(() => {
     if (!raster) return [];
-    const bins = Array.from({ length: 10 }, () => 0);
-    const rangeVal = raster.stats.max - raster.stats.min || 1;
-    raster.data.forEach((v) => {
-      if (Number.isFinite(v)) bins[Math.min(9, Math.floor(((v - raster.stats.min) / rangeVal) * 10))]++;
-    });
-    const peak = Math.max(bins.reduce((maximum, value) => Math.max(maximum, value), 0), 1);
-    return bins.map((value, i) => ({
-      value,
-      height: Math.max(4, (value / peak) * 100),
-      label: `${(raster.stats.min + ((raster.stats.max - raster.stats.min) * i) / 10).toFixed(0)}°`,
-    }));
-  }, [raster]);
+    const numBins = 24;
+    const bins = Array.from({ length: numBins }, () => 0);
+    const span = raster.stats.max - raster.stats.min || 1;
+    let total = 0;
 
-  const legendStops = (selected: PaletteType) => {
-    const stops: Record<string, string[]> = {
-      ironbow: ['#000082', '#780078', '#cc0000', '#ffcc00', '#ffffff'],
-      spectral: ['#5e4fa2', '#3288bd', '#66c2a5', '#fdd486', '#f46d43', '#9e0142'],
-      jet: ['#000082', '#00ffff', '#00ff00', '#ffff00', '#ff0000'],
-      viridis: ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725'],
-      magma: ['#000004', '#340f4b', '#7b206b', '#ca464a', '#fcfdbf'],
-      coolwarm: ['#3b4cc0', '#dddddd', '#b40426'],
-      terrain: ['#225ea8', '#53a85d', '#dcbe68', '#8b261f'],
-      grayscale: ['#050505', '#ffffff'],
-      custom: customColors,
-    };
-    return stops[selected] || stops.ironbow;
-  };
+    for (let i = 0; i < raster.data.length; i += 2) {
+      const v = raster.data[i];
+      if (!Number.isFinite(v)) continue;
+      const idx = Math.max(0, Math.min(numBins - 1, Math.floor(((v - raster.stats.min) / span) * numBins)));
+      bins[idx] += 1;
+      total += 1;
+    }
+
+    const peak = Math.max(...bins, 1);
+    return bins.map((count, i) => {
+      const tNorm = (i + 0.5) / numBins;
+      const tempStart = raster.stats.min + (span * i) / numBins;
+      const tempEnd = raster.stats.min + (span * (i + 1)) / numBins;
+      const pct = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0';
+      return {
+        count,
+        pct,
+        height: Math.max(6, Math.pow(count / peak, 0.78) * 100),
+        tempLabel: `${tempStart.toFixed(1)}°C – ${tempEnd.toFixed(1)}°C (${pct}%)`,
+        shortLabel: `${((tempStart + tempEnd) * 0.5).toFixed(0)}°`,
+        color: sampleCssColorAt(tNorm, palette, draftCustomColors, displayMode === 'uhi'),
+      };
+    });
+  }, [displayMode, draftCustomColors, palette, raster]);
+
+  const legendStops = (selected: PaletteType) => getPaletteStopList(selected, draftCustomColors);
 
   const drawDifferenceLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, stats: { min: number; max: number }) => {
     const height = 132;
@@ -1414,12 +1632,12 @@ export default function App() {
     ctx.fillText(title, x + pad, y + 43);
     if (displayMode === 'uhi') {
       const items: [string, string][] = [
-        ['Frescor', '#185a9d'],
-        ['Amenizado', '#2b8c68'],
-        ['Neutro', '#f7e28b'],
-        ['Moderada', '#f48438'],
-        ['Forte', '#d72626'],
-        ['Hotspot', '#fff2af'],
+        ['Frescor', '#103e8a'],
+        ['Amenizado', '#3aae6c'],
+        ['Neutro', '#f8d668'],
+        ['Moderada', '#f47c30'],
+        ['Forte', '#d42026'],
+        ['Hotspot', '#fff4b8'],
       ];
       const itemWidth = (width - pad * 2) / items.length;
       items.forEach(([label, color], index) => {
@@ -1432,10 +1650,12 @@ export default function App() {
       });
       ctx.fillStyle = '#b7c9cb';
       ctx.font = '16px Arial';
-      ctx.fillText('Níveis UHI em 1m relativos à média e ao desvio-padrão da cena', x + pad, y + 139);
+      ctx.fillText(`Método: ${uhiMethod.toUpperCase()} · Potenciação γ=${uhiPower.toFixed(2)}`, x + pad, y + 139);
     } else {
       const gradient = ctx.createLinearGradient(x + pad, y + 84, x + width - pad, y + 84);
-      legendStops(palette).forEach((color, index, colors) => gradient.addColorStop(index / Math.max(colors.length - 1, 1), color));
+      for (let s = 0; s <= 16; s += 1) {
+        gradient.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
+      }
       ctx.fillStyle = gradient;
       ctx.fillRect(x + pad, y + 67, width - pad * 2, 38);
       ctx.strokeStyle = 'rgba(255,255,255,.7)';
@@ -1834,7 +2054,7 @@ export default function App() {
             <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '340px', zIndex: 5 }}>
               <span>
                 {displayMode === 'uhi'
-                  ? 'UHI · Intensidade de Ilha de Calor (1m)'
+                  ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})`
                   : comparisonMode === 'difference' && differenceReady
                     ? `Δ LST · ${comparisonPrimary?.dateLabel ?? 'data 1'} → ${comparisonSecondary?.dateLabel ?? 'data 2'}`
                     : t.lst}
@@ -2026,7 +2246,7 @@ export default function App() {
                         {hoverSample || sample ? `${lang === 'pt' ? 'Nível local' : 'Local level'}: ` : `${lang === 'pt' ? 'Média da cena' : 'Scene mean'} · `}
                         <b>
                           {hoverSample || sample
-                            ? uhiClassLabel((hoverSample || sample)!.temp, raster.stats, lang)
+                            ? uhiClassLabel((hoverSample || sample)!.temp, raster.stats, uhiMethod, uhiPower, lang)
                             : `${raster.stats.min.toFixed(1)}°C – ${raster.stats.max.toFixed(1)}°C`}
                         </b>
                       </span>
@@ -2039,7 +2259,7 @@ export default function App() {
                   </div>
                   <div className="side-legends">
                     <div className="side-legend">
-                      <b>{displayMode === 'uhi' ? 'Escala UHI (6 níveis)' : lang === 'pt' ? `Paleta: ${palette}` : `Palette: ${palette}`}</b>
+                      <b>{displayMode === 'uhi' ? 'Escala UHI (8 níveis)' : lang === 'pt' ? `Paleta: ${palette}` : `Palette: ${palette}`}</b>
                       <i className="legend-gradient" style={{ background: legendGradient }} />
                       <small>
                         {displayMode === 'uhi' ? 'Frescor → Neutro → Hotspot' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}
@@ -2047,27 +2267,140 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                <div className="control-row" style={{ marginTop: '8px' }}>
+
+                {/* Histograma Integrado de Cores + Distribuição de Temperatura logo abaixo da leitura */}
+                {raster && colorTempHistogram.length > 0 && (
+                  <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(0,0,0,0.22)', borderRadius: '8px', border: '1px solid rgba(121,226,220,0.14)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', fontSize: '11px', opacity: 0.85 }}>
+                      <b>{t.histogram}</b>
+                      <span>σ = {raster.stats.stdDev.toFixed(2)}°C</span>
+                    </div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: `repeat(${colorTempHistogram.length}, 1fr)`,
+                        alignItems: 'end',
+                        gap: '2px',
+                        height: '64px',
+                        paddingBottom: '4px',
+                      }}
+                    >
+                      {colorTempHistogram.map((bar, idx) => (
+                        <div
+                          key={idx}
+                          title={bar.tempLabel}
+                          style={{
+                            height: `${bar.height}%`,
+                            background: bar.color,
+                            borderRadius: '2px 2px 0 0',
+                            boxShadow: '0 0 2px rgba(0,0,0,0.4)',
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="legend-gradient" style={{ background: legendGradient, height: '8px', borderRadius: '4px', margin: '2px 0 5px' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', opacity: 0.82 }}>
+                      <span>{raster.stats.min.toFixed(1)}°C</span>
+                      <span>Q25: {raster.stats.q25.toFixed(1)}°</span>
+                      <b>μ: {raster.stats.mean.toFixed(1)}°C</b>
+                      <span>Q75: {raster.stats.q75.toFixed(1)}°</span>
+                      <span>{raster.stats.max.toFixed(1)}°C</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="control-row" style={{ marginTop: '10px' }}>
                   <span>{lang === 'pt' ? 'Modo' : 'Mode'}</span>
                   <select value={displayMode} onChange={(e) => setDisplayMode(e.target.value as 'temperature' | 'uhi')}>
                     <option value="temperature">{lang === 'pt' ? 'Temperatura (°C)' : 'Temperature (°C)'}</option>
                     <option value="uhi">UHI / {lang === 'pt' ? 'ilhas de calor (1m)' : 'heat islands (1m)'}</option>
                   </select>
                 </div>
-                <div className="control-row">
-                  <span>{t.palette}</span>
-                  <select value={palette} disabled={displayMode === 'uhi'} onChange={(e) => setPalette(e.target.value as PaletteType)}>
-                    <option value="ironbow">Ironbow</option>
-                    <option value="spectral">Spectral</option>
-                    <option value="jet">Jet</option>
-                    <option value="viridis">Viridis</option>
-                    <option value="magma">Magma</option>
-                    <option value="coolwarm">Coolwarm</option>
-                    <option value="terrain">Terrain</option>
-                    <option value="grayscale">Grayscale</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </div>
+
+                {displayMode === 'temperature' ? (
+                  <>
+                    <div className="control-row">
+                      <span>{t.palette}</span>
+                      <select value={palette} onChange={(e) => setPalette(e.target.value as PaletteType)}>
+                        <option value="ironbow">Ironbow (Perceptual HD)</option>
+                        <option value="spectral">Spectral</option>
+                        <option value="jet">Jet</option>
+                        <option value="viridis">Viridis</option>
+                        <option value="magma">Magma</option>
+                        <option value="coolwarm">Coolwarm</option>
+                        <option value="terrain">Terrain</option>
+                        <option value="grayscale">Grayscale</option>
+                        <option value="custom">Custom (Rápido)</option>
+                      </select>
+                    </div>
+                    {palette === 'custom' && (
+                      <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <small style={{ fontSize: '11px', opacity: 0.85 }}>
+                            {lang === 'pt' ? 'Toque para editar paradas (instantâneo):' : 'Edit stops (instant):'}
+                          </small>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              type="button"
+                              style={{ padding: '2px 6px', fontSize: '10px' }}
+                              onClick={() => setDraftCustomColors((prev) => [...prev].reverse())}
+                            >
+                              ⇄ {lang === 'pt' ? 'Inverter' : 'Invert'}
+                            </button>
+                            <button
+                              type="button"
+                              style={{ padding: '2px 6px', fontSize: '10px' }}
+                              onClick={() => setDraftCustomColors(DEFAULT_CUSTOM_COLORS)}
+                            >
+                              ↺ Reset
+                            </button>
+                          </div>
+                        </div>
+                        <div className="custom-colors" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px' }}>
+                          {draftCustomColors.map((color, index) => (
+                            <input
+                              key={index}
+                              type="color"
+                              value={color}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDraftCustomColors((colors) => colors.map((item, i) => (i === index ? val : item)));
+                              }}
+                              title={`Stop ${index + 1}`}
+                              style={{ width: '100%', height: '28px', cursor: 'pointer', border: 'none', borderRadius: '4px' }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="control-row">
+                      <span>{lang === 'pt' ? 'Clustering UHI' : 'UHI Clustering'}</span>
+                      <select value={uhiMethod} onChange={(e) => setUhiMethod(e.target.value as UhiClusterMethod)}>
+                        <option value="zscore">{lang === 'pt' ? 'Z-Score (Desvio-Padrão)' : 'Z-Score (Std Dev)'}</option>
+                        <option value="quantiles">{lang === 'pt' ? 'Quantis Adaptativos (IQR)' : 'Adaptive Quantiles (IQR)'}</option>
+                        <option value="natural">{lang === 'pt' ? 'Quebras Naturais (Jenks-Otsu)' : 'Natural Breaks (Jenks)'}</option>
+                        <option value="kernel">{lang === 'pt' ? 'Kernel Espacial (Gi* Hotspot)' : 'Spatial Kernel (Gi* Hotspot)'}</option>
+                      </select>
+                    </div>
+                    <div className="control-row">
+                      <span>
+                        {lang === 'pt' ? 'Potenciação (γ)' : 'Power (γ)'} <b>{uhiPower.toFixed(2)}x</b>
+                      </span>
+                      <input
+                        type="range"
+                        min="0.60"
+                        max="2.20"
+                        step="0.05"
+                        value={uhiPower}
+                        onChange={(e) => setUhiPower(Number(e.target.value))}
+                      />
+                    </div>
+                  </>
+                )}
+
                 <p className="microcopy">{lang === 'pt' ? 'Clique em qualquer ponto do mapa para inspecionar a temperatura de 1m.' : 'Click anywhere on the map to inspect 1m temperature.'}</p>
               </section>
             )}
@@ -2102,19 +2435,6 @@ export default function App() {
                 <span>{t.contrast}</span>
                 <input type="range" min="-1" max="1" step="0.05" value={contrast} onChange={(e) => setContrast(Number(e.target.value))} />
               </div>
-              {palette === 'custom' && (
-                <div className="custom-colors">
-                  {customColors.map((color, index) => (
-                    <input
-                      key={index}
-                      type="color"
-                      value={color}
-                      onChange={(e) => setCustomColors((colors) => colors.map((item, i) => (i === index ? e.target.value : item)))}
-                      title={`Custom color ${index + 1}`}
-                    />
-                  ))}
-                </div>
-              )}
             </section>
 
             <section className="rail-card compare-card">
@@ -2223,15 +2543,6 @@ export default function App() {
                     <Metric label={t.mean} value={raster.stats.mean.toFixed(1)} />
                     <Metric label={t.max} value={raster.stats.max.toFixed(1)} />
                     <Metric label={t.std} value={raster.stats.stdDev.toFixed(2)} />
-                  </div>
-                  <h4>{t.histogram}</h4>
-                  <div className="histogram">
-                    {histogram.map((bar) => (
-                      <div className="bar-wrap" key={bar.label}>
-                        <div className="bar" style={{ height: `${bar.height}%` }} />
-                        <small>{bar.label}</small>
-                      </div>
-                    ))}
                   </div>
                   <p className="microcopy">
                     {t.uhiText} {raster.stats.max >= uhiLevel ? `Hotspot threshold: ${uhiLevel.toFixed(1)}°C` : ''}
