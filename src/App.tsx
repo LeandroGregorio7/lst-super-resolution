@@ -24,6 +24,25 @@ type RasterStats = {
   q50: number;
   q75: number;
 };
+type DifferenceStats = {
+  min: number;
+  max: number;
+  mean: number;
+  stdDev: number;
+  thresholdSigma: number;
+  maxScale: number;
+  pctDecreased: number;
+  pctEqual: number;
+  pctIncreased: number;
+};
+type InspectPoint = {
+  temp: number;
+  lng: number;
+  lat: number;
+  beforeTemp?: number;
+  afterTemp?: number;
+  diffTemp?: number;
+};
 type RasterState = {
   data: Float32Array;
   width: number;
@@ -101,6 +120,9 @@ const UHI_STOPS: [number, number, number, number][] = [
   [1.40, 212, 32, 38],
   [1.95, 255, 244, 184],
 ];
+
+const DIFFERENCE_GRADIENT_CSS =
+  'linear-gradient(90deg, #023e8a 0%, #0096c7 22%, #48cae4 36%, #45525a 37%, #526069 63%, #f77f00 64%, #d62828 84%, #ffea00 100%)';
 
 const copy = {
   pt: {
@@ -750,48 +772,198 @@ function thermalDifference(
   return result;
 }
 
-function renderDifferenceToCanvas(data: Float32Array, width: number, height: number, canvas: HTMLCanvasElement) {
+function sampleDiffColor(val: number, sigma: number, maxScale: number): [number, number, number] {
+  const absV = Math.abs(val);
+  // Dentro de ±1 desvio-padrão: Cinza-Ardoise Neutro (Permaneceu Igual)
+  if (absV <= sigma) {
+    const t = val / Math.max(0.1, sigma);
+    return [
+      Math.round(68 + t * 8),
+      Math.round(80 - Math.abs(t) * 4),
+      Math.round(88 - t * 8),
+    ];
+  }
+
+  const norm = Math.min(1, (absV - sigma) / Math.max(0.4, maxScale - sigma));
+  if (val < -sigma) {
+    // Diminuiu (< -1σ): Azul-Turquesa vibrante -> Azul-Royal Profundo
+    if (norm < 0.5) {
+      const u = norm * 2;
+      return [
+        Math.round(72 + (0 - 72) * u),
+        Math.round(202 + (136 - 202) * u),
+        Math.round(228 + (204 - 228) * u),
+      ];
+    }
+    const u = (norm - 0.5) * 2;
+    return [
+      Math.round(0 + (3 - 0) * u),
+      Math.round(136 + (35 - 136) * u),
+      Math.round(204 + (138 - 204) * u),
+    ];
+  }
+
+  // Aumentou (> +1σ): Laranja Forte -> Vermelho Rubi -> Amarelo Ouro
+  if (norm < 0.55) {
+    const u = norm / 0.55;
+    return [
+      Math.round(247 + (214 - 247) * u),
+      Math.round(127 + (40 - 127) * u),
+      Math.round(0 + (40 - 0) * u),
+    ];
+  }
+  const u = (norm - 0.55) / 0.45;
+  return [
+    Math.round(214 + (255 - 214) * u),
+    Math.round(40 + (234 - 40) * u),
+    Math.round(40 + (0 - 40) * u),
+  ];
+}
+
+/**
+ * Renderizador de Diferença Térmica (ΔLST = Data 2 − Data 1) de Alto Contraste:
+ * - Usa corte estatístico de ±1 desvio-padrão (thresholdSigma)
+ * - Áreas estáveis (|Δ| <= 1σ) ficam em Cinza-Ardoise Neutro com relevo 1m
+ * - Áreas que diminuíram (< -1σ) ficam em Azul/Ciano de alto contraste
+ * - Áreas que aumentaram (> +1σ) ficam em Laranja/Vermelho/Amarelo de alto contraste
+ */
+function renderDifferenceToCanvas(
+  data: Float32Array,
+  baseTemp: Float32Array,
+  width: number,
+  height: number,
+  canvas: HTMLCanvasElement,
+): DifferenceStats | null {
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
-  const image = ctx.createImageData(width, height);
+
   let min = Infinity;
   let max = -Infinity;
+  let sum = 0;
   let count = 0;
-  for (const value of data) {
-    if (Number.isFinite(value)) {
-      min = Math.min(min, value);
-      max = Math.max(max, value);
-      count += 1;
-    }
-  }
-  const maxAbs = Math.max(0.1, count ? Math.max(Math.abs(min), Math.abs(max)) : 0);
-  const color = (value: number) => {
-    const t = Math.min(1, Math.abs(value) / maxAbs);
-    const start = value < 0 ? [33, 102, 172] : [255, 255, 255];
-    const end = value < 0 ? [247, 247, 247] : [178, 24, 43];
-    return {
-      r: Math.round(start[0] + (end[0] - start[0]) * t),
-      g: Math.round(start[1] + (end[1] - start[1]) * t),
-      b: Math.round(start[2] + (end[2] - start[2]) * t),
-    };
-  };
+  const absSamples: number[] = [];
+  const step = Math.max(1, Math.floor(data.length / 25000));
+
   for (let i = 0; i < data.length; i += 1) {
-    const value = data[i];
-    const index = i * 4;
-    if (!Number.isFinite(value)) {
-      image.data[index + 3] = 0;
-      continue;
-    }
-    const rgb = color(value);
-    image.data[index] = rgb.r;
-    image.data[index + 1] = rgb.g;
-    image.data[index + 2] = rgb.b;
-    image.data[index + 3] = 255;
+    const v = data[i];
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+    count += 1;
+    if (i % step === 0) absSamples.push(Math.abs(v));
   }
+
+  if (count === 0) return null;
+  const mean = sum / count;
+
+  let sqSum = 0;
+  let sqCount = 0;
+  for (let i = 0; i < data.length; i += step) {
+    const v = data[i];
+    if (!Number.isFinite(v)) continue;
+    const d = v - mean;
+    sqSum += d * d;
+    sqCount += 1;
+  }
+  const stdDev = sqCount > 1 ? Math.sqrt(sqSum / sqCount) : 1.0;
+  const thresholdSigma = Math.max(0.45, stdDev);
+
+  absSamples.sort((a, b) => a - b);
+  const p98 = absSamples[Math.floor(absSamples.length * 0.985)] ?? thresholdSigma * 2.5;
+  const maxScale = Math.max(thresholdSigma * 1.8, p98);
+
+  let decCount = 0;
+  let eqCount = 0;
+  let incCount = 0;
+
+  const image = ctx.createImageData(width, height);
+  const out = image.data;
+
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    const yPrev = Math.max(0, y - 1) * width;
+    const yNext = Math.min(height - 1, y + 1) * width;
+
+    for (let x = 0; x < width; x += 1) {
+      const i = row + x;
+      const value = data[i];
+      const px = i * 4;
+      if (!Number.isFinite(value)) {
+        out[px + 3] = 0;
+        continue;
+      }
+
+      if (value < -thresholdSigma) decCount += 1;
+      else if (value > thresholdSigma) incCount += 1;
+      else eqCount += 1;
+
+      const xPrev = Math.max(0, x - 1);
+      const xNext = Math.min(width - 1, x + 1);
+      const bC = Number.isFinite(baseTemp[i]) ? baseTemp[i] : 0;
+      const bE = Number.isFinite(baseTemp[row + xNext]) ? baseTemp[row + xNext] : bC;
+      const bW = Number.isFinite(baseTemp[row + xPrev]) ? baseTemp[row + xPrev] : bC;
+      const bS = Number.isFinite(baseTemp[yNext + x]) ? baseTemp[yNext + x] : bC;
+      const bN = Number.isFinite(baseTemp[yPrev + x]) ? baseTemp[yPrev + x] : bC;
+
+      const microRelief = Math.max(-0.18, Math.min(0.18, ((bE - bW) * 0.12 - (bS - bN) * 0.12) + (bC - 0.25 * (bE + bW + bS + bN)) * 0.22));
+      const [r, g, b] = sampleDiffColor(value, thresholdSigma, maxScale);
+      const mult = 1 + microRelief;
+
+      out[px] = Math.max(0, Math.min(255, Math.round(r * mult)));
+      out[px + 1] = Math.max(0, Math.min(255, Math.round(g * mult)));
+      out[px + 2] = Math.max(0, Math.min(255, Math.round(b * mult)));
+      out[px + 3] = 255;
+    }
+  }
+
   ctx.putImageData(image, 0, 0);
-  return { min: count ? min : 0, max: count ? max : 0, maxAbs };
+
+  return {
+    min,
+    max,
+    mean,
+    stdDev,
+    thresholdSigma,
+    maxScale,
+    pctDecreased: (decCount / count) * 100,
+    pctEqual: (eqCount / count) * 100,
+    pctIncreased: (incCount / count) * 100,
+  };
+}
+
+function differenceClassLabel(diff: number, sigma: number, lang: Lang): { label: string; color: string } {
+  if (!Number.isFinite(diff)) return { label: '—', color: '#9ab0b5' };
+  if (diff < -2 * sigma) {
+    return {
+      label: lang === 'pt' ? `↓ DIMINUIU FORTE (< -2σ)` : `↓ STRONG COOLING (< -2σ)`,
+      color: '#38bdf8',
+    };
+  }
+  if (diff < -sigma) {
+    return {
+      label: lang === 'pt' ? `↓ DIMINUIU (abaixo de -1σ)` : `↓ DECREASED (< -1σ)`,
+      color: '#48cae4',
+    };
+  }
+  if (diff > 2 * sigma) {
+    return {
+      label: lang === 'pt' ? `↑ AUMENTOU FORTE (> +2σ)` : `↑ STRONG WARMING (> +2σ)`,
+      color: '#ffea00',
+    };
+  }
+  if (diff > sigma) {
+    return {
+      label: lang === 'pt' ? `↑ AUMENTOU (acima de +1σ)` : `↑ INCREASED (> +1σ)`,
+      color: '#ff7b29',
+    };
+  }
+  return {
+    label: lang === 'pt' ? `＝ PERMANECEU IGUAL (dentro de ±1σ)` : `＝ REMAINED EQUAL (within ±1σ)`,
+    color: '#a3b8c2',
+  };
 }
 
 function uhiClassLabel(value: number, stats: RasterStats, method: UhiClusterMethod, power: number, lang: Lang) {
@@ -813,22 +985,6 @@ function imageDateLabel(name: string, index: number) {
 function paletteGradient(palette: string, customColors: string[]) {
   const samplePoints = Array.from({ length: 13 }, (_, idx) => sampleCssColorAt(idx / 12, palette, customColors, false));
   return `linear-gradient(90deg, ${samplePoints.join(', ')})`;
-}
-
-function statsOf(data: Float32Array) {
-  let min = Infinity;
-  let max = -Infinity;
-  let sum = 0;
-  let count = 0;
-  for (const value of data) {
-    if (Number.isFinite(value)) {
-      min = Math.min(min, value);
-      max = Math.max(max, value);
-      sum += value;
-      count += 1;
-    }
-  }
-  return { min: count ? min : 0, max: count ? max : 0, mean: count ? sum / count : 0 };
 }
 
 export default function App() {
@@ -856,8 +1012,8 @@ export default function App() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [processingLog, setProcessingLog] = useState<Array<{ time: string; message: string; level: 'info' | 'success' | 'error' }>>([]);
-  const [sample, setSample] = useState<{ temp: number; lng: number; lat: number } | null>(null);
-  const [hoverSample, setHoverSample] = useState<{ temp: number; lng: number; lat: number } | null>(null);
+  const [sample, setSample] = useState<InspectPoint | null>(null);
+  const [hoverSample, setHoverSample] = useState<InspectPoint | null>(null);
   const [identifyMode, setIdentifyMode] = useState(false);
   const [panEnabled, setPanEnabled] = useState(true);
   const [showMethod, setShowMethod] = useState(false);
@@ -893,17 +1049,13 @@ export default function App() {
   const curtainContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<MapLibreMap | null>(null);
-  const mapClickMode = useRef({
-    drawAoi: false,
-    raster: null as RasterState | null,
-    extent: null as ReturnType<typeof boundsExtent> | null,
-    identifyMode: false,
-  });
+  const lastFittedKey = useRef<string>('');
   const lstCanvas = useRef<HTMLCanvasElement | null>(null);
   const opticalCanvas = useRef<HTMLCanvasElement | null>(null);
 
   const t = copy[lang];
-  const extent = raster ? boundsExtent(raster.bounds) : null;
+  // Memoizado para NUNCA disparar fitBounds ao ativar o Swipe ou mudar controles!
+  const extent = useMemo(() => (raster ? boundsExtent(raster.bounds) : null), [raster]);
   const comparisonPrimary = comparisonImages[0] ?? null;
   const comparisonSecondary = comparisonImages[1] ?? null;
 
@@ -918,14 +1070,31 @@ export default function App() {
     if (!comparisonPrimary || !comparisonSecondary || !differenceReady) return null;
     const data = thermalDifference(comparisonPrimary, comparisonSecondary);
     const canvas = document.createElement('canvas');
-    const stats = renderDifferenceToCanvas(data, comparisonPrimary.width, comparisonPrimary.height, canvas) ?? statsOf(data);
-    return { url: canvas.toDataURL('image/png'), stats };
+    const stats = renderDifferenceToCanvas(
+      data,
+      comparisonPrimary.data,
+      comparisonPrimary.width,
+      comparisonPrimary.height,
+      canvas,
+    );
+    if (!stats) return null;
+    return { url: canvas.toDataURL('image/png'), stats, data };
   }, [comparisonPrimary, comparisonSecondary, differenceReady]);
+
+  const mapClickMode = useRef({
+    drawAoi: false,
+    raster: null as RasterState | null,
+    extent: null as ReturnType<typeof boundsExtent> | null,
+    identifyMode: false,
+    comparisonPrimary: null as ComparisonImage | null,
+    comparisonSecondary: null as ComparisonImage | null,
+    differenceData: null as Float32Array | null,
+    differenceReady: false,
+  });
 
   const uhiGradient = 'linear-gradient(90deg, #103e8a, #187a8c, #3aae6c, #bade76, #f8d668, #f47c30, #d42026, #fff4b8)';
   const legendGradient = displayMode === 'uhi' ? uhiGradient : paletteGradient(palette, draftCustomColors);
   const differenceStats = differenceRender?.stats ?? null;
-  const differenceExtent = differenceStats ? Math.max(Math.abs(differenceStats.min), Math.abs(differenceStats.max)) : 0;
 
   useEffect(() => {
     localStorage.setItem('lst-theme', theme);
@@ -933,8 +1102,17 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    mapClickMode.current = { drawAoi, raster, extent, identifyMode };
-  }, [drawAoi, raster, extent, identifyMode]);
+    mapClickMode.current = {
+      drawAoi,
+      raster,
+      extent,
+      identifyMode,
+      comparisonPrimary,
+      comparisonSecondary,
+      differenceData: differenceRender?.data ?? null,
+      differenceReady,
+    };
+  }, [drawAoi, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary, differenceRender, differenceReady]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -981,15 +1159,49 @@ export default function App() {
 
     const inspectAt = (event: maplibregl.MapMouseEvent, commit: boolean) => {
       const mode = mapClickMode.current;
+      // Inspeção prioritária na comparação Antes/Depois e Diferença
+      if (mode.differenceReady && mode.comparisonPrimary && mode.comparisonSecondary && mode.differenceData) {
+        const pExt = boundsExtent(mode.comparisonPrimary.bounds);
+        const sExt = boundsExtent(mode.comparisonSecondary.bounds);
+        const px = Math.floor(((event.lngLat.lng - pExt.west) / (pExt.east - pExt.west)) * mode.comparisonPrimary.width);
+        const py = Math.floor(((pExt.north - event.lngLat.lat) / (pExt.north - pExt.south)) * mode.comparisonPrimary.height);
+        const sx = Math.floor(((event.lngLat.lng - sExt.west) / (sExt.east - sExt.west)) * mode.comparisonSecondary.width);
+        const sy = Math.floor(((sExt.north - event.lngLat.lat) / (sExt.north - sExt.south)) * mode.comparisonSecondary.height);
+
+        if (px >= 0 && py >= 0 && px < mode.comparisonPrimary.width && py < mode.comparisonPrimary.height) {
+          const idx1 = py * mode.comparisonPrimary.width + px;
+          const t1 = mode.comparisonPrimary.data[idx1];
+          const t2 =
+            sx >= 0 && sy >= 0 && sx < mode.comparisonSecondary.width && sy < mode.comparisonSecondary.height
+              ? mode.comparisonSecondary.data[sy * mode.comparisonSecondary.width + sx]
+              : NaN;
+          const diff = mode.differenceData[idx1];
+
+          if (Number.isFinite(t1) || Number.isFinite(diff)) {
+            const point: InspectPoint = {
+              temp: Number.isFinite(t2) ? t2 : t1,
+              lng: event.lngLat.lng,
+              lat: event.lngLat.lat,
+              beforeTemp: Number.isFinite(t1) ? t1 : undefined,
+              afterTemp: Number.isFinite(t2) ? t2 : undefined,
+              diffTemp: Number.isFinite(diff) ? diff : undefined,
+            };
+            if (commit) setSample(point);
+            else if (mode.identifyMode) setHoverSample(point);
+            return;
+          }
+        }
+      }
+
       if (!mode.raster || !mode.extent) return;
       const x = Math.floor(((event.lngLat.lng - mode.extent.west) / (mode.extent.east - mode.extent.west)) * mode.raster.width);
       const y = Math.floor(((mode.extent.north - event.lngLat.lat) / (mode.extent.north - mode.extent.south)) * mode.raster.height);
       if (x >= 0 && y >= 0 && x < mode.raster.width && y < mode.raster.height) {
         const temp = mode.raster.data[y * mode.raster.width + x];
         if (Number.isFinite(temp)) {
-          const point = { temp, lng: event.lngLat.lng, lat: event.lngLat.lat };
+          const point: InspectPoint = { temp, lng: event.lngLat.lng, lat: event.lngLat.lat };
           if (commit) setSample(point);
-          else if (mapClickMode.current.identifyMode) setHoverSample(point);
+          else if (mode.identifyMode) setHoverSample(point);
         }
       }
     };
@@ -1070,15 +1282,15 @@ export default function App() {
         map.addLayer({ id: 'comparison-primary-layer', type: 'raster', source: 'comparison-primary-raster', paint: { 'raster-opacity': 1 } });
       }
       if (!map.getLayer('comparison-lst-layer')) {
-        map.addLayer({ id: 'comparison-lst-layer', type: 'raster', source: 'comparison-lst-raster', paint: { 'raster-opacity': 0.5 } });
+        map.addLayer({ id: 'comparison-lst-layer', type: 'raster', source: 'comparison-lst-raster', paint: { 'raster-opacity': 0.95 } });
       }
       if (differenceRender) addOrUpdate('comparison-difference-raster', differenceRender.url, comparisonPrimary.bounds);
       if (!map.getLayer('comparison-difference-layer')) {
-        map.addLayer({ id: 'comparison-difference-layer', type: 'raster', source: 'comparison-difference-raster', paint: { 'raster-opacity': 0.9 } });
+        map.addLayer({ id: 'comparison-difference-layer', type: 'raster', source: 'comparison-difference-raster', paint: { 'raster-opacity': 0.94 } });
       }
       map.setLayoutProperty('comparison-primary-layer', 'visibility', swipeActive ? 'visible' : 'none');
       map.setLayoutProperty('comparison-lst-layer', 'visibility', !swipeActive && comparisonMode === 'secondary' ? 'visible' : 'none');
-      map.setPaintProperty('comparison-lst-layer', 'raster-opacity', 0.9);
+      map.setPaintProperty('comparison-lst-layer', 'raster-opacity', 0.95);
       map.setLayoutProperty('comparison-difference-layer', 'visibility', comparisonMode === 'difference' && !swipeActive ? 'visible' : 'none');
     } else {
       for (const id of ['comparison-primary-layer', 'comparison-lst-layer', 'comparison-difference-layer']) {
@@ -1109,6 +1321,7 @@ export default function App() {
     }
   }, [aoi, comparisonMode, comparisonPrimary, comparisonSecondary, contrast, differenceReady, differenceRender, lstUrl, opacity, opticalUrl, raster, swipeActive, visibleLst, visibleOptical]);
 
+  // Cortina 100% travada na posição exata da câmera principal (não dá zoom out nem sobe para o norte)
   useEffect(() => {
     const container = curtainContainerRef.current;
     const main = mapInstance.current;
@@ -1117,20 +1330,42 @@ export default function App() {
       curtainMapRef.current = null;
       return;
     }
+    const savedCenter = main.getCenter();
+    const savedZoom = main.getZoom();
+    const savedBearing = main.getBearing();
+    const savedPitch = main.getPitch();
+
     const curtainMap = new maplibregl.Map({
       container,
       style: { version: 8, sources: {}, layers: [] },
-      center: main.getCenter(),
-      zoom: main.getZoom(),
-      bearing: main.getBearing(),
-      pitch: main.getPitch(),
+      center: savedCenter,
+      zoom: savedZoom,
+      bearing: savedBearing,
+      pitch: savedPitch,
       interactive: false,
       attributionControl: false,
     });
-    const syncCamera = () => curtainMap.jumpTo({ center: main.getCenter(), zoom: main.getZoom(), bearing: main.getBearing(), pitch: main.getPitch() });
+    const syncCamera = () => {
+      curtainMap.jumpTo({
+        center: main.getCenter(),
+        zoom: main.getZoom(),
+        bearing: main.getBearing(),
+        pitch: main.getPitch(),
+      });
+    };
     const addCurtainLayer = () => {
-      curtainMap.addSource('curtain-secondary-raster', { type: 'image', url: comparisonSecondary.lstUrl, coordinates: comparisonSecondary.bounds });
-      curtainMap.addLayer({ id: 'curtain-secondary-layer', type: 'raster', source: 'curtain-secondary-raster', paint: { 'raster-opacity': 1 } });
+      curtainMap.resize();
+      curtainMap.addSource('curtain-secondary-raster', {
+        type: 'image',
+        url: comparisonSecondary.lstUrl,
+        coordinates: comparisonSecondary.bounds,
+      });
+      curtainMap.addLayer({
+        id: 'curtain-secondary-layer',
+        type: 'raster',
+        source: 'curtain-secondary-raster',
+        paint: { 'raster-opacity': 1 },
+      });
       syncCamera();
     };
     curtainMap.on('load', addCurtainLayer);
@@ -1184,9 +1419,13 @@ export default function App() {
     };
   }, [lstUrl, opticalUrl, raster, differenceReady, syncLayers]);
 
+  // Só centraliza (fitBounds) quando um NOVO arquivo raster ou nova comparação é carregada
   useEffect(() => {
+    const key = raster?.fileName ?? comparisonPrimary?.id ?? '';
+    if (!key || key === lastFittedKey.current) return;
     const viewExtent = extent ?? (comparisonPrimary ? boundsExtent(comparisonPrimary.bounds) : null);
     if (mapInstance.current && viewExtent) {
+      lastFittedKey.current = key;
       mapInstance.current.fitBounds(
         [[viewExtent.west, viewExtent.south], [viewExtent.east, viewExtent.north]],
         { padding: 70, duration: 850, maxZoom: 16 },
@@ -1573,38 +1812,52 @@ export default function App() {
 
   const legendStops = (selected: string) => getPaletteStopList(selected, draftCustomColors);
 
-  const drawDifferenceLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, stats: { min: number; max: number }) => {
-    const height = 132;
-    const extVal = Math.max(Math.abs(stats.min), Math.abs(stats.max));
-    ctx.fillStyle = '#ffffff';
+  const drawDifferenceLegend = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    width: number,
+    stats: DifferenceStats | null,
+  ) => {
+    const height = 138;
+    const sigma = stats?.thresholdSigma ?? 1.0;
+    const maxS = stats?.maxScale ?? 3.5;
+    ctx.fillStyle = '#071317';
     ctx.fillRect(x, y, width, height);
-    ctx.strokeStyle = '#555';
+    ctx.strokeStyle = '#79e2dc';
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, width, height);
-    ctx.fillStyle = '#202428';
-    ctx.font = '700 22px Arial';
-    ctx.fillText('DIFERENÇA (DATA 2 − DATA 1) · °C', x + 18, y + 30);
-    const gradient = ctx.createLinearGradient(x + 18, y + 62, x + width - 18, y + 62);
-    gradient.addColorStop(0, '#2166ac');
-    gradient.addColorStop(0.5, '#f7f7f7');
-    gradient.addColorStop(1, '#b2182b');
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 20px Arial';
+    ctx.fillText(`DIFERENÇA ΔLST (DEPOIS − ANTES) · Limiar 1σ = ±${sigma.toFixed(2)} °C`, x + 18, y + 30);
+
+    const gradient = ctx.createLinearGradient(x + 18, y + 60, x + width - 18, y + 60);
+    gradient.addColorStop(0, '#023e8a');
+    gradient.addColorStop(0.24, '#0096c7');
+    gradient.addColorStop(0.36, '#48cae4');
+    gradient.addColorStop(0.37, '#45525a');
+    gradient.addColorStop(0.63, '#526069');
+    gradient.addColorStop(0.64, '#f77f00');
+    gradient.addColorStop(0.84, '#d62828');
+    gradient.addColorStop(1, '#ffea00');
     ctx.fillStyle = gradient;
-    ctx.fillRect(x + 18, y + 48, width - 36, 22);
-    ctx.strokeStyle = '#777';
-    ctx.strokeRect(x + 18, y + 48, width - 36, 22);
-    ctx.fillStyle = '#2166ac';
-    ctx.font = '600 16px Arial';
-    ctx.fillText(`-${extVal.toFixed(1)} °C · resfriamento`, x + 18, y + 96);
-    ctx.fillStyle = '#555';
+    ctx.fillRect(x + 18, y + 44, width - 36, 24);
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.strokeRect(x + 18, y + 44, width - 36, 24);
+
+    ctx.fillStyle = '#48cae4';
+    ctx.font = '700 15px Arial';
+    ctx.fillText(`↓ Diminuiu (< -${sigma.toFixed(1)}°C): ${stats?.pctDecreased.toFixed(1) ?? '0'}%`, x + 18, y + 92);
+    ctx.fillStyle = '#cbd5e1';
     ctx.textAlign = 'center';
-    ctx.fillText('0 °C · estável', x + width / 2, y + 96);
+    ctx.fillText(`＝ Igual (±${sigma.toFixed(1)}°C): ${stats?.pctEqual.toFixed(1) ?? '0'}%`, x + width / 2, y + 92);
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#b2182b';
-    ctx.fillText(`+${extVal.toFixed(1)} °C · aquecimento`, x + width - 18, y + 96);
+    ctx.fillStyle = '#ff9e00';
+    ctx.fillText(`↑ Aumentou (> +${sigma.toFixed(1)}°C): ${stats?.pctIncreased.toFixed(1) ?? '0'}%`, x + width - 18, y + 92);
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#202428';
-    ctx.font = '14px Arial';
-    ctx.fillText('Valores positivos: a imagem 2 está mais quente. Valores negativos: a imagem 2 está mais fria.', x + 18, y + 119);
+    ctx.fillStyle = '#9ab0b5';
+    ctx.font = '13px Arial';
+    ctx.fillText(`Escala: -${maxS.toFixed(1)}°C a +${maxS.toFixed(1)}°C · Apenas variações acima de 1 desvio-padrão (1σ) são destacadas em cor.`, x + 18, y + 118);
   };
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
@@ -1887,9 +2140,9 @@ export default function App() {
     ctx.fillStyle = '#f1f1ee';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     const panels = [
-      { image: a, title: `DATA A · ${comparisonPrimary.dateLabel} (LST °C)` },
-      { image: b, title: `DATA B · ${comparisonSecondary.dateLabel} (LST °C)` },
-      { image: d, title: 'DIFERENÇA (B − A) em °C' },
+      { image: a, title: `ANTES · ${comparisonPrimary.dateLabel} (LST °C)` },
+      { image: b, title: `DEPOIS · ${comparisonSecondary.dateLabel} (LST °C)` },
+      { image: d, title: 'DIFERENÇA ΔLST (DEPOIS − ANTES)' },
     ];
     ctx.font = '700 24px Arial';
     ctx.textAlign = 'center';
@@ -1901,7 +2154,7 @@ export default function App() {
       ctx.strokeStyle = '#777';
       ctx.strokeRect(x + 8, 44, width - 16, imageHeight + 36);
       if (index === 2) {
-        drawDifferenceLegend(ctx, x + 12, imageHeight + 48, width - 24, differenceStats ?? { min: 0, max: 0 });
+        drawDifferenceLegend(ctx, x + 12, imageHeight + 48, width - 24, differenceStats);
       } else {
         const stats = index === 0 ? comparisonPrimary.stats : comparisonSecondary.stats;
         const gradient = ctx.createLinearGradient(x + 24, imageHeight + 72, x + width - 24, imageHeight + 72);
@@ -1924,6 +2177,11 @@ export default function App() {
   };
 
   const uhiLevel = raster ? raster.stats.mean + 1.5 * raster.stats.stdDev : 0;
+  const activeInspect = hoverSample || sample;
+  const activeDiffInfo =
+    activeInspect?.diffTemp !== undefined && differenceStats
+      ? differenceClassLabel(activeInspect.diffTemp, differenceStats.thresholdSigma, lang)
+      : null;
 
   return (
     <div className="app-shell">
@@ -1936,8 +2194,8 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          <span className={`status-dot ${raster ? 'active' : ''}`} />
-          <span className="status-label">{status || (raster ? t.ready : t.noData)}</span>
+          <span className={`status-dot ${raster || differenceReady ? 'active' : ''}`} />
+          <span className="status-label">{status || (raster || differenceReady ? t.ready : t.noData)}</span>
           <button className="icon-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title={t.theme}>
             <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
           </button>
@@ -1962,26 +2220,114 @@ export default function App() {
       </div>
 
       <main className="workspace" style={{ '--rail-width': `${panelWidth}px` } as React.CSSProperties}>
-        <section className="map-stage">
+        <section className="map-stage" style={{ position: 'relative', overflow: 'hidden' }}>
           <div ref={mapRef} className={`map-container ${identifyMode ? 'identify-active' : ''}`} />
           {swipeActive && differenceReady && (
-            <div className="curtain-map" ref={curtainContainerRef} style={{ clipPath: `inset(0 0 0 ${swipePosition}%)` }} aria-label="Imagem da data 2" />
+            <div
+              className="curtain-map"
+              ref={curtainContainerRef}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                zIndex: 2,
+                clipPath: `inset(0 0 0 ${swipePosition}%)`,
+              }}
+              aria-label="Imagem Depois (Data 2)"
+            />
           )}
           {swipeActive && differenceReady && (
             <>
-              <div className="curtain-label curtain-left">{comparisonPrimary?.dateLabel ?? 'DATA A'}</div>
-              <div className="curtain-label curtain-right">{comparisonSecondary?.dateLabel ?? 'DATA B'}</div>
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '76px',
+                  left: '16px',
+                  zIndex: 6,
+                  background: 'rgba(7, 19, 23, 0.92)',
+                  border: '2px solid #38bdf8',
+                  color: '#ffffff',
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                  boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
+                  pointerEvents: 'none',
+                }}
+              >
+                <span style={{ color: '#38bdf8', display: 'block', fontSize: '10px', letterSpacing: '0.08em' }}>
+                  ◀ LADO ESQUERDO (ANTES)
+                </span>
+                DATA 1 · {comparisonPrimary?.dateLabel ?? 'ANTES'}
+              </div>
+
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '76px',
+                  right: '58px',
+                  zIndex: 6,
+                  background: 'rgba(7, 19, 23, 0.92)',
+                  border: '2px solid #ffb000',
+                  color: '#ffffff',
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                  textAlign: 'right',
+                  boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
+                  pointerEvents: 'none',
+                }}
+              >
+                <span style={{ color: '#ffb000', display: 'block', fontSize: '10px', letterSpacing: '0.08em' }}>
+                  LADO DIREITO (DEPOIS) ▶
+                </span>
+                DATA 2 · {comparisonSecondary?.dateLabel ?? 'DEPOIS'}
+              </div>
+
               <div
                 className="curtain-divider"
-                style={{ left: `${swipePosition}%` }}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: `${swipePosition}%`,
+                  width: '4px',
+                  background: '#ffb000',
+                  boxShadow: '0 0 12px rgba(0,0,0,0.8)',
+                  cursor: 'ew-resize',
+                  zIndex: 7,
+                }}
                 onPointerDown={startCurtainDrag}
                 role="slider"
-                aria-label={lang === 'pt' ? 'Arrastar cortina entre data 1 e data 2' : 'Drag curtain between date 1 and date 2'}
+                aria-label={lang === 'pt' ? 'Arrastar cortina entre antes e depois' : 'Drag curtain between before and after'}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={swipePosition}
                 tabIndex={0}
-              />
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    background: '#071317',
+                    border: '2px solid #ffb000',
+                    color: '#ffffff',
+                    padding: '6px 12px',
+                    borderRadius: '999px',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 4px 14px rgba(0,0,0,0.65)',
+                  }}
+                >
+                  ◀ ANTES | DEPOIS ▶
+                </div>
+              </div>
             </>
           )}
           {showSearch ? (
@@ -2040,24 +2386,28 @@ export default function App() {
               <span>{t.uploadHint}</span>
             </div>
           )}
-          {raster && (
-            <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '340px', zIndex: 5 }}>
+          {(raster || differenceReady) && (
+            <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '370px', zIndex: 5 }}>
               <span>
-                {displayMode === 'uhi'
-                  ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})`
-                  : comparisonMode === 'difference' && differenceReady
-                    ? `Δ LST · ${comparisonPrimary?.dateLabel ?? 'data 1'} → ${comparisonSecondary?.dateLabel ?? 'data 2'}`
-                    : t.lst}
+                {comparisonMode === 'difference' && differenceReady && !swipeActive
+                  ? `Δ LST (${comparisonPrimary?.dateLabel ?? 'Antes'} → ${comparisonSecondary?.dateLabel ?? 'Depois'}) · 1σ = ±${differenceStats?.thresholdSigma.toFixed(2) ?? '1.0'}°C`
+                  : swipeActive && differenceReady
+                    ? `CORTINA: ${comparisonPrimary?.dateLabel ?? 'Antes'} ◀ | ▶ ${comparisonSecondary?.dateLabel ?? 'Depois'}`
+                    : displayMode === 'uhi'
+                      ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})`
+                      : t.lst}
               </span>
-              {comparisonMode === 'difference' && differenceReady && differenceStats ? (
+              {comparisonMode === 'difference' && differenceReady && !swipeActive && differenceStats ? (
                 <>
-                  <div className="difference-gradient" />
-                  <div>
-                    <b>{-differenceExtent.toFixed(1)}°C · ↓ resfria</b>
-                    <b>0°C</b>
-                    <b>+{differenceExtent.toFixed(1)}°C · ↑ aquece</b>
+                  <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px' }}>
+                    <b style={{ color: '#48cae4' }}>↓ Diminuiu (&lt; -{differenceStats.thresholdSigma.toFixed(1)}°C)</b>
+                    <b style={{ color: '#cbd5e1' }}>＝ Igual (±1σ)</b>
+                    <b style={{ color: '#ff9e00' }}>↑ Aumentou (&gt; +{differenceStats.thresholdSigma.toFixed(1)}°C)</b>
                   </div>
-                  <small className="difference-note">Δ = imagem 2 − imagem 1</small>
+                  <small className="difference-note" style={{ display: 'block', marginTop: '3px', fontSize: '10px', opacity: 0.88 }}>
+                    ↓ {differenceStats.pctDecreased.toFixed(1)}% esfriou · ＝ {differenceStats.pctEqual.toFixed(1)}% estável · ↑ {differenceStats.pctIncreased.toFixed(1)}% aqueceu
+                  </small>
                 </>
               ) : displayMode === 'uhi' ? (
                 <>
@@ -2073,9 +2423,9 @@ export default function App() {
                 <>
                   <div className="legend-gradient" style={{ background: legendGradient }} />
                   <div>
-                    <b>{(differenceStats?.min ?? raster.stats.min).toFixed(1)}°C</b>
-                    <b>{raster.stats.mean.toFixed(1)}°C</b>
-                    <b>{(differenceStats?.max ?? raster.stats.max).toFixed(1)}°C</b>
+                    <b>{(raster?.stats.min ?? comparisonPrimary?.stats.min ?? 0).toFixed(1)}°C</b>
+                    <b>{(raster?.stats.mean ?? comparisonPrimary?.stats.mean ?? 0).toFixed(1)}°C</b>
+                    <b>{(raster?.stats.max ?? comparisonPrimary?.stats.max ?? 0).toFixed(1)}°C</b>
                   </div>
                 </>
               )}
@@ -2220,39 +2570,83 @@ export default function App() {
               {error && <div className="error-box">{error}</div>}
             </section>
 
-            {(raster || hoverSample || sample || identifyMode) && (
+            {(raster || differenceReady || hoverSample || sample || identifyMode) && (
               <section className="rail-card inspector-rail-card">
                 <div className="card-heading">
                   <h3>ⓘ {t.sample}</h3>
-                  <span className="chip">{displayMode === 'uhi' ? 'UHI 1m' : '°C'}</span>
+                  <span className="chip">
+                    {differenceReady && activeInspect?.diffTemp !== undefined
+                      ? 'Δ LST ±1σ'
+                      : displayMode === 'uhi'
+                        ? 'UHI 1m'
+                        : '°C'}
+                  </span>
                 </div>
                 <div className="inspector-split">
                   <div>
-                    <strong className="inspector-temperature">
-                      {hoverSample || sample ? `${(hoverSample || sample)!.temp.toFixed(1)}°C` : `${raster?.stats.mean.toFixed(1) ?? '—'}°C`}
-                    </strong>
-                    {raster && (
-                      <span className="inspector-uhi-class">
-                        {hoverSample || sample ? `${lang === 'pt' ? 'Nível local' : 'Local level'}: ` : `${lang === 'pt' ? 'Média da cena' : 'Scene mean'} · `}
-                        <b>
-                          {hoverSample || sample
-                            ? uhiClassLabel((hoverSample || sample)!.temp, raster.stats, uhiMethod, uhiPower, lang)
-                            : `${raster.stats.min.toFixed(1)}°C – ${raster.stats.max.toFixed(1)}°C`}
-                        </b>
-                      </span>
-                    )}
-                    {(hoverSample || sample) && (
-                      <div className="inspector-coordinates">
-                        Lat: {(hoverSample || sample)!.lat.toFixed(4)} · Lon: {(hoverSample || sample)!.lng.toFixed(4)}
-                      </div>
+                    {differenceReady && activeInspect?.diffTemp !== undefined && differenceStats ? (
+                      <>
+                        <strong className="inspector-temperature" style={{ color: activeDiffInfo?.color }}>
+                          {activeInspect.diffTemp >= 0 ? `+${activeInspect.diffTemp.toFixed(2)}°C` : `${activeInspect.diffTemp.toFixed(2)}°C`}
+                        </strong>
+                        <span className="inspector-uhi-class" style={{ display: 'block', marginTop: '4px' }}>
+                          <b style={{ color: activeDiffInfo?.color }}>{activeDiffInfo?.label}</b>
+                        </span>
+                        <div className="inspector-coordinates" style={{ marginTop: '4px' }}>
+                          Antes: <b>{activeInspect.beforeTemp?.toFixed(1) ?? '—'}°C</b> → Depois: <b>{activeInspect.afterTemp?.toFixed(1) ?? '—'}°C</b>
+                          <br />
+                          Desvio (1σ): ±{differenceStats.thresholdSigma.toFixed(2)}°C · Lat: {activeInspect.lat.toFixed(4)} · Lon: {activeInspect.lng.toFixed(4)}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <strong className="inspector-temperature">
+                          {activeInspect ? `${activeInspect.temp.toFixed(1)}°C` : `${raster?.stats.mean.toFixed(1) ?? comparisonPrimary?.stats.mean.toFixed(1) ?? '—'}°C`}
+                        </strong>
+                        {raster && (
+                          <span className="inspector-uhi-class">
+                            {activeInspect ? `${lang === 'pt' ? 'Nível local' : 'Local level'}: ` : `${lang === 'pt' ? 'Média da cena' : 'Scene mean'} · `}
+                            <b>
+                              {activeInspect
+                                ? uhiClassLabel(activeInspect.temp, raster.stats, uhiMethod, uhiPower, lang)
+                                : `${raster.stats.min.toFixed(1)}°C – ${raster.stats.max.toFixed(1)}°C`}
+                            </b>
+                          </span>
+                        )}
+                        {activeInspect && (
+                          <div className="inspector-coordinates">
+                            Lat: {activeInspect.lat.toFixed(4)} · Lon: {activeInspect.lng.toFixed(4)}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="side-legends">
                     <div className="side-legend">
-                      <b>{displayMode === 'uhi' ? 'Escala UHI (8 níveis)' : lang === 'pt' ? `Paleta: ${palette}` : `Palette: ${palette}`}</b>
-                      <i className="legend-gradient" style={{ background: legendGradient }} />
+                      <b>
+                        {differenceReady && comparisonMode === 'difference' && !swipeActive
+                          ? 'Escala ΔLST (±1σ)'
+                          : displayMode === 'uhi'
+                            ? 'Escala UHI (8 níveis)'
+                            : lang === 'pt'
+                              ? `Paleta: ${palette}`
+                              : `Palette: ${palette}`}
+                      </b>
+                      <i
+                        className="legend-gradient"
+                        style={{
+                          background:
+                            differenceReady && comparisonMode === 'difference' && !swipeActive
+                              ? DIFFERENCE_GRADIENT_CSS
+                              : legendGradient,
+                        }}
+                      />
                       <small>
-                        {displayMode === 'uhi' ? 'Frescor → Neutro → Hotspot' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}
+                        {differenceReady && comparisonMode === 'difference' && !swipeActive
+                          ? 'Diminuiu ← Igual (±1σ) → Aumentou'
+                          : displayMode === 'uhi'
+                            ? 'Frescor → Neutro → Hotspot'
+                            : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}
                       </small>
                     </div>
                   </div>
@@ -2390,7 +2784,7 @@ export default function App() {
                   </>
                 )}
 
-                <p className="microcopy">{lang === 'pt' ? 'Clique em qualquer ponto do mapa para inspecionar a temperatura de 1m.' : 'Click anywhere on the map to inspect 1m temperature.'}</p>
+                <p className="microcopy">{lang === 'pt' ? 'Clique ou ative ⓘ para inspecionar temperatura e variação ΔLST.' : 'Click or enable ⓘ to inspect temperature and ΔLST.'}</p>
               </section>
             )}
 
@@ -2433,8 +2827,8 @@ export default function App() {
               </div>
               <p className="microcopy comparison-help">
                 {lang === 'pt'
-                  ? 'Escolha quantas datas deseja comparar. Este módulo é independente: você pode carregar apenas as imagens da comparação, sem carregar o produto principal. Cada arquivo será processado em RGB, LST e UHI; o nome mostra a data detectada (AAAA-MM-DD).'
-                  : 'Choose how many dates to compare. Each file is processed as RGB, LST and UHI; the name shows the detected date (YYYY-MM-DD).'}
+                  ? 'Escolha as datas para comparar. Somente diferenças acima de 1 desvio-padrão (±1σ) são classificadas como Aumentou ou Diminuiu.'
+                  : 'Choose dates to compare. Only differences beyond 1 standard deviation (±1σ) are classified as Increased or Decreased.'}
               </p>
               <div className="control-row comparison-count">
                 <span>{lang === 'pt' ? 'Quantidade de imagens' : 'Number of images'}</span>
@@ -2448,7 +2842,7 @@ export default function App() {
                 {comparisonFiles.map((selected, index) => (
                   <label className="comparison-file" key={index} style={{ cursor: 'pointer', position: 'relative' }}>
                     <span>
-                      <b>{lang === 'pt' ? `Imagem ${index + 1}` : `Image ${index + 1}`}</b>
+                      <b>{index === 0 ? (lang === 'pt' ? 'Imagem 1 (ANTES)' : 'Image 1 (BEFORE)') : index === 1 ? (lang === 'pt' ? 'Imagem 2 (DEPOIS)' : 'Image 2 (AFTER)') : `${lang === 'pt' ? 'Imagem' : 'Image'} ${index + 1}`}</b>
                       <small>{selected ? `${imageDateLabel(selected.name, index)} · ${selected.name}` : lang === 'pt' ? 'Selecione um GeoTIFF SR2D4/MS' : 'Select an SR2D4/MS GeoTIFF'}</small>
                     </span>
                     <input
@@ -2467,21 +2861,35 @@ export default function App() {
               </div>
               {comparisonImages.length > 0 && (
                 <div className="comparison-list">
-                  {comparisonImages.map((image) => (
+                  {comparisonImages.map((image, idx) => (
                     <div className="comparison-result" key={image.id}>
-                      <b>{image.dateLabel}</b>
+                      <b>{idx === 0 ? `ANTES (${image.dateLabel})` : idx === 1 ? `DEPOIS (${image.dateLabel})` : image.dateLabel}</b>
                       <span>{image.name}</span>
-                      <em>RGB · LST · UHI</em>
+                      <em>μ {image.stats.mean.toFixed(1)}°C</em>
                     </div>
                   ))}
                 </div>
               )}
               <div className="compare-actions">
                 <button onClick={calculateDifference} disabled={busy || comparisonFiles.filter(Boolean).length < 2}>
-                  {busy ? (lang === 'pt' ? 'Processando…' : 'Processing…') : lang === 'pt' ? 'Calcular diferença Δ LST (2 − 1)' : 'Calculate Δ LST (2 − 1)'}
+                  {busy ? (lang === 'pt' ? 'Processando…' : 'Processing…') : lang === 'pt' ? 'Calcular Δ LST (Depois − Antes)' : 'Calculate Δ LST'}
                 </button>
-                <button onClick={() => setSwipeActive(!swipeActive)} disabled={!differenceReady} className={swipeActive ? 'active' : ''}>
-                  {swipeActive ? (lang === 'pt' ? 'Cortina ativa' : 'Curtain active') : lang === 'pt' ? 'Cortina' : 'Curtain'}
+                <button
+                  onClick={() => {
+                    setSwipeActive(false);
+                    setComparisonMode('difference');
+                  }}
+                  disabled={!differenceReady}
+                  className={!swipeActive && differenceReady && comparisonMode === 'difference' ? 'active' : ''}
+                >
+                  {lang === 'pt' ? 'Mapa Diferença' : 'Difference Map'}
+                </button>
+                <button
+                  onClick={() => setSwipeActive(!swipeActive)}
+                  disabled={!differenceReady}
+                  className={swipeActive ? 'active' : ''}
+                >
+                  {swipeActive ? (lang === 'pt' ? 'Cortina Fixa Ativa' : 'Curtain Active') : lang === 'pt' ? 'Cortina (Antes/Depois)' : 'Curtain (Swipe)'}
                 </button>
                 <button onClick={() => void downloadComparisonPanel()} disabled={!differenceReady}>
                   {lang === 'pt' ? 'Exportar A / B / Δ' : 'Export A / B / Δ'}
@@ -2490,31 +2898,49 @@ export default function App() {
               {swipeActive && differenceReady && (
                 <label className="swipe-control">
                   <span>
-                    {lang === 'pt' ? 'Cortina · esquerda data 1 / direita data 2' : 'Date 1 → date 2'} <b>{swipePosition}%</b>
+                    ◀ ANTES ({comparisonPrimary?.dateLabel}) | DEPOIS ({comparisonSecondary?.dateLabel}) ▶ <b>{swipePosition.toFixed(0)}%</b>
                   </span>
                   <input type="range" min="0" max="100" value={swipePosition} onChange={(e) => setSwipePosition(Number(e.target.value))} />
                 </label>
               )}
-              {differenceReady && (
-                <p className="microcopy comparison-help">
-                  {lang === 'pt'
-                    ? 'A diferença é calculada pixel a pixel. Variações menores que 1 desvio-padrão são tratadas como mudança fraca.'
-                    : 'The difference is calculated pixel by pixel. Changes below 1 standard deviation are treated as weak.'}
-                </p>
+              {differenceReady && differenceStats && (
+                <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(0,0,0,0.26)', borderRadius: '8px', border: '1px solid rgba(121,226,220,0.18)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '6px' }}>
+                    <b>Escala de Mudança Térmica (±1σ = ±{differenceStats.thresholdSigma.toFixed(2)}°C)</b>
+                  </div>
+                  <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px', marginBottom: '8px' }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', textAlign: 'center', fontSize: '11px' }}>
+                    <div style={{ padding: '6px', background: 'rgba(0, 150, 199, 0.18)', border: '1px solid #48cae4', borderRadius: '6px' }}>
+                      <b style={{ color: '#48cae4', display: 'block' }}>↓ DIMINUIU</b>
+                      <span>&lt; -{differenceStats.thresholdSigma.toFixed(2)}°C</span>
+                      <strong style={{ display: 'block', fontSize: '13px', marginTop: '2px' }}>{differenceStats.pctDecreased.toFixed(1)}%</strong>
+                    </div>
+                    <div style={{ padding: '6px', background: 'rgba(148, 163, 184, 0.14)', border: '1px solid #94a3b8', borderRadius: '6px' }}>
+                      <b style={{ color: '#cbd5e1', display: 'block' }}>＝ IGUAL</b>
+                      <span>±{differenceStats.thresholdSigma.toFixed(2)}°C</span>
+                      <strong style={{ display: 'block', fontSize: '13px', marginTop: '2px' }}>{differenceStats.pctEqual.toFixed(1)}%</strong>
+                    </div>
+                    <div style={{ padding: '6px', background: 'rgba(247, 127, 0, 0.18)', border: '1px solid #ff9e00', borderRadius: '6px' }}>
+                      <b style={{ color: '#ff9e00', display: 'block' }}>↑ AUMENTOU</b>
+                      <span>&gt; +{differenceStats.thresholdSigma.toFixed(2)}°C</span>
+                      <strong style={{ display: 'block', fontSize: '13px', marginTop: '2px' }}>{differenceStats.pctIncreased.toFixed(1)}%</strong>
+                    </div>
+                  </div>
+                </div>
               )}
               {differenceReady && differenceRender && comparisonPrimary && comparisonSecondary && (
                 <div className="comparison-triptych">
                   <figure>
-                    <img src={comparisonPrimary.lstUrl} alt="Data A LST" />
-                    <figcaption>DATA A · {comparisonPrimary.dateLabel}</figcaption>
+                    <img src={comparisonPrimary.lstUrl} alt="Antes LST" />
+                    <figcaption>ANTES · {comparisonPrimary.dateLabel}</figcaption>
                   </figure>
                   <figure>
-                    <img src={comparisonSecondary.lstUrl} alt="Data B LST" />
-                    <figcaption>DATA B · {comparisonSecondary.dateLabel}</figcaption>
+                    <img src={comparisonSecondary.lstUrl} alt="Depois LST" />
+                    <figcaption>DEPOIS · {comparisonSecondary.dateLabel}</figcaption>
                   </figure>
                   <figure>
                     <img src={differenceRender.url} alt="Diferença LST" />
-                    <figcaption>Δ LST · B − A</figcaption>
+                    <figcaption>Δ LST (±1σ)</figcaption>
                   </figure>
                 </div>
               )}
