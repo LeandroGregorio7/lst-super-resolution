@@ -497,8 +497,17 @@ async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, num
   const landsat = await fetchNearestLandsatThermal(file.name, bounds, onProgress);
   onProgress?.('Calculando NDVI, NDBI e NDWI nas bandas selecionadas…');
   const indices = calculateOpticalIndices(red, nir, swir);
-  onProgress?.('Executando TsHARP: agregando índices à grade térmica, ajustando LST–NDVI e conservando residual por célula…');
-  const result = downscaleLandsatLST(landsat.lstCelsius, landsat.width, landsat.height, landsat.bounds, indices, tiff.width, tiff.height, bounds);
+  onProgress?.('Executando TsHARP HD 1m: separando telhados, ruas, pista e dossel arbóreo…');
+  const result = downscaleLandsatLST(
+    landsat.lstCelsius,
+    landsat.width,
+    landsat.height,
+    landsat.bounds,
+    { ...indices, red, nir, swir },
+    tiff.width,
+    tiff.height,
+    bounds,
+  );
   const resolutionLabel = tiff.isProjected ? `${Math.abs(tiff.resolution[0]).toFixed(2)} m/pixel` : `${Math.abs(tiff.resolution[0]).toFixed(6)} graus/pixel`;
   onProgress?.(`Fusão concluída: ${result.model} · ${result.validCount} células coarse · coef. NDVI ${result.slope.toFixed(4)} · saída ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · resolução ${resolutionLabel}`);
   onProgress?.(`Prova numérica: LST coarse ${result.coarseRange.toFixed(2)} °C · LST fina ${result.fineRange.toFixed(2)} °C · sinal transferido do SR2D4 ${result.fineSignalRange.toFixed(2)} °C · erro médio de conservação ${result.conservationMae.toFixed(3)} °C`);
@@ -637,7 +646,7 @@ export default function App() {
   const [opticalUrl, setOpticalUrl] = useState<string | null>(null);
   const [visibleLst, setVisibleLst] = useState(true);
   const [visibleOptical, setVisibleOptical] = useState(true);
-  const [opacity, setOpacity] = useState(0.86);
+  const [opacity, setOpacity] = useState(0.96);
   const [contrast, setContrast] = useState(0);
   const [palette, setPalette] = useState<PaletteType>('ironbow');
   const [customColors, setCustomColors] = useState(['#173f9d', '#2457b8', '#25a7a0', '#f5d547', '#e8752f', '#b62025']);
