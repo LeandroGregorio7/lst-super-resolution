@@ -17,6 +17,12 @@ export type TsHarpResult = {
   coarseHeight: number;
 };
 
+export type OpticalBands = {
+  red: Float32Array;
+  nir: Float32Array;
+  swir?: Float32Array;
+};
+
 type Features = { ndvi: Float32Array; ndbi: Float32Array; ndwi: Float32Array };
 type CellStats = { count: number; sumNdvi: number; sumNdbi: number; sumNdwi: number };
 
@@ -114,6 +120,27 @@ function fastSeparableBlur(
   return dst;
 }
 
+function normalizeBandRobust(band: Float32Array): Float32Array {
+  const n = band.length;
+  const step = Math.max(1, Math.floor(n / 25000));
+  const samples: number[] = [];
+  for (let i = 0; i < n; i += step) {
+    const v = band[i];
+    if (Number.isFinite(v)) samples.push(v);
+  }
+  samples.sort((a, b) => a - b);
+  const p02 = samples.length > 10 ? samples[Math.floor(samples.length * 0.02)] : 0;
+  const p98 = samples.length > 10 ? samples[Math.floor(samples.length * 0.98)] : 1;
+  const span = Math.max(1e-6, p98 - p02);
+
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const v = band[i];
+    out[i] = Number.isFinite(v) ? Math.max(0, Math.min(1.15, (v - p02) / span)) : 0.35;
+  }
+  return out;
+}
+
 function cleanAndSmoothCoarseGrid(
   rawCoarse: Float32Array,
   w: number,
@@ -186,7 +213,7 @@ function cleanAndSmoothCoarseGrid(
     }
   }
 
-  const stdCoarse = validCnt > 1 ? Math.max(1.6, Math.min(3.2, Math.sqrt(sumSq / validCnt))) : 2.2;
+  const stdCoarse = validCnt > 1 ? Math.max(1.4, Math.min(3.0, Math.sqrt(sumSq / validCnt))) : 2.0;
 
   for (let iter = 0; iter < 12; iter += 1) {
     let anyNaN = false;
@@ -224,7 +251,7 @@ function cleanAndSmoothCoarseGrid(
   }
 
   const kernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
-  for (let pass = 0; pass < 3; pass += 1) {
+  for (let pass = 0; pass < 4; pass += 1) {
     const next = new Float32Array(n);
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
@@ -296,30 +323,52 @@ function findPercentileTemp(histBins: Uint32Array, targetCount: number): number 
   return 65;
 }
 
-function computeBioSignal(
+function computeHighDefBioSignal(
   ndvi: number,
   ndbi: number,
   ndwi: number,
+  rNorm: number,
+  nNorm: number,
+  dRedMicro: number,
+  dRedMeso: number,
   dNdviMicro: number,
-  dNdviMeso: number,
   dNdbiMicro: number,
   dNdbiMeso: number,
 ): number {
-  if (ndwi > 0.12 && ndvi < 0.14) {
-    const waterIntensity = Math.min(1, (ndwi - 0.12) / 0.28);
-    return -2.8 - 0.55 * waterIntensity + 1.2 * dNdbiMicro;
+  // 1. Corpos d'Água (Rio Tietê, canais e lagos): Frio profundo com nuances de margem
+  if (ndwi > 0.11 && ndvi < 0.15) {
+    const waterDepth = Math.min(1, (ndwi - 0.11) / 0.25);
+    return -1.85 - 0.45 * waterDepth + 0.55 * dRedMicro;
   }
-  if (ndvi >= 0.22) {
-    const vegNorm = Math.min(1, (ndvi - 0.22) / 0.58);
-    const moistureCool = Math.max(-0.25, Math.min(0.25, ndwi * 0.8));
-    const canopyTexture = 3.4 * dNdviMicro + 1.9 * dNdviMeso - 1.8 * dNdbiMicro;
-    return -0.28 - 2.15 * Math.pow(vegNorm, 0.85) - moistureCool - canopyTexture;
+
+  // 2. Dossel Arbóreo Denso (Mata do Campo de Marte e árvores de rua):
+  //    Forte absorção no Red (rNorm baixo) + sombras internas de copa em 1m
+  if (ndvi >= 0.42) {
+    const canopyDensity = Math.min(1, (ndvi - 0.42) / 0.40);
+    const crownShadow = (rNorm - 0.22) * 1.45 + (nNorm - 0.52) * 0.65;
+    const crownMicro = 1.9 * dRedMicro - 1.8 * dNdviMicro;
+    return -1.15 - 0.75 * Math.pow(canopyDensity, 0.8) + crownShadow + crownMicro;
   }
-  const dryImpervious = Math.max(0, 0.22 - ndvi) * 2.4;
-  const rawRoof = Math.max(0, ndbi - 0.02) * 4.4 + Math.max(0, -ndwi - 0.05) * 1.8;
-  const roofHotspot = 2.2 * Math.tanh(rawRoof / 2.2);
-  const houseBoundaryContrast = 4.4 * dNdbiMicro + 1.9 * dNdbiMeso - 3.6 * dNdviMicro;
-  return 0.15 + dryImpervious + roofHotspot + houseBoundaryContrast;
+
+  // 3. Gramados Abertos, Campos e Canteiros (entorno da pista do Campo de Marte):
+  //    Expostos ao sol (rNorm e nNorm mais altos que a mata -> temperatura intermediária amena)
+  if (ndvi >= 0.20) {
+    const grassFrac = (ndvi - 0.20) / 0.22;
+    const sunExposure = (rNorm - 0.34) * 1.65 + (nNorm - 0.48) * 0.55;
+    const localDetail = 2.1 * dRedMicro + 1.2 * dRedMeso - 1.5 * dNdviMicro;
+    return -0.15 - 0.85 * Math.pow(grassFrac, 0.9) + sunExposure + localDetail;
+  }
+
+  // 4. Matriz Urbana de 1 Metro (Ruas, Pista de Pouso, Sombras, Casas e Galpões):
+  //    - Sombras de prédios, ruas estreitas e asfalto escuro da pista têm rNorm baixo (< 0.30) -> Ficam frios/amenos!
+  //    - Telhados cerâmicos/concreto têm rNorm médio-alto (0.40 a 0.80) e dRedMicro > 0 -> Destacam-se em laranja!
+  //    - Grandes telhados metálicos/brancos (Anhembi/hangares) têm rNorm > 0.82 e NDBI alto -> Topo amarelo/branco!
+  const impervBase = Math.max(0, 0.20 - ndvi) * 1.45;
+  const canyonShadowVsRoof = (rNorm - 0.36) * 2.35 + (nNorm - 0.34) * 0.65;
+  const buildingMicroOutline = 2.85 * dRedMicro + 1.55 * dRedMeso + 1.45 * dNdbiMicro + 0.95 * dNdbiMeso - 1.65 * dNdviMicro;
+  const industrialHotspot = Math.max(0, rNorm - 0.72) * 1.85 + Math.max(0, ndbi - 0.04) * 1.95;
+
+  return -0.05 + impervBase + canyonShadowVsRoof + buildingMicroOutline + industrialHotspot;
 }
 
 export function downscaleLandsatLST(
@@ -331,6 +380,7 @@ export function downscaleLandsatLST(
   fineWidth: number,
   fineHeight: number,
   fineBounds: RasterBounds,
+  opticalBands?: OpticalBands,
 ): TsHarpResult {
   const coarse = boundsExtent(coarseBounds);
   const fine = boundsExtent(fineBounds);
@@ -431,253 +481,4 @@ export function downscaleLandsatLST(
   const fallbackNdbi = sumMeanNdbi / Math.max(1, validCells.length);
   const fallbackNdwi = sumMeanNdwi / Math.max(1, validCells.length);
 
-  const useMultivariate = validCells.length >= 12;
-  const rows = validCells.map((cell) => {
-    const ndvi = coarseNdviGrid[cell];
-    const ndbi = coarseNdbiGrid[cell];
-    const ndwi = coarseNdwiGrid[cell];
-    return useMultivariate ? [1, ndvi, ndbi, ndwi] : [1, ndvi, ndvi * ndvi];
-  });
-  const target = validCells.map((cell) => smoothCoarseLST[cell]);
-  const rawCoeffs = fitModel(rows, target) ?? [coarseMedian, -5.0, 3.8, -1.5];
-
-  const b0 = Number.isFinite(rawCoeffs[0]) ? rawCoeffs[0] : coarseMedian;
-  const bNdvi = Math.max(-7.2, Math.min(-3.6, Number.isFinite(rawCoeffs[1]) ? rawCoeffs[1] : -4.5));
-  const bNdbi = useMultivariate
-    ? Math.min(6.5, Math.max(3.0, Number.isFinite(rawCoeffs[2]) ? rawCoeffs[2] : 3.6))
-    : 3.4;
-  const bNdwi = useMultivariate
-    ? Math.max(-3.2, Math.min(-0.7, Number.isFinite(rawCoeffs[3]) ? rawCoeffs[3] : -1.2))
-    : -1.0;
-
-  let ssTot = 0;
-  let ssRes = 0;
-  const meanTarget = target.reduce((a, b) => a + b, 0) / target.length;
-  for (let i = 0; i < validCells.length; i += 1) {
-    const c = validCells[i];
-    const yObs = smoothCoarseLST[c];
-    const yHat = b0 + bNdvi * coarseNdviGrid[c] + bNdbi * coarseNdbiGrid[c] + bNdwi * coarseNdwiGrid[c];
-    ssTot += (yObs - meanTarget) * (yObs - meanTarget);
-    ssRes += (yObs - yHat) * (yObs - yHat);
-  }
-  const r2 = ssTot > 1e-6 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
-
-  const ndviMicro = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 2);
-  const ndviMeso = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 12);
-  const ndbiMicro = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 2);
-  const ndbiMeso = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 12);
-
-  const bioIndex = new Float32Array(nFine);
-
-  for (let i = 0; i < nFine; i += 1) {
-    const ndvi = fineFeatures.ndvi[i];
-    const ndbi = fineFeatures.ndbi[i];
-    const ndwi = fineFeatures.ndwi[i];
-
-    if (!Number.isFinite(ndvi) || !Number.isFinite(ndbi) || !Number.isFinite(ndwi)) {
-      bioIndex[i] = 0;
-      continue;
-    }
-
-    const dNdviMicro = ndvi - ndviMicro[i];
-    const dNdviMeso = ndviMicro[i] - ndviMeso[i];
-    const dNdbiMicro = ndbi - ndbiMicro[i];
-    const dNdbiMeso = ndbiMicro[i] - ndbiMeso[i];
-
-    bioIndex[i] = computeBioSignal(ndvi, ndbi, ndwi, dNdviMicro, dNdviMeso, dNdbiMicro, dNdbiMeso);
-  }
-
-  const output = new Float32Array(nFine);
-  output.fill(NaN);
-
-  const sunDirX = 0.766;
-  const sunDirY = -0.643;
-
-  const histBins = new Uint32Array(2000);
-  let totalValidFine = 0;
-
-  let minSignal = Infinity;
-  let maxSignal = -Infinity;
-  let minCoarseUsed = Infinity;
-  let maxCoarseUsed = -Infinity;
-
-  for (let y = 0; y < fineHeight; y += 1) {
-    const lat = fine.north - ((y + 0.5) / fineHeight) * fineSpanY;
-    const fy = ((coarse.north - lat) / coarseSpanY) * coarseHeight - 0.5;
-    const cy = Math.floor(((coarse.north - lat) / coarseSpanY) * coarseHeight);
-
-    const rowOffset = y * fineWidth;
-    const yPrev = Math.max(0, y - 1) * fineWidth;
-    const yNext = Math.min(fineHeight - 1, y + 1) * fineWidth;
-
-    for (let x = 0; x < fineWidth; x += 1) {
-      const lon = fine.west + ((x + 0.5) / fineWidth) * fineSpanX;
-      const fx = ((lon - coarse.west) / coarseSpanX) * coarseWidth - 0.5;
-      const cx = Math.floor(((lon - coarse.west) / coarseSpanX) * coarseWidth);
-
-      if (cx < 0 || cy < 0 || cx >= coarseWidth || cy >= coarseHeight) continue;
-
-      const index = rowOffset + x;
-      const ndviFine = fineFeatures.ndvi[index];
-      const ndbiFine = fineFeatures.ndbi[index];
-      const ndwiFine = fineFeatures.ndwi[index];
-
-      if (!Number.isFinite(ndviFine) || !Number.isFinite(ndbiFine) || !Number.isFinite(ndwiFine)) {
-        continue;
-      }
-
-      const xPrev = Math.max(0, x - 1);
-      const xNext = Math.min(fineWidth - 1, x + 1);
-
-      const bCenter = bioIndex[index];
-      const bEast = bioIndex[rowOffset + xNext];
-      const bWest = bioIndex[rowOffset + xPrev];
-      const bSouth = bioIndex[yNext + x];
-      const bNorth = bioIndex[yPrev + x];
-
-      const gx = (bEast - bWest) * 0.5;
-      const gy = (bSouth - bNorth) * 0.5;
-      const hasVolume = ndviFine >= 0.32 || bCenter > 0.75;
-      const relief3D = hasVolume ? Math.max(-0.70, Math.min(0.70, (gx * sunDirX + gy * sunDirY) * 0.46)) : 0;
-
-      const meanNeigh = 0.25 * (bEast + bWest + bSouth + bNorth);
-      const laplacianEdge = bCenter - meanNeigh;
-      const polygonWallLine =
-        ndviFine < 0.22
-          ? Math.max(-1.05, Math.min(1.05, laplacianEdge * 0.95 + (ndbiFine - ndbiMicro[index]) * 1.4))
-          : Math.max(-0.70, Math.min(0.70, laplacianEdge * 0.55));
-
-      const tCoarseLocal = sampleBilinear(smoothCoarseLST, coarseWidth, coarseHeight, fx, fy, coarseMedian);
-      const ndviCoarseLocal = sampleBilinear(coarseNdviGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdvi);
-      const ndbiCoarseLocal = sampleBilinear(coarseNdbiGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdbi);
-      const ndwiCoarseLocal = sampleBilinear(coarseNdwiGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdwi);
-
-      const coarseBioExpected =
-        ndviCoarseLocal >= 0.22
-          ? -0.28 - 2.15 * Math.pow(Math.min(1, (ndviCoarseLocal - 0.22) / 0.58), 0.85) - 0.25 * ndwiCoarseLocal
-          : 0.15 + Math.max(0, 0.22 - ndviCoarseLocal) * 2.4 + Math.max(0, ndbiCoarseLocal - 0.02) * 3.8;
-
-      const rawDelta = (bCenter - 0.62 * coarseBioExpected) + relief3D + polygonWallLine;
-      const deltaT =
-        rawDelta > 0
-          ? 2.85 * Math.tanh(rawDelta / 2.85)
-          : 3.30 * Math.tanh(rawDelta / 3.30);
-
-      const coarseDiff = tCoarseLocal - coarseMedian;
-      const dampedCoarseDiff =
-        coarseDiff > stdCoarse
-          ? stdCoarse + 0.85 * stdCoarse * Math.tanh((coarseDiff - stdCoarse) / (1.2 * stdCoarse))
-          : coarseDiff;
-
-      const tBase = coarseMedian + 0.68 * dampedCoarseDiff;
-      const finalTemp = tBase + deltaT;
-
-      output[index] = finalTemp;
-      totalValidFine += 1;
-
-      const bin = Math.max(0, Math.min(1999, Math.floor(((finalTemp + 5) / 70) * 2000)));
-      histBins[bin] += 1;
-
-      if (deltaT < minSignal) minSignal = deltaT;
-      if (deltaT > maxSignal) maxSignal = deltaT;
-      if (tCoarseLocal < minCoarseUsed) minCoarseUsed = tCoarseLocal;
-      if (tCoarseLocal > maxCoarseUsed) maxCoarseUsed = tCoarseLocal;
-    }
-  }
-
-  const pLowTemp =
-    totalValidFine > 100
-      ? findPercentileTemp(histBins, totalValidFine * 0.005)
-      : coarseMedian - 2.4 * stdCoarse;
-  const pHighTemp =
-    totalValidFine > 100
-      ? findPercentileTemp(histBins, totalValidFine * 0.992)
-      : coarseMedian + 2.5 * stdCoarse;
-
-  const cellFineSums = new Float64Array(nCells);
-  const cellFineCounts = new Uint32Array(nCells);
-
-  for (let y = 0; y < fineHeight; y += 1) {
-    const lat = fine.north - ((y + 0.5) / fineHeight) * fineSpanY;
-    const cy = Math.floor(((coarse.north - lat) / coarseSpanY) * coarseHeight);
-    if (cy < 0 || cy >= coarseHeight) continue;
-
-    const rowOffset = y * fineWidth;
-    for (let x = 0; x < fineWidth; x += 1) {
-      const idx = rowOffset + x;
-      const v = output[idx];
-      if (!Number.isFinite(v)) continue;
-
-      const clamped =
-        v < pLowTemp
-          ? pLowTemp - 0.2 * Math.tanh((pLowTemp - v) / 0.5)
-          : v > pHighTemp
-            ? pHighTemp + 0.2 * Math.tanh((v - pHighTemp) / 0.5)
-            : v;
-      output[idx] = clamped;
-
-      const lon = fine.west + ((x + 0.5) / fineWidth) * fineSpanX;
-      const cx = Math.floor(((lon - coarse.west) / coarseSpanX) * coarseWidth);
-      if (cx >= 0 && cx < coarseWidth) {
-        const cell = cy * coarseWidth + cx;
-        cellFineSums[cell] += clamped;
-        cellFineCounts[cell] += 1;
-      }
-    }
-  }
-
-  let conservationError = 0;
-  let conservationCount = 0;
-  for (let cell = 0; cell < nCells; cell += 1) {
-    if (cellFineCounts[cell] > 0 && Number.isFinite(smoothCoarseLST[cell])) {
-      conservationError += Math.abs(cellFineSums[cell] / cellFineCounts[cell] - smoothCoarseLST[cell]);
-      conservationCount += 1;
-    }
-  }
-
-  const fineSignalRange = minSignal !== Infinity ? maxSignal - minSignal : 0;
-  const coarseRange = minCoarseUsed !== Infinity ? maxCoarseUsed - minCoarseUsed : 0;
-
-  if (fineSignalRange < 0.01) {
-    throw new Error(
-      `TsHARP não gerou detalhe espectral mensurável (amplitude ${fineSignalRange.toFixed(3)} °C).`,
-    );
-  }
-
-  return {
-    lstDownscaled: output,
-    slope: bNdvi,
-    intercept: b0,
-    r2,
-    sharpened: true,
-    validCount: validCells.length,
-    model: useMultivariate ? 'multivariate-NDVI-NDBI-NDWI' : 'TsHARP-NDVI-polynomial',
-    coarseRange,
-    fineRange: range(output),
-    fineSignalRange,
-    conservationMae: conservationCount ? conservationError / conservationCount : 0,
-    coarseWidth,
-    coarseHeight,
-  };
-}
-
-export function applyTsHARP(ndvi: Float32Array, lstBase: Float32Array): TsHarpResult {
-  if (ndvi.length !== lstBase.length) throw new Error('NDVI e LST precisam estar na mesma grade.');
-  const output = new Float32Array(lstBase);
-  const valid = Array.from(lstBase).filter(Number.isFinite).length;
-  return {
-    lstDownscaled: output,
-    slope: 0,
-    intercept: valid ? lstBase[0] : 0,
-    r2: 0,
-    sharpened: false,
-    validCount: valid,
-    model: 'coarse-fallback',
-    coarseRange: range(lstBase),
-    fineRange: range(output),
-    fineSignalRange: 0,
-    conservationMae: 0,
-    coarseWidth: lstBase.length,
-    coarseHeight: 1,
-  };
-}
+  const useMultivariate = validCells.length >=
