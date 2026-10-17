@@ -15,11 +15,33 @@ type Theme = 'light' | 'dark';
 type Provider = 'osm' | 'esri';
 type SearchResult = { display_name: string; lat: string; lon: string };
 type RasterState = {
-  data: Float32Array; width: number; height: number; bounds: RasterBounds; origin: number[]; resolution: number[];
-  epsg: number; isProjected: boolean; stats: { min: number; max: number; mean: number; stdDev: number };
-  ndvi: Float32Array; ndbi: Float32Array; fileName: string; bands: number;
+  data: Float32Array;
+  width: number;
+  height: number;
+  bounds: RasterBounds;
+  origin: number[];
+  resolution: number[];
+  epsg: number;
+  isProjected: boolean;
+  stats: { min: number; max: number; mean: number; stdDev: number };
+  ndvi: Float32Array;
+  ndbi: Float32Array;
+  fileName: string;
+  bands: number;
 };
-type ComparisonImage = { id: string; name: string; dateLabel: string; lstUrl: string; opticalUrl: string; uhiSurface: UhiSurface; bounds: RasterBounds; width: number; height: number; data: Float32Array; stats: RasterState['stats'] };
+type ComparisonImage = {
+  id: string;
+  name: string;
+  dateLabel: string;
+  lstUrl: string;
+  opticalUrl: string;
+  uhiSurface: UhiSurface;
+  bounds: RasterBounds;
+  width: number;
+  height: number;
+  data: Float32Array;
+  stats: RasterState['stats'];
+};
 
 type IsothermFeature = {
   type: 'Feature';
@@ -46,13 +68,133 @@ const TILE_URLS: Record<Provider, string> = {
   osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   esri: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 };
+
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS', title: 'SR2D4 / LST Explorer', subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
-    colab: 'Abrir Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor', bands: 'Bandas ópticas do SR2D4', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)', calculate: 'Calcular mapa térmico', processing: 'Processando raster…', layers: 'Camadas', lst: 'LST / temperatura', optical: 'Imagem óptica', opacity: 'Transparência', contrast: 'Contraste', palette: 'Paleta', stats: 'Resumo estatístico', min: 'mínima', max: 'máxima', mean: 'média', std: 'desvio', histogram: 'Distribuição térmica', sample: 'Escala Térmica & Inspeção', aoi: 'Área de interesse', draw: 'Desenhar AOI', clear: 'Limpar AOI', clip: 'Analisar AOI', export: 'Exportar', png: 'PNG composto', tiff: 'GeoTIFF LST', uhi: 'GeoTIFF UHI', method: 'Metodologia', help: 'Como usar', metadata: 'Metadados', theme: 'Tema', basemap: 'Mapa-base', ready: 'Pronto', error: 'Não foi possível processar. Carregue um GeoTIFF SR2D4 com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.', methodText: 'O app extrai a data AAAAMMDD do nome do SR2D4, busca automaticamente a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL, decodifica ST_B10 e ajusta uma regressão multivariada com NDVI, NDBI e NDWI. O app executa TsHARP: agrega NDVI/índices do SR2D4 na grade térmica, ajusta a relação LST–NDVI coarse, aplica-a no NDVI fino e adiciona o residual Landsat por célula para conservar a LST observada. A saída usa exatamente a grade nativa do SR2D4; o detalhe térmico é estimado, não uma medição independente em cada pixel.', helpText: '1. Gere o produto MS no Colab com o nome contendo AAAAMMDD e sufixo _MS.tif. 2. Carregue o GeoTIFF SR2D4. 3. Confirme apenas Red/NIR/SWIR do próprio SR2D4. 4. O app busca Landsat 8/9 automaticamente, pela área e data. 5. Explore LST, índices, AOI e exportações.', noData: 'Carregue um GeoTIFF para começar', search: 'Buscar cidade, bairro ou lugar', coords: 'Longitude, latitude', locate: 'Minha localização', go: 'Ir', compare: 'Comparar antes/depois', before: 'Óptico / antes', after: 'LST / depois', indices: 'Índices espectrais', ndvi: 'NDVI vegetação', ndbi: 'NDBI construído', report: 'Relatório rápido', resize: 'Arraste para redimensionar o painel', searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Leve, Forte e Extremo.', aoiHelp: 'Ative Desenhar AOI, clique em pelo menos três pontos no mapa e finalize com ✓ ou duplo clique.', aoiStats: 'Média da AOI', limitation: 'Limitações da super-resolução', limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos. Use-a para investigação espacial e comparação, não como substituta de uma medição térmica de campo.',
+    eyebrow: 'OPEN SOURCE • WEB GIS',
+    title: 'SR2D4 / LST Explorer',
+    subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
+    colab: 'Abrir Colab',
+    upload: 'Carregar produto SR2D4/MS',
+    uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
+    bands: 'Bandas ópticas do SR2D4',
+    red: 'Vermelho (Red)',
+    nir: 'Infravermelho próximo (NIR)',
+    swir: 'Infravermelho de ondas curtas (SWIR)',
+    calculate: 'Calcular mapa térmico',
+    processing: 'Processando raster…',
+    layers: 'Camadas',
+    lst: 'LST / temperatura',
+    optical: 'Imagem óptica',
+    opacity: 'Transparência',
+    contrast: 'Contraste',
+    palette: 'Paleta',
+    stats: 'Resumo estatístico',
+    min: 'mínima',
+    max: 'máxima',
+    mean: 'média',
+    std: 'desvio',
+    histogram: 'Distribuição térmica',
+    sample: 'Escala Térmica & Inspeção',
+    aoi: 'Área de interesse',
+    draw: 'Desenhar AOI',
+    clear: 'Limpar AOI',
+    clip: 'Analisar AOI',
+    export: 'Exportar',
+    png: 'PNG composto',
+    tiff: 'GeoTIFF LST',
+    uhi: 'GeoTIFF UHI',
+    method: 'Metodologia',
+    help: 'Como usar',
+    metadata: 'Metadados',
+    theme: 'Tema',
+    basemap: 'Mapa-base',
+    ready: 'Pronto',
+    error: 'Não foi possível processar. Carregue um GeoTIFF SR2D4 com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.',
+    methodText: 'O app extrai a data AAAAMMDD do nome do SR2D4, busca automaticamente a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL, decodifica ST_B10 e ajusta uma regressão multivariada com NDVI, NDBI e NDWI. O app executa TsHARP: agrega NDVI/índices do SR2D4 na grade térmica, ajusta a relação LST–NDVI coarse, aplica-a no NDVI fino e adiciona o residual Landsat por célula para conservar a LST observada. A saída usa exatamente a grade nativa do SR2D4; o detalhe térmico é estimado, não uma medição independente em cada pixel.',
+    helpText: '1. Gere o produto MS no Colab com o nome contendo AAAAMMDD e sufixo _MS.tif. 2. Carregue o GeoTIFF SR2D4. 3. Confirme apenas Red/NIR/SWIR do próprio SR2D4. 4. O app busca Landsat 8/9 automaticamente, pela área e data. 5. Explore LST, índices, AOI e exportações.',
+    noData: 'Carregue um GeoTIFF para começar',
+    search: 'Buscar cidade, bairro ou lugar',
+    coords: 'Longitude, latitude',
+    locate: 'Minha localização',
+    go: 'Ir',
+    compare: 'Comparar antes/depois',
+    before: 'Óptico / antes',
+    after: 'LST / depois',
+    indices: 'Índices espectrais',
+    ndvi: 'NDVI vegetação',
+    ndbi: 'NDBI construído',
+    report: 'Relatório rápido',
+    resize: 'Arraste para redimensionar o painel',
+    searchError: 'Local não encontrado.',
+    uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Leve, Forte e Extremo.',
+    aoiHelp: 'Ative Desenhar AOI, clique em pelo menos três pontos no mapa e finalize com ✓ ou duplo clique.',
+    aoiStats: 'Média da AOI',
+    limitation: 'Limitações da super-resolução',
+    limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos. Use-a para investigação espacial e comparação, não como substituta de uma medição térmica de campo.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS', title: 'SR2D4 / LST Explorer', subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.', colab: 'Open Colab', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server', bands: 'SR2D4 optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)', calculate: 'Calculate thermal map', processing: 'Processing raster…', layers: 'Layers', lst: 'LST / temperature', optical: 'Optical image', opacity: 'Opacity', contrast: 'Contrast', palette: 'Palette', stats: 'Statistics', min: 'minimum', max: 'maximum', mean: 'mean', std: 'std dev', histogram: 'Temperature distribution', sample: 'Thermal Scale & Inspection', aoi: 'Area of interest', draw: 'Draw AOI', clear: 'Clear AOI', clip: 'Analyze AOI', export: 'Export', png: 'PNG composto', tiff: 'LST GeoTIFF', uhi: 'UHI GeoTIFF', method: 'Methodology', help: 'How it works', metadata: 'Metadata', theme: 'Theme', basemap: 'Basemap', ready: 'Ready', error: 'Processing failed. Load an SR2D4 GeoTIFF with Red, NIR and SWIR; thermal Landsat is fetched automatically.', methodText: 'The workflow combines SR2D4 imagery with optical indices and TsHARP regression to estimate spatial LST. Spatial detail is estimated: super-resolution does not create independent thermal observations for every new pixel. Validate results with field data.', helpText: '1. Generate the MS product in Colab. 2. Load the GeoTIFF. 3. Confirm Red/NIR/SWIR. 4. Search a place, use GPS or enter coordinates. 5. Calculate and explore LST, indices, AOI and exports.', noData: 'Load a GeoTIFF to begin', search: 'Search city, neighborhood or place', coords: 'Longitude, latitude', locate: 'My location', go: 'Go', compare: 'Compare before/after', before: 'Optical / before', after: 'LST / after', indices: 'Spectral indices', ndvi: 'NDVI vegetation', ndbi: 'NDBI built-up', report: 'Quick report', resize: 'Drag to resize the panel', searchError: 'Place not found.', uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Mild, Strong and Extreme.', aoiHelp: 'Activate Draw AOI, click at least three map points, then finish with ✓ or double-click.', aoiStats: 'AOI mean', limitation: 'Super-resolution limitations', limitationText: 'Detailed LST is an optical-index-guided estimate. Use it for spatial investigation and comparison, not as a replacement for field thermal measurement.',
+    eyebrow: 'OPEN SOURCE • WEB GIS',
+    title: 'SR2D4 / LST Explorer',
+    subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
+    colab: 'Open Colab',
+    upload: 'Load SR2D4/MS product',
+    uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
+    bands: 'SR2D4 optical bands',
+    red: 'Red',
+    nir: 'Near infrared (NIR)',
+    swir: 'Short-wave infrared (SWIR)',
+    calculate: 'Calculate thermal map',
+    processing: 'Processing raster…',
+    layers: 'Layers',
+    lst: 'LST / temperature',
+    optical: 'Optical image',
+    opacity: 'Opacity',
+    contrast: 'Contrast',
+    palette: 'Palette',
+    stats: 'Statistics',
+    min: 'minimum',
+    max: 'maximum',
+    mean: 'mean',
+    std: 'std dev',
+    histogram: 'Temperature distribution',
+    sample: 'Thermal Scale & Inspection',
+    aoi: 'Area of interest',
+    draw: 'Draw AOI',
+    clear: 'Clear AOI',
+    clip: 'Analyze AOI',
+    export: 'Export',
+    png: 'Composite PNG',
+    tiff: 'LST GeoTIFF',
+    uhi: 'UHI GeoTIFF',
+    method: 'Methodology',
+    help: 'How it works',
+    metadata: 'Metadata',
+    theme: 'Theme',
+    basemap: 'Basemap',
+    ready: 'Ready',
+    error: 'Processing failed. Load an SR2D4 GeoTIFF with Red, NIR and SWIR; thermal Landsat is fetched automatically.',
+    methodText: 'The workflow combines SR2D4 imagery with optical indices and TsHARP regression to estimate spatial LST. Spatial detail is estimated: super-resolution does not create independent thermal observations for every new pixel. Validate results with field data.',
+    helpText: '1. Generate the MS product in Colab. 2. Load the GeoTIFF. 3. Confirm Red/NIR/SWIR. 4. Search a place, use GPS or enter coordinates. 5. Calculate and explore LST, indices, AOI and exports.',
+    noData: 'Load a GeoTIFF to begin',
+    search: 'Search city, neighborhood or place',
+    coords: 'Longitude, latitude',
+    locate: 'My location',
+    go: 'Go',
+    compare: 'Compare before/after',
+    before: 'Optical / before',
+    after: 'LST / after',
+    indices: 'Spectral indices',
+    ndvi: 'NDVI vegetation',
+    ndbi: 'NDBI built-up',
+    report: 'Quick report',
+    resize: 'Drag to resize the panel',
+    searchError: 'Place not found.',
+    uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Mild, Strong and Extreme.',
+    aoiHelp: 'Activate Draw AOI, click at least three map points, then finish with ✓ or double-click.',
+    aoiStats: 'AOI mean',
+    limitation: 'Super-resolution limitations',
+    limitationText: 'Detailed LST is an optical-index-guided estimate. Use it for spatial investigation and comparison, not as a replacement for field thermal measurement.',
   },
 } as const;
 
@@ -65,127 +207,6 @@ const UHI_STOPS: [number, number, number, number][] = [
   [1.20, 215, 38, 38],
   [1.90, 255, 242, 175],
 ];
-
-function hexToRgbTuple(hex: string): [number, number, number] {
-  const clean = hex.replace('#', '').trim();
-  const num = parseInt(clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean, 16);
-  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
-}
-
-function getPaletteRgbStops(palette: PaletteType, customColors: string[]): [number, number, number][] {
-  const map: Record<string, string[]> = {
-    ironbow: ['#06005a', '#4b0082', '#9e0059', '#d62828', '#f77f00', '#fcbf49', '#fff8d6'],
-    spectral: ['#3288bd', '#66c2a5', '#abdda4', '#e6f598', '#fee08b', '#fdae61', '#f46d43', '#d53e4f'],
-    jet: ['#000082', '#0066ff', '#00ffff', '#55ff00', '#ffff00', '#ff5500', '#cc0000'],
-    viridis: ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725'],
-    magma: ['#000004', '#340f4b', '#7b206b', '#ca464a', '#fb9b06', '#fcfdbf'],
-    coolwarm: ['#3b4cc0', '#7b9ff9', '#dddddd', '#f29072', '#b40426'],
-    terrain: ['#225ea8', '#41b6c4', '#a1dab4', '#fed976', '#e31a1c', '#800026'],
-    grayscale: ['#080808', '#484848', '#888888', '#c8c8c8', '#ffffff'],
-    custom: customColors.length >= 2 ? customColors : ['#173f9d', '#25a7a0', '#f5d547', '#b62025'],
-  };
-  return (map[palette] || map.ironbow).map(hexToRgbTuple);
-}
-
-function samplePaletteStops(t: number, stops: [number, number, number][]): [number, number, number] {
-  const clamped = Math.max(0, Math.min(1, t));
-  const scaled = clamped * (stops.length - 1);
-  const idx = Math.min(stops.length - 2, Math.floor(scaled));
-  const frac = scaled - idx;
-  const c0 = stops[idx];
-  const c1 = stops[idx + 1];
-  return [
-    c0[0] + (c1[0] - c0[0]) * frac,
-    c0[1] + (c1[1] - c0[1]) * frac,
-    c0[2] + (c1[2] - c0[2]) * frac,
-  ];
-}
-
-/**
- * Renderizador de Temperatura (LST) em Alta Definição (1m):
- * - Aplica Tone Mapping Radiométrico (Soft-Knee Gamma) para não estourar telhados em amarelo
- * - Desenha as linhas divisórias de polígonos (casas, muros, quadras e ruas) via micro-oclusão de 1m.
- */
-function renderHighDefLstToCanvas(
-  data: Float32Array,
-  width: number,
-  height: number,
-  canvas: HTMLCanvasElement,
-  palette: PaletteType,
-  customColors: string[],
-  stats: { min: number; max: number; mean: number; stdDev: number },
-) {
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const img = ctx.createImageData(width, height);
-  const out = img.data;
-
-  const stops = getPaletteRgbStops(palette, customColors);
-  const span = Math.max(0.5, stats.max - stats.min);
-  const safeStd = Math.max(0.6, stats.stdDev);
-
-  for (let y = 0; y < height; y += 1) {
-    const row = y * width;
-    const yPrev = Math.max(0, y - 1) * width;
-    const yNext = Math.min(height - 1, y + 1) * width;
-
-    for (let x = 0; x < width; x += 1) {
-      const i = row + x;
-      const val = data[i];
-      const px = i * 4;
-
-      if (!Number.isFinite(val)) {
-        out[px + 3] = 0;
-        continue;
-      }
-
-      const xPrev = Math.max(0, x - 1);
-      const xNext = Math.min(width - 1, x + 1);
-      const vE = Number.isFinite(data[row + xNext]) ? data[row + xNext] : val;
-      const vW = Number.isFinite(data[row + xPrev]) ? data[row + xPrev] : val;
-      const vS = Number.isFinite(data[yNext + x]) ? data[yNext + x] : val;
-      const vN = Number.isFinite(data[yPrev + x]) ? data[yPrev + x] : val;
-
-      const meanNeigh = 0.25 * (vE + vW + vS + vN);
-      const lap = (val - meanNeigh) / safeStd;
-      const gx = (vE - vW) / safeStd;
-      const gy = (vS - vN) / safeStd;
-      const gradMag = Math.sqrt(gx * gx + gy * gy);
-
-      // Posição linear [0, 1]
-      const tLin = Math.max(0, Math.min(1, (val - stats.min) / span));
-
-      // Curva S-Roll-off nos altos: reserva os últimos 20% da paleta (amarelo claro/branco)
-      // apenas para os grandes hotspots (>82% da amplitude), mantendo casas em laranja/âmbar rico!
-      const tToneMapped =
-        tLin <= 0.48
-          ? Math.pow(tLin / 0.48, 0.92) * 0.48
-          : 0.48 + Math.pow((tLin - 0.48) / 0.52, 1.38) * 0.52;
-
-      // Recuo cromático nas divisas entre imóveis (lap < 0) para separar visualmente cada casa
-      const boundaryColorPull = lap < 0 ? Math.max(-0.08, lap * 0.06) : Math.min(0.03, lap * 0.02);
-      const [r, g, b] = samplePaletteStops(tToneMapped + boundaryColorPull, stops);
-
-      // Oclusão de linha divisória de polígonos (escurece suavemente as bordas entre telhados vizinhos)
-      const solarSlope = (gx * 0.75 - gy * 0.65) * 0.08;
-      const polygonLineDarken =
-        lap < -0.04
-          ? Math.max(-0.28, lap * 0.24 - gradMag * 0.09)
-          : Math.min(0.10, lap * 0.06 - gradMag * 0.04);
-
-      const brightness = Math.max(0.70, Math.min(1.12, 1 + solarSlope + polygonLineDarken));
-
-      out[px] = Math.max(0, Math.min(255, Math.round(r * brightness)));
-      out[px + 1] = Math.max(0, Math.min(255, Math.round(g * brightness)));
-      out[px + 2] = Math.max(0, Math.min(255, Math.round(b * brightness)));
-      out[px + 3] = 255;
-    }
-  }
-
-  ctx.putImageData(img, 0, 0);
-}
 
 function sampleUhiColor(z: number): [number, number, number] {
   if (z <= UHI_STOPS[0][0]) {
@@ -343,11 +364,12 @@ function buildMesoIsothermsGeoJSON(
         const v2 = grid[(y + 1) * gW + (x + 1)];
         const v3 = grid[(y + 1) * gW + x];
 
-        let mask = 0;
-        if (v0 >= iso) mask |= 1;
-        if (v1 >= iso) mask |= 2;
-        if (v2 >= iso) mask |= 4;
-        if (v3 >= iso) mask |= 8;
+        const mask =
+          (v0 >= iso ? 1 : 0) +
+          (v1 >= iso ? 2 : 0) +
+          (v2 >= iso ? 4 : 0) +
+          (v3 >= iso ? 8 : 0);
+
         if (mask === 0 || mask === 15) continue;
 
         const interp = (a: number, b: number) => {
@@ -398,15 +420,70 @@ function buildMesoIsothermsGeoJSON(
 }
 
 function LogoMark() {
-  return <svg className="logo-mark" viewBox="0 0 44 44" role="img" aria-label="SR2D4 LST Explorer logo"><defs><linearGradient id="thermal-logo" x1="0" x2="1"><stop stopColor="#4324a8"/><stop offset=".52" stopColor="#f04435"/><stop offset="1" stopColor="#ffc400"/></linearGradient></defs><path d="M22 3c8 0 15 5 18 12-6-2-11-1-16 3-5 4-8 10-8 18-6-4-10-10-10-17C6 10 13 3 22 3Z" fill="url(#thermal-logo)"/><path d="M10 31c5-4 11-6 18-5 4 1 7 3 10 6-4 6-10 9-17 9-4 0-8-1-11-3Z" fill="none" stroke="#79e2dc" strokeWidth="2"/><circle cx="27" cy="14" r="3" fill="#fff5bf"/></svg>;
+  return (
+    <svg className="logo-mark" viewBox="0 0 44 44" role="img" aria-label="SR2D4 LST Explorer logo">
+      <defs>
+        <linearGradient id="thermal-logo" x1="0" x2="1">
+          <stop stopColor="#4324a8" />
+          <stop offset=".52" stopColor="#f04435" />
+          <stop offset="1" stopColor="#ffc400" />
+        </linearGradient>
+      </defs>
+      <path d="M22 3c8 0 15 5 18 12-6-2-11-1-16 3-5 4-8 10-8 18-6-4-10-10-10-17C6 10 13 3 22 3Z" fill="url(#thermal-logo)" />
+      <path d="M10 31c5-4 11-6 18-5 4 1 7 3 10 6-4 6-10 9-17 9-4 0-8-1-11-3Z" fill="none" stroke="#79e2dc" strokeWidth="2" />
+      <circle cx="27" cy="14" r="3" fill="#fff5bf" />
+    </svg>
+  );
 }
+
 function Icon({ name }: { name: 'search' | 'gps' | 'pin' | 'resize' | 'layers' | 'sun' | 'moon' }) {
-  const paths = { search: <><circle cx="11" cy="11" r="6"/><path d="m16 16 5 5"/></>, gps: <><circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M12 9v6M9 12h6"/></>, pin: <><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></>, resize: <><path d="M8 3H3v5M16 21h5v-5M3 3l7 7M21 21l-7-7"/></>, layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></>, sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>, moon: <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/> }[name];
-  return <svg className="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths}</svg>;
+  const paths = {
+    search: <><circle cx="11" cy="11" r="6" /><path d="m16 16 5 5" /></>,
+    gps: <><circle cx="12" cy="12" r="7" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M12 9v6M9 12h6" /></>,
+    pin: <><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></>,
+    resize: <><path d="M8 3H3v5M16 21h5v-5M3 3l7 7M21 21l-7-7" /></>,
+    layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5M3 16l9 5 9-5" /></>,
+    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
+    moon: <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z" />,
+  }[name];
+  return (
+    <svg className="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      {paths}
+    </svg>
+  );
 }
-function LayerRow({ label, visible, onToggle, color }: { label: string; visible: boolean; onToggle: () => void; color: string }) { return <button className="layer-row" onClick={onToggle}><span className={`layer-swatch ${color}`} /><span>{label}</span><span className="layer-state">{visible ? 'VISIBLE' : 'HIDDEN'}</span></button>; }
-function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><small>{label}</small><strong>{value}</strong></div>; }
-function meanOf(data: Float32Array) { let sum = 0; let count = 0; for (const value of data) if (Number.isFinite(value)) { sum += value; count += 1; } return count ? sum / count : 0; }
+
+function LayerRow({ label, visible, onToggle, color }: { label: string; visible: boolean; onToggle: () => void; color: string }) {
+  return (
+    <button className="layer-row" onClick={onToggle}>
+      <span className={`layer-swatch ${color}`} />
+      <span>{label}</span>
+      <span className="layer-state">{visible ? 'VISIBLE' : 'HIDDEN'}</span>
+    </button>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric">
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function meanOf(data: Float32Array) {
+  let sum = 0;
+  let count = 0;
+  for (const value of data) {
+    if (Number.isFinite(value)) {
+      sum += value;
+      count += 1;
+    }
+  }
+  return count ? sum / count : 0;
+}
+
 async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, number, number], onProgress?: ThermalProgress) {
   onProgress?.('Abrindo GeoTIFF SR2D4 e lendo metadata…');
   const tiff = await readTiffPixels(file);
@@ -418,27 +495,91 @@ async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, num
   const bounds = rasterBoundsToWgs84(tiff.origin, tiff.resolution, tiff.width, tiff.height, tiff.epsg);
   onProgress?.(`SR2D4 lido: ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · calculando extensão geográfica…`);
   const landsat = await fetchNearestLandsatThermal(file.name, bounds, onProgress);
-  onProgress?.('Calculando NDVI, NDBI, NDWI e morfologia óptica de 1m (Red/NIR)…');
+  onProgress?.('Calculando NDVI, NDBI e NDWI nas bandas selecionadas…');
   const indices = calculateOpticalIndices(red, nir, swir);
-  onProgress?.('Executando TsHARP + Decomposição de Polígonos 1m: ajustando LST e conservando energia…');
-  const result = downscaleLandsatLST(
-    landsat.lstCelsius,
-    landsat.width,
-    landsat.height,
-    landsat.bounds,
-    { ...indices, red, nir },
-    tiff.width,
-    tiff.height,
-    bounds,
-  );
+  onProgress?.('Executando TsHARP: agregando índices à grade térmica, ajustando LST–NDVI e conservando residual por célula…');
+  const result = downscaleLandsatLST(landsat.lstCelsius, landsat.width, landsat.height, landsat.bounds, indices, tiff.width, tiff.height, bounds);
   const resolutionLabel = tiff.isProjected ? `${Math.abs(tiff.resolution[0]).toFixed(2)} m/pixel` : `${Math.abs(tiff.resolution[0]).toFixed(6)} graus/pixel`;
   onProgress?.(`Fusão concluída: ${result.model} · ${result.validCount} células coarse · coef. NDVI ${result.slope.toFixed(4)} · saída ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · resolução ${resolutionLabel}`);
   onProgress?.(`Prova numérica: LST coarse ${result.coarseRange.toFixed(2)} °C · LST fina ${result.fineRange.toFixed(2)} °C · sinal transferido do SR2D4 ${result.fineSignalRange.toFixed(2)} °C · erro médio de conservação ${result.conservationMae.toFixed(3)} °C`);
   return { tiff, bounds, indices, landsat, result };
 }
-function pointInPolygon(point: [number, number], polygon: [number, number][]) { let inside = false; for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) { const [xi, yi] = polygon[i]; const [xj, yj] = polygon[j]; const intersects = ((yi > point[1]) !== (yj > point[1])) && point[0] < (xj - xi) * (point[1] - yi) / ((yj - yi) || Number.EPSILON) + xi; if (intersects) inside = !inside; } return inside; }
-function thermalDifference(primary: { data: Float32Array; width: number; height: number; bounds: RasterBounds; stats: { stdDev: number } }, secondary: { data: Float32Array; width: number; height: number; bounds: RasterBounds; stats: { stdDev: number } }) { const result = new Float32Array(primary.width * primary.height); const primaryExtent = boundsExtent(primary.bounds); const secondaryExtent = boundsExtent(secondary.bounds); for (let y = 0; y < primary.height; y += 1) for (let x = 0; x < primary.width; x += 1) { const lng = primaryExtent.west + (x + .5) / primary.width * (primaryExtent.east - primaryExtent.west); const lat = primaryExtent.north - (y + .5) / primary.height * (primaryExtent.north - primaryExtent.south); const sx = Math.floor((lng - secondaryExtent.west) / (secondaryExtent.east - secondaryExtent.west) * secondary.width); const sy = Math.floor((secondaryExtent.north - lat) / (secondaryExtent.north - secondaryExtent.south) * secondary.height); const a = primary.data[y * primary.width + x]; const b = sx >= 0 && sy >= 0 && sx < secondary.width && sy < secondary.height ? secondary.data[sy * secondary.width + sx] : NaN; result[y * primary.width + x] = Number.isFinite(a) && Number.isFinite(b) ? b - a : NaN; } return result; }
-function renderDifferenceToCanvas(data: Float32Array, width: number, height: number, canvas: HTMLCanvasElement) { canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); if (!ctx) return null; const image = ctx.createImageData(width, height); let min = Infinity; let max = -Infinity; let count = 0; for (const value of data) if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); count += 1; } const maxAbs = Math.max(0.1, count ? Math.max(Math.abs(min), Math.abs(max)) : 0); const color = (value: number) => { const t = Math.min(1, Math.abs(value) / maxAbs); const start = value < 0 ? [33, 102, 172] : [255, 255, 255]; const end = value < 0 ? [247, 247, 247] : [178, 24, 43]; return { r: Math.round(start[0] + (end[0] - start[0]) * t), g: Math.round(start[1] + (end[1] - start[1]) * t), b: Math.round(start[2] + (end[2] - start[2]) * t) }; }; for (let i = 0; i < data.length; i += 1) { const value = data[i]; const index = i * 4; if (!Number.isFinite(value)) { image.data[index + 3] = 0; continue; } const rgb = color(value); image.data[index] = rgb.r; image.data[index + 1] = rgb.g; image.data[index + 2] = rgb.b; image.data[index + 3] = 255; } ctx.putImageData(image, 0, 0); return { min: count ? min : 0, max: count ? max : 0, maxAbs }; }
+
+function pointInPolygon(point: [number, number], polygon: [number, number][]) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    const intersects = ((yi > point[1]) !== (yj > point[1])) && point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || Number.EPSILON) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function thermalDifference(
+  primary: { data: Float32Array; width: number; height: number; bounds: RasterBounds; stats: { stdDev: number } },
+  secondary: { data: Float32Array; width: number; height: number; bounds: RasterBounds; stats: { stdDev: number } },
+) {
+  const result = new Float32Array(primary.width * primary.height);
+  const primaryExtent = boundsExtent(primary.bounds);
+  const secondaryExtent = boundsExtent(secondary.bounds);
+  for (let y = 0; y < primary.height; y += 1) {
+    for (let x = 0; x < primary.width; x += 1) {
+      const lng = primaryExtent.west + ((x + 0.5) / primary.width) * (primaryExtent.east - primaryExtent.west);
+      const lat = primaryExtent.north - ((y + 0.5) / primary.height) * (primaryExtent.north - primaryExtent.south);
+      const sx = Math.floor(((lng - secondaryExtent.west) / (secondaryExtent.east - secondaryExtent.west)) * secondary.width);
+      const sy = Math.floor(((secondaryExtent.north - lat) / (secondaryExtent.north - secondaryExtent.south)) * secondary.height);
+      const a = primary.data[y * primary.width + x];
+      const b = sx >= 0 && sy >= 0 && sx < secondary.width && sy < secondary.height ? secondary.data[sy * secondary.width + sx] : NaN;
+      result[y * primary.width + x] = Number.isFinite(a) && Number.isFinite(b) ? b - a : NaN;
+    }
+  }
+  return result;
+}
+
+function renderDifferenceToCanvas(data: Float32Array, width: number, height: number, canvas: HTMLCanvasElement) {
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const image = ctx.createImageData(width, height);
+  let min = Infinity;
+  let max = -Infinity;
+  let count = 0;
+  for (const value of data) {
+    if (Number.isFinite(value)) {
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      count += 1;
+    }
+  }
+  const maxAbs = Math.max(0.1, count ? Math.max(Math.abs(min), Math.abs(max)) : 0);
+  const color = (value: number) => {
+    const t = Math.min(1, Math.abs(value) / maxAbs);
+    const start = value < 0 ? [33, 102, 172] : [255, 255, 255];
+    const end = value < 0 ? [247, 247, 247] : [178, 24, 43];
+    return {
+      r: Math.round(start[0] + (end[0] - start[0]) * t),
+      g: Math.round(start[1] + (end[1] - start[1]) * t),
+      b: Math.round(start[2] + (end[2] - start[2]) * t),
+    };
+  };
+  for (let i = 0; i < data.length; i += 1) {
+    const value = data[i];
+    const index = i * 4;
+    if (!Number.isFinite(value)) {
+      image.data[index + 3] = 0;
+      continue;
+    }
+    const rgb = color(value);
+    image.data[index] = rgb.r;
+    image.data[index + 1] = rgb.g;
+    image.data[index + 2] = rgb.b;
+    image.data[index + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+  return { min: count ? min : 0, max: count ? max : 0, maxAbs };
+}
 
 function uhiClassLabel(value: number, stats: { mean: number; stdDev: number }, lang: Lang) {
   if (!Number.isFinite(value)) return '—';
@@ -450,15 +591,1794 @@ function uhiClassLabel(value: number, stats: { mean: number; stdDev: number }, l
   if (z < 1.40) return lang === 'pt' ? 'UHI Forte' : 'Strong UHI';
   return lang === 'pt' ? 'UHI Extrema (Hotspot)' : 'Extreme Hotspot';
 }
-function imageDateLabel(name: string, index: number) { const match = name.match(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/); return match ? `${match[1]}-${match[2]}-${match[3]}` : `Data ${String(index + 1).padStart(2, '0')}`; }
-function paletteGradient(palette: PaletteType, customColors: string[]) { const gradients: Record<string, string> = { ironbow: '#06005a, #4b0082, #9e0059, #d62828, #f77f00, #fcbf49, #fff8d6', spectral: '#5e4fa2, #3288bd, #66c2a5, #fdd486, #f46d43, #9e0142', jet: '#000082, #00ffff, #00ff00, #ffff00, #ff0000', viridis: '#440154, #3b528b, #21918c, #5ec962, #fde725', magma: '#000004, #340f4b, #7b206b, #ca464a, #fcfdbf', coolwarm: '#3b4cc0, #dddddd, #b40426', terrain: '#225ea8, #53a85d, #dcbe68, #8b261f', grayscale: '#050505, #ffffff', custom: customColors.join(', ') }; return `linear-gradient(90deg, ${gradients[palette] || gradients.ironbow})`; }
-function statsOf(data: Float32Array) { let min = Infinity; let max = -Infinity; let sum = 0; let count = 0; for (const value of data) if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); sum += value; count += 1; } return { min: count ? min : 0, max: count ? max : 0, mean: count ? sum / count : 0 }; }
+
+function imageDateLabel(name: string, index: number) {
+  const match = name.match(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : `Data ${String(index + 1).padStart(2, '0')}`;
+}
+
+function paletteGradient(palette: PaletteType, customColors: string[]) {
+  const gradients: Record<string, string> = {
+    ironbow: '#000082, #780078, #cc0000, #ffcc00, #ffffff',
+    spectral: '#5e4fa2, #3288bd, #66c2a5, #fdd486, #f46d43, #9e0142',
+    jet: '#000082, #00ffff, #00ff00, #ffff00, #ff0000',
+    viridis: '#440154, #3b528b, #21918c, #5ec962, #fde725',
+    magma: '#000004, #340f4b, #7b206b, #ca464a, #fcfdbf',
+    coolwarm: '#3b4cc0, #dddddd, #b40426',
+    terrain: '#225ea8, #53a85d, #dcbe68, #8b261f',
+    grayscale: '#050505, #ffffff',
+    custom: customColors.join(', '),
+  };
+  return `linear-gradient(90deg, ${gradients[palette] || gradients.ironbow})`;
+}
+
+function statsOf(data: Float32Array) {
+  let min = Infinity;
+  let max = -Infinity;
+  let sum = 0;
+  let count = 0;
+  for (const value of data) {
+    if (Number.isFinite(value)) {
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      sum += value;
+      count += 1;
+    }
+  }
+  return { min: count ? min : 0, max: count ? max : 0, mean: count ? sum / count : 0 };
+}
 
 export default function App() {
-  const [lang, setLang] = useState<Lang>(() => navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
+  const [lang, setLang] = useState<Lang>(() => (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en'));
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('lst-theme') as Theme) || 'dark');
   const [provider, setProvider] = useState<Provider>('osm');
   const [raster, setRaster] = useState<RasterState | null>(null);
-  const [lstUrl, setLstUrl] = useState<string | null>(null); const [opticalUrl, setOpticalUrl] = useState<string | null>(null);
-  const [visibleLst, setVisibleLst] = useState(true); const [visibleOptical, setVisibleOptical] = useState(true);
-  const [opacity, setOpacity] =
+  const [lstUrl, setLstUrl] = useState<string | null>(null);
+  const [opticalUrl, setOpticalUrl] = useState<string | null>(null);
+  const [visibleLst, setVisibleLst] = useState(true);
+  const [visibleOptical, setVisibleOptical] = useState(true);
+  const [opacity, setOpacity] = useState(0.86);
+  const [contrast, setContrast] = useState(0);
+  const [palette, setPalette] = useState<PaletteType>('ironbow');
+  const [customColors, setCustomColors] = useState(['#173f9d', '#2457b8', '#25a7a0', '#f5d547', '#e8752f', '#b62025']);
+  const [displayMode, setDisplayMode] = useState<'temperature' | 'uhi'>('temperature');
+  const [file, setFile] = useState<File | null>(null);
+  const [bandCount, setBandCount] = useState(3);
+  const [bandLabels, setBandLabels] = useState<string[]>([]);
+  const [bands, setBands] = useState(['0', '1', '2']);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [processingLog, setProcessingLog] = useState<Array<{ time: string; message: string; level: 'info' | 'success' | 'error' }>>([]);
+  const [sample, setSample] = useState<{ temp: number; lng: number; lat: number } | null>(null);
+  const [hoverSample, setHoverSample] = useState<{ temp: number; lng: number; lat: number } | null>(null);
+  const [identifyMode, setIdentifyMode] = useState(false);
+  const [panEnabled, setPanEnabled] = useState(true);
+  const [showMethod, setShowMethod] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showMeta, setShowMeta] = useState(false);
+  const [showLimits, setShowLimits] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(() => sessionStorage.getItem('sr2d4-tutorial-seen') !== '1');
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [showSearch, setShowSearch] = useState(true);
+  const [aoi, setAoi] = useState<[number, number][]>([]);
+  const [drawAoi, setDrawAoi] = useState(false);
+  const [aoiStats, setAoiStats] = useState<{ count: number; min: number; max: number; mean: number } | null>(null);
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [coordText, setCoordText] = useState('');
+  const [comparisonCount, setComparisonCount] = useState(2);
+  const [comparisonFiles, setComparisonFiles] = useState<(File | null)[]>([null, null]);
+  const [comparisonImages, setComparisonImages] = useState<ComparisonImage[]>([]);
+  const [comparisonMode, setComparisonMode] = useState<'difference' | 'secondary'>('difference');
+  const [differenceReady, setDifferenceReady] = useState(false);
+  const [swipeActive, setSwipeActive] = useState(false);
+  const [swipePosition, setSwipePosition] = useState(50);
+  const [uhiSurface, setUhiSurface] = useState<UhiSurface | null>(null);
+  const [isotherms, setIsotherms] = useState<IsothermCollection | null>(null);
+  const [uhiSurfaceVisible, setUhiSurfaceVisible] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(390);
+
+  const resizing = useRef(false);
+  const curtainDragging = useRef(false);
+  const curtainMapRef = useRef<MapLibreMap | null>(null);
+  const curtainContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<MapLibreMap | null>(null);
+  const mapClickMode = useRef({
+    drawAoi: false,
+    raster: null as RasterState | null,
+    extent: null as ReturnType<typeof boundsExtent> | null,
+    identifyMode: false,
+  });
+  const lstCanvas = useRef<HTMLCanvasElement | null>(null);
+  const opticalCanvas = useRef<HTMLCanvasElement | null>(null);
+
+  const t = copy[lang];
+  const extent = raster ? boundsExtent(raster.bounds) : null;
+  const comparisonPrimary = comparisonImages[0] ?? null;
+  const comparisonSecondary = comparisonImages[1] ?? null;
+
+  const differenceRender = useMemo(() => {
+    if (!comparisonPrimary || !comparisonSecondary || !differenceReady) return null;
+    const data = thermalDifference(comparisonPrimary, comparisonSecondary);
+    const canvas = document.createElement('canvas');
+    const stats = renderDifferenceToCanvas(data, comparisonPrimary.width, comparisonPrimary.height, canvas) ?? statsOf(data);
+    return { url: canvas.toDataURL('image/png'), stats };
+  }, [comparisonPrimary, comparisonSecondary, differenceReady]);
+
+  const uhiGradient = 'linear-gradient(90deg, #185a9d, #2b8c68, #8ac46e, #f7e28b, #f48438, #d72626, #fff2af)';
+  const legendGradient = displayMode === 'uhi' ? uhiGradient : paletteGradient(palette, customColors);
+  const differenceStats = differenceRender?.stats ?? null;
+  const differenceExtent = differenceStats ? Math.max(Math.abs(differenceStats.min), Math.abs(differenceStats.max)) : 0;
+
+  useEffect(() => {
+    localStorage.setItem('lst-theme', theme);
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    mapClickMode.current = { drawAoi, raster, extent, identifyMode };
+  }, [drawAoi, raster, extent, identifyMode]);
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (resizing.current) setPanelWidth(Math.max(330, Math.min(560, window.innerWidth - event.clientX)));
+      if (curtainDragging.current) {
+        const stage = document.querySelector('.map-stage') as HTMLElement | null;
+        if (stage) {
+          const rect = stage.getBoundingClientRect();
+          setSwipePosition(Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)));
+        }
+      }
+    };
+    const onUp = () => {
+      resizing.current = false;
+      curtainDragging.current = false;
+      document.body.classList.remove('is-resizing');
+      document.body.classList.remove('is-curtain-dragging');
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mapRef.current || mapInstance.current) return;
+    const map = new maplibregl.Map({
+      container: mapRef.current,
+      style: {
+        version: 8,
+        sources: {
+          basemap: { type: 'raster', tiles: [TILE_URLS.osm], tileSize: 256, attribution: '© OpenStreetMap contributors' },
+        },
+        layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
+      },
+      center: [-46.63, -23.55],
+      zoom: 4,
+      attributionControl: false,
+    });
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+
+    const inspectAt = (event: maplibregl.MapMouseEvent, commit: boolean) => {
+      const mode = mapClickMode.current;
+      if (!mode.raster || !mode.extent) return;
+      const x = Math.floor(((event.lngLat.lng - mode.extent.west) / (mode.extent.east - mode.extent.west)) * mode.raster.width);
+      const y = Math.floor(((mode.extent.north - event.lngLat.lat) / (mode.extent.north - mode.extent.south)) * mode.raster.height);
+      if (x >= 0 && y >= 0 && x < mode.raster.width && y < mode.raster.height) {
+        const temp = mode.raster.data[y * mode.raster.width + x];
+        if (Number.isFinite(temp)) {
+          const point = { temp, lng: event.lngLat.lng, lat: event.lngLat.lat };
+          if (commit) setSample(point);
+          else if (mapClickMode.current.identifyMode) setHoverSample(point);
+        }
+      }
+    };
+
+    map.on('click', (event) => {
+      const mode = mapClickMode.current;
+      if (mode.drawAoi) {
+        event.preventDefault();
+        setAoi((prev) => [...prev, [event.lngLat.lng, event.lngLat.lat]]);
+        return;
+      }
+      inspectAt(event, true);
+    });
+
+    map.on('dblclick', (event) => {
+      const mode = mapClickMode.current;
+      if (!mode.drawAoi) return;
+      event.preventDefault();
+      setAoi((prev) => {
+        const cleaned =
+          prev.length > 1 &&
+          Math.abs(prev[prev.length - 1][0] - event.lngLat.lng) < 1e-7 &&
+          Math.abs(prev[prev.length - 1][1] - event.lngLat.lat) < 1e-7
+            ? prev.slice(0, -1)
+            : prev;
+        if (cleaned.length >= 3) {
+          setDrawAoi(false);
+          setPanEnabled(true);
+          map.dragPan.enable();
+          map.doubleClickZoom.enable();
+          map.scrollZoom.enable();
+          map.touchZoomRotate.enable();
+        }
+        return cleaned;
+      });
+    });
+
+    let hoverFrame = 0;
+    map.on('mousemove', (event) => {
+      if (!mapClickMode.current.drawAoi && mapClickMode.current.identifyMode && !hoverFrame) {
+        hoverFrame = requestAnimationFrame(() => {
+          inspectAt(event, false);
+          hoverFrame = 0;
+        });
+      }
+    });
+    map.on('dragstart', () => setHoverSample(null));
+    map.dragPan.enable();
+    mapInstance.current = map;
+    return () => {
+      map.remove();
+      mapInstance.current = null;
+    };
+  }, []);
+
+  const syncLayers = useCallback(() => {
+    const map = mapInstance.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const addOrUpdate = (id: string, url: string, coordinates: RasterBounds) => {
+      const existing = map.getSource(id) as any;
+      if (existing) existing.updateImage({ url, coordinates });
+      else map.addSource(id, { type: 'image', url, coordinates });
+    };
+    if (raster && lstUrl && opticalUrl) {
+      addOrUpdate('lst-raster', lstUrl, raster.bounds);
+      addOrUpdate('optical-raster', opticalUrl, raster.bounds);
+      if (!map.getLayer('lst-layer')) {
+        map.addLayer({ id: 'lst-layer', type: 'raster', source: 'lst-raster', paint: { 'raster-opacity': opacity, 'raster-contrast': contrast } });
+      }
+      if (!map.getLayer('optical-layer')) {
+        map.addLayer({ id: 'optical-layer', type: 'raster', source: 'optical-raster', paint: { 'raster-opacity': 1 } });
+      }
+    }
+    if (comparisonPrimary && comparisonSecondary && differenceReady) {
+      addOrUpdate('comparison-primary-raster', comparisonPrimary.lstUrl, comparisonPrimary.bounds);
+      addOrUpdate('comparison-lst-raster', comparisonSecondary.lstUrl, comparisonSecondary.bounds);
+      if (!map.getLayer('comparison-primary-layer')) {
+        map.addLayer({ id: 'comparison-primary-layer', type: 'raster', source: 'comparison-primary-raster', paint: { 'raster-opacity': 1 } });
+      }
+      if (!map.getLayer('comparison-lst-layer')) {
+        map.addLayer({ id: 'comparison-lst-layer', type: 'raster', source: 'comparison-lst-raster', paint: { 'raster-opacity': 0.5 } });
+      }
+      if (differenceRender) addOrUpdate('comparison-difference-raster', differenceRender.url, comparisonPrimary.bounds);
+      if (!map.getLayer('comparison-difference-layer')) {
+        map.addLayer({ id: 'comparison-difference-layer', type: 'raster', source: 'comparison-difference-raster', paint: { 'raster-opacity': 0.9 } });
+      }
+      map.setLayoutProperty('comparison-primary-layer', 'visibility', swipeActive ? 'visible' : 'none');
+      map.setLayoutProperty('comparison-lst-layer', 'visibility', !swipeActive && comparisonMode === 'secondary' ? 'visible' : 'none');
+      map.setPaintProperty('comparison-lst-layer', 'raster-opacity', 0.9);
+      map.setLayoutProperty('comparison-difference-layer', 'visibility', comparisonMode === 'difference' && !swipeActive ? 'visible' : 'none');
+    } else {
+      for (const id of ['comparison-primary-layer', 'comparison-lst-layer', 'comparison-difference-layer']) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+      }
+    }
+    if (map.getLayer('lst-layer')) {
+      map.setLayoutProperty('lst-layer', 'visibility', visibleLst && !swipeActive && !(comparisonMode === 'difference' && differenceReady) ? 'visible' : 'none');
+      map.setPaintProperty('lst-layer', 'raster-opacity', opacity);
+      map.setPaintProperty('lst-layer', 'raster-contrast', contrast);
+    }
+    if (map.getLayer('optical-layer')) {
+      map.setLayoutProperty('optical-layer', 'visibility', visibleOptical && !swipeActive && !(comparisonMode === 'difference' && differenceReady) ? 'visible' : 'none');
+    }
+    const aoiSource = map.getSource('aoi-source') as any;
+    if (aoi.length >= 2) {
+      const coordinates = aoi.length >= 3 ? [...aoi, aoi[0]] : aoi;
+      const geometry = aoi.length >= 3 ? { type: 'Polygon', coordinates: [coordinates] } : { type: 'LineString', coordinates };
+      if (aoiSource) {
+        aoiSource.setData({ type: 'Feature', geometry, properties: {} });
+      } else {
+        map.addSource('aoi-source', { type: 'geojson', data: { type: 'Feature', geometry, properties: {} } });
+        map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', filter: ['==', '$type', 'Polygon'], paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.18 } });
+        map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
+      }
+    } else if (aoiSource) {
+      aoiSource.setData({ type: 'FeatureCollection', features: [] });
+    }
+  }, [aoi, comparisonMode, comparisonPrimary, comparisonSecondary, contrast, differenceReady, differenceRender, lstUrl, opacity, opticalUrl, raster, swipeActive, visibleLst, visibleOptical]);
+
+  useEffect(() => {
+    const container = curtainContainerRef.current;
+    const main = mapInstance.current;
+    if (!container || !main || !swipeActive || !comparisonSecondary || !differenceReady) {
+      curtainMapRef.current?.remove();
+      curtainMapRef.current = null;
+      return;
+    }
+    const curtainMap = new maplibregl.Map({
+      container,
+      style: { version: 8, sources: {}, layers: [] },
+      center: main.getCenter(),
+      zoom: main.getZoom(),
+      bearing: main.getBearing(),
+      pitch: main.getPitch(),
+      interactive: false,
+      attributionControl: false,
+    });
+    const syncCamera = () => curtainMap.jumpTo({ center: main.getCenter(), zoom: main.getZoom(), bearing: main.getBearing(), pitch: main.getPitch() });
+    const addCurtainLayer = () => {
+      curtainMap.addSource('curtain-secondary-raster', { type: 'image', url: comparisonSecondary.lstUrl, coordinates: comparisonSecondary.bounds });
+      curtainMap.addLayer({ id: 'curtain-secondary-layer', type: 'raster', source: 'curtain-secondary-raster', paint: { 'raster-opacity': 1 } });
+      syncCamera();
+    };
+    curtainMap.on('load', addCurtainLayer);
+    main.on('move', syncCamera);
+    curtainMapRef.current = curtainMap;
+    return () => {
+      main.off('move', syncCamera);
+      curtainMap.remove();
+      curtainMapRef.current = null;
+    };
+  }, [comparisonSecondary, differenceReady, swipeActive]);
+
+  useEffect(() => {
+    const source = mapInstance.current?.getSource('basemap') as any;
+    if (source?.setTiles) source.setTiles([TILE_URLS[provider]]);
+  }, [provider]);
+
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map) return;
+    const locked = drawAoi || identifyMode;
+    if (locked) {
+      map.dragPan.disable();
+      map.scrollZoom.disable();
+      map.boxZoom.disable();
+      map.doubleClickZoom.disable();
+      map.dragRotate.disable();
+      map.keyboard.disable();
+      map.touchZoomRotate.disable();
+      map.getCanvas().style.cursor = 'crosshair';
+    } else {
+      if (panEnabled) map.dragPan.enable();
+      else map.dragPan.disable();
+      map.scrollZoom.enable();
+      map.boxZoom.enable();
+      map.doubleClickZoom.enable();
+      map.dragRotate.enable();
+      map.keyboard.enable();
+      map.touchZoomRotate.enable();
+      map.getCanvas().style.cursor = '';
+    }
+  }, [drawAoi, identifyMode, panEnabled]);
+
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || (!raster && !differenceReady)) return;
+    if (map.isStyleLoaded()) syncLayers();
+    else map.once('load', syncLayers);
+    return () => {
+      map.off('load', syncLayers);
+    };
+  }, [lstUrl, opticalUrl, raster, differenceReady, syncLayers]);
+
+  useEffect(() => {
+    const viewExtent = extent ?? (comparisonPrimary ? boundsExtent(comparisonPrimary.bounds) : null);
+    if (mapInstance.current && viewExtent) {
+      mapInstance.current.fitBounds(
+        [[viewExtent.west, viewExtent.south], [viewExtent.east, viewExtent.north]],
+        { padding: 70, duration: 850, maxZoom: 16 },
+      );
+    }
+  }, [comparisonPrimary, extent, raster]);
+
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const source = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
+    const coordinates = aoi.length >= 3 ? [...aoi, aoi[0]] : aoi.length ? [...aoi, aoi[0]] : [];
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: coordinates.length
+        ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: [coordinates] } }]
+        : [],
+    };
+    if (source) {
+      source.setData(data);
+    } else {
+      map.addSource('aoi-source', { type: 'geojson', data });
+      map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.15 } });
+      map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
+    }
+  }, [aoi]);
+
+  useEffect(() => {
+    if (raster) {
+      setUhiSurface(buildUhiSurface({ data: raster.data, width: raster.width, height: raster.height, bounds: raster.bounds, mean: raster.stats.mean, stdDev: raster.stats.stdDev }));
+      setIsotherms(buildMesoIsothermsGeoJSON(raster.data, raster.width, raster.height, raster.bounds, raster.stats.mean, raster.stats.stdDev));
+    } else {
+      setUhiSurface(null);
+      setIsotherms(null);
+    }
+  }, [raster]);
+
+  useEffect(() => {
+    if (!raster) return;
+    const canvas = document.createElement('canvas');
+    if (displayMode === 'uhi') {
+      renderHighDefUhiToCanvas(raster.data, raster.width, raster.height, canvas, raster.stats.mean, raster.stats.stdDev);
+    } else {
+      renderLstToCanvas(raster.data, raster.width, raster.height, canvas, palette, customColors);
+    }
+    lstCanvas.current = canvas;
+    setLstUrl(canvas.toDataURL('image/png'));
+  }, [customColors, displayMode, palette, raster]);
+
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || !isotherms) return;
+    const syncIsotherms = () => {
+      if (!map.isStyleLoaded()) return;
+      const source = map.getSource('uhi-surface') as maplibregl.GeoJSONSource | undefined;
+      if (source) {
+        source.setData(isotherms as any);
+      } else {
+        map.addSource('uhi-surface', { type: 'geojson', data: isotherms as any });
+        map.addLayer({
+          id: 'uhi-surface-casing',
+          type: 'line',
+          source: 'uhi-surface',
+          paint: { 'line-color': '#061014', 'line-opacity': 0.85, 'line-width': 3.4 },
+        });
+        map.addLayer({
+          id: 'uhi-surface-line',
+          type: 'line',
+          source: 'uhi-surface',
+          paint: { 'line-color': ['get', 'color'], 'line-opacity': 0.96, 'line-width': 1.9 },
+        });
+      }
+      const vis = uhiSurfaceVisible ? 'visible' : 'none';
+      if (map.getLayer('uhi-surface-casing')) map.setLayoutProperty('uhi-surface-casing', 'visibility', vis);
+      if (map.getLayer('uhi-surface-line')) map.setLayoutProperty('uhi-surface-line', 'visibility', vis);
+    };
+    if (map.isStyleLoaded()) syncIsotherms();
+    else map.once('load', syncIsotherms);
+    return () => {
+      map.off('load', syncIsotherms);
+    };
+  }, [isotherms, uhiSurfaceVisible]);
+
+  const handleFileChange = async (selected: File | null) => {
+    setFile(selected);
+    setError('');
+    setSearchResults([]);
+    if (!selected) return;
+    setStatus(lang === 'pt' ? 'Lendo bandas e metadados…' : 'Reading bands and metadata…');
+    try {
+      const preview = await readTiffPixels(selected);
+      const count = preview.rasters.length;
+      setBandCount(count);
+      setBandLabels(preview.bandLabels);
+      const standardTenBand =
+        preview.bandLabels.length === 10 &&
+        preview.bandLabels[2]?.includes('B04') &&
+        preview.bandLabels[6]?.includes('B08') &&
+        preview.bandLabels[8]?.includes('B11') &&
+        preview.bandLabels[9]?.includes('B12');
+      setBands(
+        standardTenBand
+          ? ['2', '6', '8']
+          : (prev) => prev.map((value, index) => (Number(value) < count ? value : String(Math.max(0, count - 1 - index)))),
+      );
+      setStatus(lang === 'pt' ? `${count} bandas detectadas — confirme Red, NIR e SWIR.` : `${count} bands detected — confirm Red, NIR and SWIR.`);
+    } catch {
+      setError(lang === 'pt' ? 'Não foi possível ler as bandas deste GeoTIFF.' : 'Unable to read the bands from this GeoTIFF.');
+      setStatus('');
+    }
+  };
+
+  const closeTutorial = () => {
+    setShowTutorial(false);
+    sessionStorage.setItem('sr2d4-tutorial-seen', '1');
+  };
+
+  const updateComparisonCount = (value: number) => {
+    setComparisonCount(value);
+    setComparisonFiles((previous) => Array.from({ length: value }, (_, index) => previous[index] ?? null));
+    setComparisonImages([]);
+    setDifferenceReady(false);
+  };
+
+  const calculateComparisons = async () => {
+    const selected = comparisonFiles.filter((item): item is File => Boolean(item));
+    if (selected.length < 2) {
+      setError(lang === 'pt' ? 'Selecione pelo menos duas imagens para comparar.' : 'Select at least two images to compare.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setDifferenceReady(false);
+    setComparisonMode('difference');
+    const loaded: ComparisonImage[] = [];
+    for (let index = 0; index < selected.length; index += 1) {
+      const selectedFile = selected[index];
+      setStatus(lang === 'pt' ? `Buscando Landsat para ${selectedFile.name}…` : `Finding Landsat for ${selectedFile.name}…`);
+      try {
+        const automatic = await buildAutomaticThermalRaster(selectedFile, [Number(bands[0]), Number(bands[1]), Number(bands[2])]);
+        const lst = document.createElement('canvas');
+        const optical = document.createElement('canvas');
+        const stats = renderLstToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, palette, customColors);
+        renderRGBBasemapToCanvas(
+          automatic.tiff.rasters[Number(bands[2])] as Float32Array,
+          automatic.tiff.rasters[Number(bands[1])] as Float32Array,
+          automatic.tiff.rasters[Number(bands[0])] as Float32Array,
+          automatic.tiff.width,
+          automatic.tiff.height,
+          optical,
+        );
+        if (!stats) continue;
+        const uhi = buildUhiSurface({
+          data: automatic.result.lstDownscaled,
+          width: automatic.tiff.width,
+          height: automatic.tiff.height,
+          bounds: automatic.bounds,
+          mean: stats.mean,
+          stdDev: stats.stdDev,
+        });
+        loaded.push({
+          id: `${selectedFile.name}-${selectedFile.lastModified}-${index}`,
+          name: selectedFile.name,
+          dateLabel: imageDateLabel(selectedFile.name, index),
+          lstUrl: lst.toDataURL('image/png'),
+          opticalUrl: optical.toDataURL('image/png'),
+          uhiSurface: uhi,
+          bounds: automatic.bounds,
+          width: automatic.tiff.width,
+          height: automatic.tiff.height,
+          data: automatic.result.lstDownscaled,
+          stats,
+        });
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      } catch {
+        /* ignora falha individual */
+      }
+    }
+    setComparisonImages(loaded);
+    setDifferenceReady(loaded.length >= 2);
+    if (loaded.length < 2) {
+      setError(lang === 'pt' ? 'Não foi possível processar duas imagens SR2D4 com Landsat automático válido.' : 'Could not process two SR2D4 images with valid automatic Landsat.');
+      setStatus('');
+    } else {
+      setStatus(lang === 'pt' ? 'Diferença térmica pronta.' : 'Thermal difference ready.');
+    }
+    setBusy(false);
+  };
+
+  const calculateDifference = () => {
+    void calculateComparisons();
+  };
+
+  const getAoiWindow = () => {
+    if (!raster || aoi.length < 3 || !extent) return null;
+    let west = Infinity;
+    let east = -Infinity;
+    let south = Infinity;
+    let north = -Infinity;
+    for (const point of aoi) {
+      west = Math.min(west, point[0]);
+      east = Math.max(east, point[0]);
+      south = Math.min(south, point[1]);
+      north = Math.max(north, point[1]);
+    }
+    const x0 = Math.max(0, Math.floor(((west - extent.west) / (extent.east - extent.west)) * raster.width));
+    const x1 = Math.min(raster.width, Math.ceil(((east - extent.west) / (extent.east - extent.west)) * raster.width));
+    const y0 = Math.max(0, Math.floor(((extent.north - north) / (extent.north - extent.south)) * raster.height));
+    const y1 = Math.min(raster.height, Math.ceil(((extent.north - south) / (extent.north - extent.south)) * raster.height));
+    return { x0, y0, width: Math.max(1, x1 - x0), height: Math.max(1, y1 - y0) };
+  };
+
+  const exportAoiPng = () => {
+    const win = getAoiWindow();
+    if (!win || !lstCanvas.current || !opticalCanvas.current) return;
+    const output = document.createElement('canvas');
+    output.width = win.width;
+    output.height = win.height + 200;
+    const ctx = output.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(opticalCanvas.current, win.x0, win.y0, win.width, win.height, 0, 0, win.width, win.height);
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(lstCanvas.current, win.x0, win.y0, win.width, win.height, 0, 0, win.width, win.height);
+    ctx.globalAlpha = 1;
+    drawLegend(ctx, 16, win.height + 10);
+    const link = document.createElement('a');
+    link.href = output.toDataURL('image/png');
+    link.download = `SR2D4-AOI-${displayMode === 'uhi' ? 'UHI-classes' : `LST-${palette}`}.png`;
+    link.click();
+  };
+
+  const exportAoiTiff = () => {
+    const win = getAoiWindow();
+    if (!win || !raster) return;
+    const clipped = new Float32Array(win.width * win.height);
+    for (let y = 0; y < win.height; y += 1) {
+      clipped.set(raster.data.subarray((win.y0 + y) * raster.width + win.x0, (win.y0 + y) * raster.width + win.x0 + win.width), y * win.width);
+    }
+    const outputData =
+      displayMode === 'uhi'
+        ? clipped.map((value) =>
+            value < raster.stats.mean
+              ? 1
+              : value < raster.stats.mean + 0.5 * raster.stats.stdDev
+                ? 2
+                : value < raster.stats.mean + 1.5 * raster.stats.stdDev
+                  ? 3
+                  : 4,
+          )
+        : clipped;
+    downloadFloat32Tiff(
+      outputData instanceof Float32Array ? outputData : new Float32Array(outputData),
+      win.width,
+      win.height,
+      `SR2D4-AOI-${displayMode}.tif`,
+      [raster.origin[0] + win.x0 * raster.resolution[0], raster.origin[1] + win.y0 * raster.resolution[1], raster.origin[2] || 0],
+      raster.resolution,
+      raster.epsg,
+      raster.isProjected,
+    );
+  };
+
+  const exportVectorIsotherms = (format: 'geojson' | 'kml') => {
+    if (!isotherms) return;
+    if (format === 'geojson') {
+      const blob = new Blob([JSON.stringify(isotherms, null, 2)], { type: 'application/geo+json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'SR2D4-Isotermas-Meso.geojson';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } else {
+      const placemarks = isotherms.features
+        .map((f) => {
+          const linesXml = f.geometry.coordinates
+            .map((seg) => `<LineString><coordinates>${seg.map((c) => `${c[0]},${c[1]},0`).join(' ')}</coordinates></LineString>`)
+            .join('');
+          return `<Placemark><name>${f.properties.label}</name><description>Isoterma Meso-escala: ${f.properties.tempCelsius}°C</description><Style><LineStyle><color>${f.properties.kmlColor}</color><width>2.5</width></LineStyle></Style><MultiGeometry>${linesXml}</MultiGeometry></Placemark>`;
+        })
+        .join('');
+      const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>SR2D4 Isotermas e Clusters Meso-escala</name>${placemarks}</Document></kml>`;
+      const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'SR2D4-Isotermas-Meso.kml';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+  };
+
+  const processFile = async (selectedFile: File = file as File) => {
+    if (!selectedFile) return;
+    const addLog = (message: string, level: 'info' | 'success' | 'error' = 'info') => {
+      setProcessingLog((previous) => [...previous.slice(-99), { time: new Date().toLocaleTimeString('pt-BR'), message, level }]);
+      setStatus(message);
+    };
+    setProcessingLog([]);
+    setBusy(true);
+    setError('');
+    addLog(`Iniciando processamento: ${selectedFile.name}`);
+    try {
+      const automatic = await buildAutomaticThermalRaster(selectedFile, [Number(bands[0]), Number(bands[1]), Number(bands[2])], addLog);
+      addLog(
+        `${automatic.landsat.satellite} ${automatic.landsat.acquisitionDate} selecionado · ${automatic.landsat.validThermalPixels.toLocaleString()} pixels válidos · ${automatic.result.model} · saída na resolução do SR2D4 (${automatic.tiff.isProjected ? `${Math.abs(automatic.tiff.resolution[0]).toFixed(2)} m/pixel` : `${Math.abs(automatic.tiff.resolution[0]).toFixed(6)} graus/pixel`})`,
+      );
+      const lst = document.createElement('canvas');
+      const optical = document.createElement('canvas');
+      const stats = renderLstToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, palette, customColors);
+      if (displayMode === 'uhi' && stats) {
+        renderHighDefUhiToCanvas(automatic.result.lstDownscaled, automatic.tiff.width, automatic.tiff.height, lst, stats.mean, stats.stdDev);
+      }
+      renderRGBBasemapToCanvas(
+        automatic.tiff.rasters[Number(bands[2])] as Float32Array,
+        automatic.tiff.rasters[Number(bands[1])] as Float32Array,
+        automatic.tiff.rasters[Number(bands[0])] as Float32Array,
+        automatic.tiff.width,
+        automatic.tiff.height,
+        optical,
+      );
+      if (!stats) throw new Error('empty raster');
+      const next: RasterState = {
+        data: automatic.result.lstDownscaled,
+        width: automatic.tiff.width,
+        height: automatic.tiff.height,
+        bounds: automatic.bounds,
+        origin: automatic.tiff.origin,
+        resolution: automatic.tiff.resolution,
+        epsg: automatic.tiff.epsg,
+        isProjected: automatic.tiff.isProjected,
+        stats,
+        ndvi: automatic.indices.ndvi,
+        ndbi: automatic.indices.ndbi,
+        fileName: `${selectedFile.name} · ${automatic.landsat.itemId}`,
+        bands: automatic.tiff.rasters.length,
+      };
+      lstCanvas.current = lst;
+      opticalCanvas.current = optical;
+      setRaster(next);
+      setAoi([]);
+      setLstUrl(lst.toDataURL('image/png'));
+      setOpticalUrl(optical.toDataURL('image/png'));
+      addLog(t.ready, 'success');
+    } catch (e) {
+      console.error(e);
+      const message = e instanceof Error ? e.message : t.error;
+      setError(message);
+      addLog(message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const histogram = useMemo(() => {
+    if (!raster) return [];
+    const bins = Array.from({ length: 10 }, () => 0);
+    const rangeVal = raster.stats.max - raster.stats.min || 1;
+    raster.data.forEach((v) => {
+      if (Number.isFinite(v)) bins[Math.min(9, Math.floor(((v - raster.stats.min) / rangeVal) * 10))]++;
+    });
+    const peak = Math.max(bins.reduce((maximum, value) => Math.max(maximum, value), 0), 1);
+    return bins.map((value, i) => ({
+      value,
+      height: Math.max(4, (value / peak) * 100),
+      label: `${(raster.stats.min + ((raster.stats.max - raster.stats.min) * i) / 10).toFixed(0)}°`,
+    }));
+  }, [raster]);
+
+  const legendStops = (selected: PaletteType) => {
+    const stops: Record<string, string[]> = {
+      ironbow: ['#000082', '#780078', '#cc0000', '#ffcc00', '#ffffff'],
+      spectral: ['#5e4fa2', '#3288bd', '#66c2a5', '#fdd486', '#f46d43', '#9e0142'],
+      jet: ['#000082', '#00ffff', '#00ff00', '#ffff00', '#ff0000'],
+      viridis: ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725'],
+      magma: ['#000004', '#340f4b', '#7b206b', '#ca464a', '#fcfdbf'],
+      coolwarm: ['#3b4cc0', '#dddddd', '#b40426'],
+      terrain: ['#225ea8', '#53a85d', '#dcbe68', '#8b261f'],
+      grayscale: ['#050505', '#ffffff'],
+      custom: customColors,
+    };
+    return stops[selected] || stops.ironbow;
+  };
+
+  const drawDifferenceLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, stats: { min: number; max: number }) => {
+    const height = 132;
+    const extVal = Math.max(Math.abs(stats.min), Math.abs(stats.max));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillStyle = '#202428';
+    ctx.font = '700 22px Arial';
+    ctx.fillText('DIFERENÇA (DATA 2 − DATA 1) · °C', x + 18, y + 30);
+    const gradient = ctx.createLinearGradient(x + 18, y + 62, x + width - 18, y + 62);
+    gradient.addColorStop(0, '#2166ac');
+    gradient.addColorStop(0.5, '#f7f7f7');
+    gradient.addColorStop(1, '#b2182b');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x + 18, y + 48, width - 36, 22);
+    ctx.strokeStyle = '#777';
+    ctx.strokeRect(x + 18, y + 48, width - 36, 22);
+    ctx.fillStyle = '#2166ac';
+    ctx.font = '600 16px Arial';
+    ctx.fillText(`-${extVal.toFixed(1)} °C · resfriamento`, x + 18, y + 96);
+    ctx.fillStyle = '#555';
+    ctx.textAlign = 'center';
+    ctx.fillText('0 °C · estável', x + width / 2, y + 96);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#b2182b';
+    ctx.fillText(`+${extVal.toFixed(1)} °C · aquecimento`, x + width - 18, y + 96);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#202428';
+    ctx.font = '14px Arial';
+    ctx.fillText('Valores positivos: a imagem 2 está mais quente. Valores negativos: a imagem 2 está mais fria.', x + 18, y + 119);
+  };
+
+  const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
+    const height = 180;
+    const width = Math.min(760, Math.max(360, ctx.canvas.width - x - 24));
+    const pad = 26;
+    ctx.fillStyle = 'rgba(7,19,23,.96)';
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = 'rgba(121,226,220,.7)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 29px Arial';
+    const title = displayMode === 'uhi' ? 'UHI · INTENSIDADE DE ILHA DE CALOR (1m)' : 'LST · TEMPERATURA DA SUPERFÍCIE (°C)';
+    ctx.fillText(title, x + pad, y + 43);
+    if (displayMode === 'uhi') {
+      const items: [string, string][] = [
+        ['Frescor', '#185a9d'],
+        ['Amenizado', '#2b8c68'],
+        ['Neutro', '#f7e28b'],
+        ['Moderada', '#f48438'],
+        ['Forte', '#d72626'],
+        ['Hotspot', '#fff2af'],
+      ];
+      const itemWidth = (width - pad * 2) / items.length;
+      items.forEach(([label, color], index) => {
+        const itemX = x + pad + index * itemWidth;
+        ctx.fillStyle = color;
+        ctx.fillRect(itemX, y + 66, 24, 24);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '600 18px Arial';
+        ctx.fillText(label, itemX + 30, y + 85);
+      });
+      ctx.fillStyle = '#b7c9cb';
+      ctx.font = '16px Arial';
+      ctx.fillText('Níveis UHI em 1m relativos à média e ao desvio-padrão da cena', x + pad, y + 139);
+    } else {
+      const gradient = ctx.createLinearGradient(x + pad, y + 84, x + width - pad, y + 84);
+      legendStops(palette).forEach((color, index, colors) => gradient.addColorStop(index / Math.max(colors.length - 1, 1), color));
+      ctx.fillStyle = gradient;
+      ctx.fillRect(x + pad, y + 67, width - pad * 2, 38);
+      ctx.strokeStyle = 'rgba(255,255,255,.7)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + pad, y + 67, width - pad * 2, 38);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '600 20px Arial';
+      ctx.fillText(`${raster?.stats.min.toFixed(1) ?? '—'} °C`, x + pad, y + 139);
+      ctx.textAlign = 'right';
+      ctx.fillText(`${raster?.stats.max.toFixed(1) ?? '—'} °C`, x + width - pad, y + 139);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#b7c9cb';
+      ctx.font = '16px Arial';
+      ctx.fillText(`Paleta: ${palette === 'custom' ? 'Custom' : palette}`, x + pad, y + 164);
+    }
+  };
+
+  const exportPng = () => {
+    if (!lstCanvas.current || !opticalCanvas.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = lstCanvas.current.width;
+    canvas.height = lstCanvas.current.height + 200;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#071317';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(opticalCanvas.current, 0, 0);
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(lstCanvas.current, 0, 0);
+    ctx.globalAlpha = 1;
+    drawLegend(ctx, 16, canvas.height - 190);
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `SR2D4-${displayMode === 'uhi' ? 'UHI-classes' : `LST-${palette}`}.png`;
+    a.click();
+  };
+
+  const goTo = (lng: number, lat: number) => {
+    if (Number.isFinite(lng) && Number.isFinite(lat)) mapInstance.current?.flyTo({ center: [lng, lat], zoom: 13, essential: true });
+  };
+
+  const locateMe = () =>
+    navigator.geolocation?.getCurrentPosition(
+      ({ coords }) => goTo(coords.longitude, coords.latitude),
+      () => setSearchError(lang === 'pt' ? 'Permita o acesso à localização no navegador.' : 'Allow location access in your browser.'),
+    );
+
+  const searchPlace = async () => {
+    if (!search.trim()) return;
+    setSearching(true);
+    setSearchError('');
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=${lang === 'pt' ? 'pt-BR' : 'en'}&q=${encodeURIComponent(search.trim())}`,
+      );
+      const results = (await response.json()) as SearchResult[];
+      setSearchResults(results);
+      if (results[0]) goTo(Number(results[0].lon), Number(results[0].lat));
+      else setSearchError(t.searchError);
+    } catch {
+      setSearchError(t.searchError);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const startCurtainDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!swipeActive || !differenceReady) return;
+    event.preventDefault();
+    event.stopPropagation();
+    curtainDragging.current = true;
+    document.body.classList.add('is-curtain-dragging');
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const goToCoordinates = () => {
+    const values = coordText.split(/[,;\s]+/).map(Number);
+    if (values.length >= 2) goTo(values[0], values[1]);
+  };
+
+  const zoomIn = () => mapInstance.current?.zoomIn();
+  const zoomOut = () => mapInstance.current?.zoomOut();
+
+  const togglePan = () => {
+    if (drawAoi || identifyMode) return;
+    const next = !panEnabled;
+    setPanEnabled(next);
+    if (next) mapInstance.current?.dragPan.enable();
+    else mapInstance.current?.dragPan.disable();
+  };
+
+  const toggleIdentify = () => {
+    const next = !identifyMode;
+    setIdentifyMode(next);
+    setHoverSample(null);
+    if (next) {
+      setPanEnabled(false);
+      mapInstance.current?.dragPan.disable();
+    } else {
+      setPanEnabled(true);
+      mapInstance.current?.dragPan.enable();
+    }
+  };
+
+  const visibleBandCount = raster?.bands ?? bandCount;
+  const displayBandLabels =
+    bandLabels.length === visibleBandCount
+      ? bandLabels
+      : Array.from({ length: visibleBandCount }, (_, i) => `${lang === 'pt' ? 'Camada' : 'Layer'} ${String(i + 1).padStart(2, '0')} · ${lang === 'pt' ? 'nome ausente' : 'name missing'}`);
+  const isStandardSr2d4TenBand =
+    displayBandLabels.length === 10 &&
+    displayBandLabels[2]?.includes('B04') &&
+    displayBandLabels[6]?.includes('B08') &&
+    displayBandLabels[8]?.includes('B11') &&
+    displayBandLabels[9]?.includes('B12');
+  const hasSpectralMetadata = displayBandLabels.some((label) => /B(?:and)?[-_ ]?0?[1-9]|B(?:and)?[-_ ]?1[0-2]|red|nir|swir/i.test(label));
+  const options = Array.from({ length: visibleBandCount }, (_, i) => (
+    <option value={i} key={i}>
+      {displayBandLabels[i]}
+    </option>
+  ));
+
+  const updateBand = (index: number, value: string) => setBands((prev) => prev.map((v, i) => (i === index ? value : v)));
+
+  const restoreMapNavigation = () => {
+    mapInstance.current?.dragPan.enable();
+    mapInstance.current?.scrollZoom.enable();
+    mapInstance.current?.doubleClickZoom.enable();
+    mapInstance.current?.touchZoomRotate.enable();
+    setPanEnabled(true);
+  };
+
+  const pauseMapNavigation = () => {
+    mapInstance.current?.dragPan.disable();
+    mapInstance.current?.scrollZoom.disable();
+    mapInstance.current?.doubleClickZoom.disable();
+    mapInstance.current?.touchZoomRotate.disable();
+    setPanEnabled(false);
+  };
+
+  const clearAoi = () => {
+    setAoi([]);
+    setDrawAoi(false);
+    restoreMapNavigation();
+  };
+
+  const finishAoi = () => {
+    if (aoi.length >= 3) {
+      setDrawAoi(false);
+      restoreMapNavigation();
+    }
+  };
+
+  const toggleAoi = () => {
+    const next = !drawAoi;
+    setDrawAoi(next);
+    setIdentifyMode(false);
+    setAoi(next ? [] : aoi);
+    setAoiStats(null);
+    if (next) pauseMapNavigation();
+    else restoreMapNavigation();
+  };
+
+  const analyzeAoi = () => {
+    if (!raster || aoi.length < 3 || !extent) return;
+    const values: number[] = [];
+    raster.data.forEach((value, index) => {
+      const lng = extent.west + ((index % raster.width) / raster.width) * (extent.east - extent.west);
+      const lat = extent.north - (Math.floor(index / raster.width) / raster.height) * (extent.north - extent.south);
+      if (pointInPolygon([lng, lat], aoi) && Number.isFinite(value)) values.push(value);
+    });
+    if (!values.length) {
+      setAoiStats(null);
+      return;
+    }
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const value of values) {
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+    }
+    const stats = { count: values.length, min, max, mean };
+    setAoiStats(stats);
+    setStatus(lang === 'pt' ? `AOI analisada · ${values.length.toLocaleString()} pixels` : `AOI analyzed · ${values.length.toLocaleString()} pixels`);
+  };
+
+  const downloadReport = () => {
+    if (!raster || !lstCanvas.current || !opticalCanvas.current) return;
+    let vegetation = 0;
+    let built = 0;
+    let water = 0;
+    let valid = 0;
+    raster.ndvi.forEach((value, index) => {
+      const ndbi = raster.ndbi[index];
+      if (!Number.isFinite(value) || !Number.isFinite(ndbi)) return;
+      valid++;
+      if (value > 0.3) vegetation++;
+      else if (value < 0 && ndbi < 0) water++;
+      else if (ndbi > 0.1) built++;
+    });
+    const pct = (value: number) => (valid ? ((value / valid) * 100).toFixed(1) : '0.0');
+    const image = document.createElement('canvas');
+    image.width = lstCanvas.current.width;
+    image.height = lstCanvas.current.height;
+    const imageCtx = image.getContext('2d');
+    if (!imageCtx) return;
+    imageCtx.drawImage(opticalCanvas.current, 0, 0);
+    imageCtx.globalAlpha = opacity;
+    imageCtx.drawImage(lstCanvas.current, 0, 0);
+    imageCtx.globalAlpha = 1;
+    const report = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Relatório SR2D4 / LST</title><style>body{font:15px Arial;color:#17343a;max-width:1050px;margin:0 auto;padding:35px}h1{color:#b96800}h2{border-bottom:2px solid #d7e4e2;padding-bottom:7px}.hero{width:100%;border-radius:8px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{padding:14px;background:#edf5f2;border-radius:7px}.metric b{display:block;font-size:24px;color:#b96800}.bar{height:20px;background:#55a58c;margin:6px 0;border-radius:3px}.note{padding:14px;background:#fff4d4;border-left:4px solid #ffb000}</style><h1>SR2D4 / LST Explorer</h1><p><b>Relatório técnico para apoio à gestão térmica urbana</b></p><p>Arquivo: ${raster.fileName} · EPSG:${raster.epsg} · ${raster.width} × ${raster.height} pixels</p><img class="hero" src="${image.toDataURL('image/png')}" alt="Mapa composto LST e imagem óptica"><h2>Resumo térmico</h2><div class="grid"><div class="metric">Mínima<b>${raster.stats.min.toFixed(1)} °C</b></div><div class="metric">Média<b>${raster.stats.mean.toFixed(1)} °C</b></div><div class="metric">Máxima<b>${raster.stats.max.toFixed(1)} °C</b></div><div class="metric">Desvio-padrão<b>${raster.stats.stdDev.toFixed(2)} °C</b></div></div><h2>Perfil espacial estimado</h2><p>Proporções calculadas a partir dos índices ópticos disponíveis; são indicadores de triagem, não classificação temática definitiva.</p><p>Vegetação (NDVI &gt; 0,3): <b>${pct(vegetation)}%</b></p><div class="bar" style="width:${pct(vegetation)}%"></div><p>Superfícies construídas (NDBI &gt; 0,1): <b>${pct(built)}%</b></p><div class="bar" style="width:${pct(built)}%;background:#d77951"></div><p>Possível água/superfície escura (NDVI e NDBI &lt; 0): <b>${pct(water)}%</b></p><div class="bar" style="width:${pct(water)}%;background:#4b87b9"></div><h2>Implicações para gestão</h2><ul><li>Priorizar inspeção de hotspots acima de ${(raster.stats.mean + 1.5 * raster.stats.stdDev).toFixed(1)} °C.</li><li>Comparar áreas construídas com parques e corredores de arborização.</li><li>Avaliar sombreamento, pavimentos e telhados com dados locais complementares.</li><li>Usar a AOI para comparar setores e orientar campanhas de campo.</li></ul><div class="note"><b>Limitação:</b> com Red/NIR/SWIR, árvores, asfalto, telhados, parques e água são estimados por índices e temperatura. A distinção entre telhado e pavimento, por exemplo, exige bandas, resolução ou dados auxiliares adicionais.</div><p>Gerado em ${new Date().toLocaleString('pt-BR')} pelo SR2D4 / LST Explorer.</p></html>`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([report], { type: 'text/html' }));
+    a.download = 'SR2D4-LST-relatorio.html';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const downloadComparisonPanel = async () => {
+    if (!comparisonPrimary || !comparisonSecondary || !differenceRender) return;
+    const load = (url: string) =>
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = url;
+      });
+    const [a, b, d] = await Promise.all([load(comparisonPrimary.lstUrl), load(comparisonSecondary.lstUrl), load(differenceRender.url)]);
+    const width = 720;
+    const imageHeight = Math.round((width * a.height) / a.width);
+    const legendHeight = 150;
+    const height = imageHeight + legendHeight + 68;
+    const canvas = document.createElement('canvas');
+    canvas.width = width * 3;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#f1f1ee';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const panels = [
+      { image: a, title: `DATA A · ${comparisonPrimary.dateLabel} (LST °C)` },
+      { image: b, title: `DATA B · ${comparisonSecondary.dateLabel} (LST °C)` },
+      { image: d, title: 'DIFERENÇA (B − A) em °C' },
+    ];
+    ctx.font = '700 24px Arial';
+    ctx.textAlign = 'center';
+    panels.forEach((panel, index) => {
+      const x = index * width;
+      ctx.fillStyle = '#202428';
+      ctx.fillText(panel.title, x + width / 2, 34);
+      ctx.drawImage(panel.image, x + 12, 52, width - 24, imageHeight - 24);
+      ctx.strokeStyle = '#777';
+      ctx.strokeRect(x + 8, 44, width - 16, imageHeight + 36);
+      if (index === 2) {
+        drawDifferenceLegend(ctx, x + 12, imageHeight + 48, width - 24, differenceStats ?? { min: 0, max: 0 });
+      } else {
+        const stats = index === 0 ? comparisonPrimary.stats : comparisonSecondary.stats;
+        const gradient = ctx.createLinearGradient(x + 24, imageHeight + 72, x + width - 24, imageHeight + 72);
+        legendStops(palette).forEach((color, stopIndex, colors) => gradient.addColorStop(stopIndex / Math.max(colors.length - 1, 1), color));
+        ctx.fillStyle = gradient;
+        ctx.fillRect(x + 24, imageHeight + 62, width - 48, 18);
+        ctx.fillStyle = '#202428';
+        ctx.font = '600 16px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${stats.min.toFixed(1)} °C`, x + 24, imageHeight + 108);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${stats.max.toFixed(1)} °C`, x + width - 24, imageHeight + 108);
+        ctx.textAlign = 'left';
+      }
+    });
+    const link = document.createElement('a');
+    link.href = canvas.toDataURL('image/png');
+    link.download = `mapa-diferenca-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`;
+    link.click();
+  };
+
+  const uhiLevel = raster ? raster.stats.mean + 1.5 * raster.stats.stdDev : 0;
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand">
+          <LogoMark />
+          <div>
+            <span className="eyebrow">{t.eyebrow}</span>
+            <h1>{t.title}</h1>
+          </div>
+        </div>
+        <div className="top-actions">
+          <span className={`status-dot ${raster ? 'active' : ''}`} />
+          <span className="status-label">{status || (raster ? t.ready : t.noData)}</span>
+          <button className="icon-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title={t.theme}>
+            <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+          </button>
+          <button className="lang-button" onClick={() => setLang(lang === 'pt' ? 'en' : 'pt')}>
+            {lang === 'pt' ? 'EN' : 'PT'}
+          </button>
+        </div>
+      </header>
+
+      <div className="intro-strip">
+        <div>
+          <strong>{t.subtitle}</strong>
+          <span>
+            {raster
+              ? `${raster.fileName} · ${raster.width.toLocaleString()} × ${raster.height.toLocaleString()} px · EPSG:${raster.epsg}`
+              : 'Local-first analysis for SR2D4 multispectral products'}
+          </span>
+        </div>
+        <a className="colab-button" href={COLAB_URL} target="_blank" rel="noreferrer">
+          ↗ {t.colab}
+        </a>
+      </div>
+
+      <main className="workspace" style={{ '--rail-width': `${panelWidth}px` } as React.CSSProperties}>
+        <section className="map-stage">
+          <div ref={mapRef} className={`map-container ${identifyMode ? 'identify-active' : ''}`} />
+          {swipeActive && differenceReady && (
+            <div className="curtain-map" ref={curtainContainerRef} style={{ clipPath: `inset(0 0 0 ${swipePosition}%)` }} aria-label="Imagem da data 2" />
+          )}
+          {swipeActive && differenceReady && (
+            <>
+              <div className="curtain-label curtain-left">{comparisonPrimary?.dateLabel ?? 'DATA A'}</div>
+              <div className="curtain-label curtain-right">{comparisonSecondary?.dateLabel ?? 'DATA B'}</div>
+              <div
+                className="curtain-divider"
+                style={{ left: `${swipePosition}%` }}
+                onPointerDown={startCurtainDrag}
+                role="slider"
+                aria-label={lang === 'pt' ? 'Arrastar cortina entre data 1 e data 2' : 'Drag curtain between date 1 and date 2'}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={swipePosition}
+                tabIndex={0}
+              />
+            </>
+          )}
+          {showSearch ? (
+            <div className="map-search">
+              <div className="search-line">
+                <Icon name="search" />
+                <input value={search} placeholder={t.search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchPlace()} />
+                <button onClick={searchPlace} disabled={searching}>
+                  {searching ? '…' : t.go}
+                </button>
+                <button
+                  className="search-close"
+                  onClick={() => {
+                    setShowSearch(false);
+                    setSearchResults([]);
+                  }}
+                  aria-label={lang === 'pt' ? 'Fechar busca' : 'Close search'}
+                >
+                  ×
+                </button>
+              </div>
+              {searchResults.length > 0 && (
+                <div className="search-results">
+                  {searchResults.map((result) => (
+                    <button
+                      key={`${result.lat}-${result.lon}`}
+                      onClick={() => {
+                        goTo(Number(result.lon), Number(result.lat));
+                        setSearchResults([]);
+                      }}
+                    >
+                      {result.display_name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="coord-line">
+                <Icon name="pin" />
+                <input value={coordText} placeholder={t.coords} onChange={(e) => setCoordText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && goToCoordinates()} />
+                <button onClick={goToCoordinates}>{t.go}</button>
+                <button className="gps-button" onClick={locateMe} title={t.locate}>
+                  <Icon name="gps" />
+                </button>
+              </div>
+              {searchError && <small className="search-error">{searchError}</small>}
+            </div>
+          ) : (
+            <button className="search-open" onClick={() => setShowSearch(true)} title={t.search}>
+              <Icon name="search" />
+            </button>
+          )}
+          {!raster && !differenceReady && (
+            <div className="map-empty">
+              <div className="empty-orbit">◌</div>
+              <strong>{t.noData}</strong>
+              <span>{t.uploadHint}</span>
+            </div>
+          )}
+          {raster && (
+            <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '340px', zIndex: 5 }}>
+              <span>
+                {displayMode === 'uhi'
+                  ? 'UHI · Intensidade de Ilha de Calor (1m)'
+                  : comparisonMode === 'difference' && differenceReady
+                    ? `Δ LST · ${comparisonPrimary?.dateLabel ?? 'data 1'} → ${comparisonSecondary?.dateLabel ?? 'data 2'}`
+                    : t.lst}
+              </span>
+              {comparisonMode === 'difference' && differenceReady && differenceStats ? (
+                <>
+                  <div className="difference-gradient" />
+                  <div>
+                    <b>{-differenceExtent.toFixed(1)}°C · ↓ resfria</b>
+                    <b>0°C</b>
+                    <b>+{differenceExtent.toFixed(1)}°C · ↑ aquece</b>
+                  </div>
+                  <small className="difference-note">Δ = imagem 2 − imagem 1</small>
+                </>
+              ) : displayMode === 'uhi' ? (
+                <>
+                  <div className="legend-gradient" style={{ background: uhiGradient }} />
+                  <div>
+                    <b>Frescor</b>
+                    <b>Neutro</b>
+                    <b>Forte</b>
+                    <b>Hotspot</b>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="legend-gradient" style={{ background: legendGradient }} />
+                  <div>
+                    <b>{(differenceStats?.min ?? raster.stats.min).toFixed(1)}°C</b>
+                    <b>{raster.stats.mean.toFixed(1)}°C</b>
+                    <b>{(differenceStats?.max ?? raster.stats.max).toFixed(1)}°C</b>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          <div className="map-tools">
+            <button onClick={zoomIn} title="Zoom in">＋</button>
+            <button onClick={zoomOut} title="Zoom out">−</button>
+            <button className={panEnabled ? 'active' : ''} onClick={togglePan} title="Pan">✋</button>
+            <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title="Identify">ⓘ</button>
+            <button className={drawAoi ? 'active' : ''} onClick={toggleAoi} title={t.draw}>⌗</button>
+            {drawAoi && aoi.length >= 3 && (
+              <button onClick={finishAoi} title={lang === 'pt' ? 'Finalizar desenho' : 'Finish drawing'}>✓</button>
+            )}
+            {!drawAoi && aoi.length >= 3 && (
+              <button onClick={analyzeAoi} title={t.clip}>✓</button>
+            )}
+          </div>
+        </section>
+
+        <div
+          className="resize-handle"
+          onPointerDown={() => {
+            resizing.current = true;
+            document.body.classList.add('is-resizing');
+          }}
+          title={t.resize}
+        >
+          <Icon name="resize" />
+        </div>
+
+        <aside className="control-rail">
+          <div className="rail-scroll">
+            <div className="scroll-map-tools" aria-label={lang === 'pt' ? 'Controles rápidos do mapa' : 'Quick map controls'}>
+              <button onClick={zoomIn} title="Zoom in">＋</button>
+              <button onClick={zoomOut} title="Zoom out">−</button>
+              <button className={panEnabled ? 'active' : ''} onClick={togglePan} title="Pan">✋</button>
+              <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title={lang === 'pt' ? 'Identificar temperatura' : 'Identify temperature'}>ⓘ</button>
+              <button
+                className={drawAoi ? 'active' : ''}
+                onClick={drawAoi ? finishAoi : aoi.length >= 3 ? clearAoi : toggleAoi}
+                title={drawAoi ? (lang === 'pt' ? 'Finalizar AOI' : 'Finish AOI') : aoi.length >= 3 ? t.clear : t.draw}
+              >
+                ⌗
+              </button>
+            </div>
+
+            <section className="rail-card start-card">
+              <div className="card-kicker">00 / START HERE</div>
+              <div className="card-heading">
+                <h3>{lang === 'pt' ? 'Primeiros passos' : 'Start here'}</h3>
+                <span className="chip">{tutorialStep + 1}/4</span>
+              </div>
+              <p className="microcopy">{lang === 'pt' ? 'Veja o tutorial, entenda a metodologia e depois carregue seu raster.' : 'Watch the tutorial, review the methodology, then load your raster.'}</p>
+              <div className="start-actions">
+                <button onClick={() => { setTutorialStep(0); setShowTutorial(true); }}>▶ Tutorial</button>
+                <button onClick={() => setShowMethod(true)}>◈ {t.method}</button>
+                <button onClick={() => setShowHelp(true)}>？ {t.help}</button>
+                <button onClick={() => setShowLimits(true)}>△ {t.limitation}</button>
+                <button onClick={() => setShowMeta(true)} disabled={!raster}>⌁ {t.metadata}</button>
+              </div>
+            </section>
+
+            <section className="rail-card hero-card">
+              <div className="card-kicker">01 / INPUT</div>
+              <h2>{t.upload}</h2>
+              <p>{t.uploadHint}</p>
+              <label className="file-drop" style={{ cursor: 'pointer', position: 'relative', zIndex: 10 }}>
+                <input
+                  type="file"
+                  accept=".tif,.tiff,image/tiff,application/geotiff,application/octet-stream"
+                  style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', zIndex: 12 }}
+                  onChange={(e) => void handleFileChange(e.target.files?.[0] || null)}
+                />
+                <span className="upload-icon">↑</span>
+                <strong>{file ? file.name : lang === 'pt' ? 'Escolher GeoTIFF' : 'Choose GeoTIFF'}</strong>
+                <small>
+                  {file
+                    ? `${(file.size / 1024 / 1024).toFixed(1)} MB · ${visibleBandCount} ${lang === 'pt' ? 'bandas detectadas' : 'bands detected'}`
+                    : 'TIFF / BigTIFF supported by GeoTIFF reader'}
+                </small>
+              </label>
+
+              <div className="band-grid">
+                <h3>{t.bands}</h3>
+                <label title={lang === 'pt' ? 'Selecione a banda vermelha do sensor. Em Sentinel-2, normalmente Banda 04.' : 'Select the sensor red band. In Sentinel-2, usually Band 04.'}>
+                  {t.red}
+                  <small className="band-role">{lang === 'pt' ? 'selecione a camada identificada como Red/B04' : 'select the layer identified as Red/B04'}</small>
+                  <select value={bands[0]} onChange={(e) => updateBand(0, e.target.value)}>{options}</select>
+                </label>
+                <label title={lang === 'pt' ? 'Selecione a banda NIR. Em Sentinel-2, normalmente Banda 08.' : 'Select the NIR band. In Sentinel-2, usually Band 08.'}>
+                  {t.nir}
+                  <small className="band-role">{lang === 'pt' ? 'selecione a camada identificada como NIR/B08' : 'select the layer identified as NIR/B08'}</small>
+                  <select value={bands[1]} onChange={(e) => updateBand(1, e.target.value)}>{options}</select>
+                </label>
+                <label title={lang === 'pt' ? 'Selecione a banda SWIR. Em Sentinel-2, normalmente Banda 11 ou 12.' : 'Select the SWIR band. In Sentinel-2, usually Band 11 or 12.'}>
+                  {t.swir}
+                  <small className="band-role">{lang === 'pt' ? 'somente SWIR/B11 ou SWIR/B12; não use B10 por posição' : 'only SWIR/B11 or SWIR/B12; do not infer B10 by position'}</small>
+                  <select value={bands[2]} onChange={(e) => updateBand(2, e.target.value)}>{options}</select>
+                </label>
+              </div>
+
+              <div className="processing-log" aria-live="polite">
+                <div className="processing-log-head">
+                  <b>{lang === 'pt' ? 'Log de processamento' : 'Processing log'}</b>
+                  <span>{busy ? (lang === 'pt' ? 'em andamento' : 'running') : processingLog.length ? (lang === 'pt' ? 'última execução' : 'last run') : '—'}</span>
+                </div>
+                {processingLog.length ? (
+                  <div className="processing-log-list">
+                    {processingLog.map((entry, index) => (
+                      <div className={`processing-log-entry ${entry.level}`} key={`${entry.time}-${index}`}>
+                        <time>{entry.time}</time>
+                        <span>{entry.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>{lang === 'pt' ? 'As etapas aparecerão aqui quando você clicar em Calcular temperatura.' : 'Steps will appear here when you click Calculate temperature.'}</p>
+                )}
+              </div>
+
+              {isStandardSr2d4TenBand && (
+                <p className="microcopy" style={{ color: '#9edb86' }}>
+                  <b>SR2D4/MS x10 reconhecido:</b> Camada 03 = B04 Red; Camada 07 = B08 NIR; Camada 09 = B11 SWIR-1 (recomendado) ou Camada 10 = B12 SWIR-2.{' '}
+                  <a href="https://www.researchgate.net/figure/Sentinel-2-band-characteristics_tbl1_314119510" target="_blank" rel="noreferrer">
+                    Referência das bandas Sentinel-2
+                  </a>.
+                </p>
+              )}
+              {!hasSpectralMetadata && (
+                <p className="microcopy" style={{ color: '#f2b84b' }}>
+                  {lang === 'pt'
+                    ? 'Aviso: este GeoTIFF não informa os nomes espectrais no metadata. Camada 10 não significa Sentinel-2 B10 nem SWIR. Confira a ordem usada no Colab antes de calcular.'
+                    : 'Warning: this GeoTIFF has no spectral names in its metadata. Layer 10 does not mean Sentinel-2 B10 or SWIR. Check the Colab export order before calculating.'}
+                </p>
+              )}
+
+              <button className="primary-button" onClick={() => void processFile()} disabled={!file || busy}>
+                {busy ? t.processing : t.calculate}
+                <span>→</span>
+              </button>
+              {error && <div className="error-box">{error}</div>}
+            </section>
+
+            {(raster || hoverSample || sample || identifyMode) && (
+              <section className="rail-card inspector-rail-card">
+                <div className="card-heading">
+                  <h3>ⓘ {t.sample}</h3>
+                  <span className="chip">{displayMode === 'uhi' ? 'UHI 1m' : '°C'}</span>
+                </div>
+                <div className="inspector-split">
+                  <div>
+                    <strong className="inspector-temperature">
+                      {hoverSample || sample ? `${(hoverSample || sample)!.temp.toFixed(1)}°C` : `${raster?.stats.mean.toFixed(1) ?? '—'}°C`}
+                    </strong>
+                    {raster && (
+                      <span className="inspector-uhi-class">
+                        {hoverSample || sample ? `${lang === 'pt' ? 'Nível local' : 'Local level'}: ` : `${lang === 'pt' ? 'Média da cena' : 'Scene mean'} · `}
+                        <b>
+                          {hoverSample || sample
+                            ? uhiClassLabel((hoverSample || sample)!.temp, raster.stats, lang)
+                            : `${raster.stats.min.toFixed(1)}°C – ${raster.stats.max.toFixed(1)}°C`}
+                        </b>
+                      </span>
+                    )}
+                    {(hoverSample || sample) && (
+                      <div className="inspector-coordinates">
+                        Lat: {(hoverSample || sample)!.lat.toFixed(4)} · Lon: {(hoverSample || sample)!.lng.toFixed(4)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="side-legends">
+                    <div className="side-legend">
+                      <b>{displayMode === 'uhi' ? 'Escala UHI (6 níveis)' : lang === 'pt' ? `Paleta: ${palette}` : `Palette: ${palette}`}</b>
+                      <i className="legend-gradient" style={{ background: legendGradient }} />
+                      <small>
+                        {displayMode === 'uhi' ? 'Frescor → Neutro → Hotspot' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}
+                      </small>
+                    </div>
+                  </div>
+                </div>
+                <div className="control-row" style={{ marginTop: '8px' }}>
+                  <span>{lang === 'pt' ? 'Modo' : 'Mode'}</span>
+                  <select value={displayMode} onChange={(e) => setDisplayMode(e.target.value as 'temperature' | 'uhi')}>
+                    <option value="temperature">{lang === 'pt' ? 'Temperatura (°C)' : 'Temperature (°C)'}</option>
+                    <option value="uhi">UHI / {lang === 'pt' ? 'ilhas de calor (1m)' : 'heat islands (1m)'}</option>
+                  </select>
+                </div>
+                <div className="control-row">
+                  <span>{t.palette}</span>
+                  <select value={palette} disabled={displayMode === 'uhi'} onChange={(e) => setPalette(e.target.value as PaletteType)}>
+                    <option value="ironbow">Ironbow</option>
+                    <option value="spectral">Spectral</option>
+                    <option value="jet">Jet</option>
+                    <option value="viridis">Viridis</option>
+                    <option value="magma">Magma</option>
+                    <option value="coolwarm">Coolwarm</option>
+                    <option value="terrain">Terrain</option>
+                    <option value="grayscale">Grayscale</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                <p className="microcopy">{lang === 'pt' ? 'Clique em qualquer ponto do mapa para inspecionar a temperatura de 1m.' : 'Click anywhere on the map to inspect 1m temperature.'}</p>
+              </section>
+            )}
+
+            <section className="rail-card">
+              <div className="card-heading">
+                <h3><Icon name="layers" /> {t.layers}</h3>
+                <span className="chip">{raster ? (uhiSurfaceVisible ? '3' : '2') : '0'}</span>
+              </div>
+              <LayerRow label={t.lst} visible={visibleLst} onToggle={() => setVisibleLst(!visibleLst)} color="thermal" />
+              <LayerRow label={t.optical} visible={visibleOptical} onToggle={() => setVisibleOptical(!visibleOptical)} color="optical" />
+              {raster && (
+                <LayerRow
+                  label={lang === 'pt' ? 'Clusterizar / Isotermas (vetor)' : 'Cluster / Isotherms (vector)'}
+                  visible={uhiSurfaceVisible}
+                  onToggle={() => setUhiSurfaceVisible(!uhiSurfaceVisible)}
+                  color="thermal"
+                />
+              )}
+              <div className="control-row">
+                <span>{t.basemap}</span>
+                <select value={provider} onChange={(e) => setProvider(e.target.value as Provider)}>
+                  <option value="osm">OpenStreetMap</option>
+                  <option value="esri">Esri World Imagery</option>
+                </select>
+              </div>
+              <div className="control-row">
+                <span>{t.opacity}</span>
+                <input type="range" min="0" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} />
+              </div>
+              <div className="control-row">
+                <span>{t.contrast}</span>
+                <input type="range" min="-1" max="1" step="0.05" value={contrast} onChange={(e) => setContrast(Number(e.target.value))} />
+              </div>
+              {palette === 'custom' && (
+                <div className="custom-colors">
+                  {customColors.map((color, index) => (
+                    <input
+                      key={index}
+                      type="color"
+                      value={color}
+                      onChange={(e) => setCustomColors((colors) => colors.map((item, i) => (i === index ? e.target.value : item)))}
+                      title={`Custom color ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="rail-card compare-card">
+              <div className="card-heading">
+                <h3>{t.compare}</h3>
+                <span className="chip">{comparisonImages.length ? `${comparisonImages.length} LST` : '—'}</span>
+              </div>
+              <p className="microcopy comparison-help">
+                {lang === 'pt'
+                  ? 'Escolha quantas datas deseja comparar. Este módulo é independente: você pode carregar apenas as imagens da comparação, sem carregar o produto principal. Cada arquivo será processado em RGB, LST e UHI; o nome mostra a data detectada (AAAA-MM-DD).'
+                  : 'Choose how many dates to compare. Each file is processed as RGB, LST and UHI; the name shows the detected date (YYYY-MM-DD).'}
+              </p>
+              <div className="control-row comparison-count">
+                <span>{lang === 'pt' ? 'Quantidade de imagens' : 'Number of images'}</span>
+                <select value={comparisonCount} onChange={(e) => updateComparisonCount(Number(e.target.value))}>
+                  {[2, 3, 4, 5, 6].map((value) => (
+                    <option key={value} value={value}>{value}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="comparison-file-list">
+                {comparisonFiles.map((selected, index) => (
+                  <label className="comparison-file" key={index} style={{ cursor: 'pointer', position: 'relative' }}>
+                    <span>
+                      <b>{lang === 'pt' ? `Imagem ${index + 1}` : `Image ${index + 1}`}</b>
+                      <small>{selected ? `${imageDateLabel(selected.name, index)} · ${selected.name}` : lang === 'pt' ? 'Selecione um GeoTIFF SR2D4/MS' : 'Select an SR2D4/MS GeoTIFF'}</small>
+                    </span>
+                    <input
+                      type="file"
+                      accept=".tif,.tiff,image/tiff,application/geotiff,application/octet-stream"
+                      style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', zIndex: 12 }}
+                      onChange={(e) => {
+                        const selectedFile = e.target.files?.[0] ?? null;
+                        setComparisonFiles((previous) => previous.map((item, itemIndex) => (itemIndex === index ? selectedFile : item)));
+                        setDifferenceReady(false);
+                      }}
+                      disabled={busy}
+                    />
+                  </label>
+                ))}
+              </div>
+              {comparisonImages.length > 0 && (
+                <div className="comparison-list">
+                  {comparisonImages.map((image) => (
+                    <div className="comparison-result" key={image.id}>
+                      <b>{image.dateLabel}</b>
+                      <span>{image.name}</span>
+                      <em>RGB · LST · UHI</em>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="compare-actions">
+                <button onClick={calculateDifference} disabled={busy || comparisonFiles.filter(Boolean).length < 2}>
+                  {busy ? (lang === 'pt' ? 'Processando…' : 'Processing…') : lang === 'pt' ? 'Calcular diferença Δ LST (2 − 1)' : 'Calculate Δ LST (2 − 1)'}
+                </button>
+                <button onClick={() => setSwipeActive(!swipeActive)} disabled={!differenceReady} className={swipeActive ? 'active' : ''}>
+                  {swipeActive ? (lang === 'pt' ? 'Cortina ativa' : 'Curtain active') : lang === 'pt' ? 'Cortina' : 'Curtain'}
+                </button>
+                <button onClick={() => void downloadComparisonPanel()} disabled={!differenceReady}>
+                  {lang === 'pt' ? 'Exportar A / B / Δ' : 'Export A / B / Δ'}
+                </button>
+              </div>
+              {swipeActive && differenceReady && (
+                <label className="swipe-control">
+                  <span>
+                    {lang === 'pt' ? 'Cortina · esquerda data 1 / direita data 2' : 'Date 1 → date 2'} <b>{swipePosition}%</b>
+                  </span>
+                  <input type="range" min="0" max="100" value={swipePosition} onChange={(e) => setSwipePosition(Number(e.target.value))} />
+                </label>
+              )}
+              {differenceReady && (
+                <p className="microcopy comparison-help">
+                  {lang === 'pt'
+                    ? 'A diferença é calculada pixel a pixel. Variações menores que 1 desvio-padrão são tratadas como mudança fraca.'
+                    : 'The difference is calculated pixel by pixel. Changes below 1 standard deviation are treated as weak.'}
+                </p>
+              )}
+              {differenceReady && differenceRender && comparisonPrimary && comparisonSecondary && (
+                <div className="comparison-triptych">
+                  <figure>
+                    <img src={comparisonPrimary.lstUrl} alt="Data A LST" />
+                    <figcaption>DATA A · {comparisonPrimary.dateLabel}</figcaption>
+                  </figure>
+                  <figure>
+                    <img src={comparisonSecondary.lstUrl} alt="Data B LST" />
+                    <figcaption>DATA B · {comparisonSecondary.dateLabel}</figcaption>
+                  </figure>
+                  <figure>
+                    <img src={differenceRender.url} alt="Diferença LST" />
+                    <figcaption>Δ LST · B − A</figcaption>
+                  </figure>
+                </div>
+              )}
+            </section>
+
+            {raster && (
+              <>
+                <section className="rail-card">
+                  <div className="card-heading">
+                    <h3>{t.stats}</h3>
+                    <span className="chip">°C</span>
+                  </div>
+                  <div className="metric-grid">
+                    <Metric label={t.min} value={raster.stats.min.toFixed(1)} />
+                    <Metric label={t.mean} value={raster.stats.mean.toFixed(1)} />
+                    <Metric label={t.max} value={raster.stats.max.toFixed(1)} />
+                    <Metric label={t.std} value={raster.stats.stdDev.toFixed(2)} />
+                  </div>
+                  <h4>{t.histogram}</h4>
+                  <div className="histogram">
+                    {histogram.map((bar) => (
+                      <div className="bar-wrap" key={bar.label}>
+                        <div className="bar" style={{ height: `${bar.height}%` }} />
+                        <small>{bar.label}</small>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="microcopy">
+                    {t.uhiText} {raster.stats.max >= uhiLevel ? `Hotspot threshold: ${uhiLevel.toFixed(1)}°C` : ''}
+                  </p>
+                </section>
+
+                <section className="rail-card">
+                  <div className="card-heading">
+                    <h3>{t.indices}</h3>
+                    <span className="chip">MS</span>
+                  </div>
+                  <div className="metric-grid index-grid">
+                    <Metric label={t.ndvi} value={meanOf(raster.ndvi).toFixed(3)} />
+                    <Metric label={t.ndbi} value={meanOf(raster.ndbi).toFixed(3)} />
+                  </div>
+                </section>
+
+                <section className="rail-card">
+                  <div className="card-heading">
+                    <h3>{t.aoi}</h3>
+                    <span className="chip">{aoi.length >= 3 ? 'active' : drawAoi ? `${aoi.length} pts` : '—'}</span>
+                  </div>
+                  <p className="microcopy">
+                    {aoi.length >= 3
+                      ? aoiStats
+                        ? `${lang === 'pt' ? 'Resultado: ' : 'Result: '}${aoiStats.mean.toFixed(2)}°C · ${aoiStats.count.toLocaleString()} pixels · ${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C`
+                        : lang === 'pt'
+                          ? 'AOI pronta. Clique em Analisar AOI para calcular os pixels internos.'
+                          : 'AOI ready. Click Analyze AOI to calculate the pixels inside.'
+                      : t.aoiHelp}
+                  </p>
+                  <div className="button-row">
+                    <button onClick={drawAoi ? finishAoi : aoi.length >= 3 ? clearAoi : toggleAoi}>
+                      {drawAoi ? (lang === 'pt' ? 'Finalizar AOI' : 'Finish AOI') : aoi.length >= 3 ? t.clear : t.draw}
+                    </button>
+                    <button disabled={aoi.length < 3} onClick={analyzeAoi}>{t.clip}</button>
+                    <button disabled={aoi.length < 3} onClick={exportAoiPng}>AOI PNG</button>
+                    <button disabled={aoi.length < 3} onClick={exportAoiTiff}>AOI GeoTIFF</button>
+                  </div>
+                </section>
+
+                <section className="rail-card">
+                  <div className="card-heading">
+                    <h3>{t.export}</h3>
+                  </div>
+                  <div className="export-grid">
+                    <button onClick={() => setUhiSurfaceVisible(!uhiSurfaceVisible)}>
+                      {uhiSurfaceVisible ? (lang === 'pt' ? 'Ocultar Isotermas' : 'Hide Isotherms') : lang === 'pt' ? 'Ver Isotermas (Meso)' : 'Show Isotherms'}
+                    </button>
+                    <button onClick={() => exportVectorIsotherms('geojson')}>{lang === 'pt' ? 'Isotermas GeoJSON' : 'Isotherms GeoJSON'}</button>
+                    <button onClick={() => exportVectorIsotherms('kml')}>{lang === 'pt' ? 'Isotermas KML' : 'Isotherms KML'}</button>
+                    <button onClick={exportPng}>{t.png}</button>
+                    <button onClick={() => downloadFloat32Tiff(raster.data, raster.width, raster.height, 'LST-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected)}>
+                      {t.tiff}
+                    </button>
+                    <button onClick={() => downloadUhiTiff(raster.data, raster.width, raster.height, 'UHI-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected, raster.stats.mean, raster.stats.stdDev)}>
+                      {t.uhi}
+                    </button>
+                    <button disabled={!uhiSurface} onClick={() => uhiSurface && downloadUhiSurface(uhiSurface)}>
+                      {lang === 'pt' ? 'Grade UHI GeoJSON' : 'UHI Grid GeoJSON'}
+                    </button>
+                    <button onClick={downloadReport}>{t.report}</button>
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
+        </aside>
+      </main>
+
+      {(showMethod || showHelp || showMeta || showLimits) && (
+        <div
+          className="dialog-backdrop"
+          onClick={() => {
+            setShowMethod(false);
+            setShowHelp(false);
+            setShowMeta(false);
+            setShowLimits(false);
+          }}
+        >
+          <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="dialog-close"
+              onClick={() => {
+                setShowMethod(false);
+                setShowHelp(false);
+                setShowMeta(false);
+                setShowLimits(false);
+              }}
+            >
+              ×
+            </button>
+            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
+            <h2>{showMethod ? t.method : showHelp ? t.help : showLimits ? t.limitation : t.metadata}</h2>
+            {showMethod && <p>{t.methodText}</p>}
+            {showHelp && <p>{t.helpText}</p>}
+            {showLimits && <p>{t.limitationText}</p>}
+            {showMeta && raster && (
+              <div className="meta-list">
+                <span><b>File</b>{raster.fileName}</span>
+                <span><b>Dimensions</b>{raster.width} × {raster.height}</span>
+                <span><b>EPSG</b>{raster.epsg}</span>
+                <span><b>Bounds</b>{extent?.west.toFixed(4)}, {extent?.south.toFixed(4)} → {extent?.east.toFixed(4)}, {extent?.north.toFixed(4)}</span>
+                <span><b>Bands</b>{raster.bands}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showTutorial && (
+        <div className="tutorial-backdrop">
+          <div className="tutorial-card">
+            <div className="tutorial-visual">
+              <div className={`tutorial-orbit step-${tutorialStep}`}>
+                <LogoMark />
+                <span>{tutorialStep + 1}</span>
+              </div>
+            </div>
+            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
+            <h2>
+              {[
+                lang === 'pt' ? 'Explore o mapa' : 'Explore the map',
+                lang === 'pt' ? 'Carregue suas bandas' : 'Load your bands',
+                lang === 'pt' ? 'Calcule a temperatura' : 'Calculate temperature',
+                lang === 'pt' ? 'Compare e exporte' : 'Compare and export',
+              ][tutorialStep]}
+            </h2>
+            <p>
+              {[
+                lang === 'pt' ? 'Busque uma cidade, use o GPS ou digite longitude e latitude para posicionar o mapa.' : 'Search a place, use GPS, or enter longitude and latitude to position the map.',
+                lang === 'pt' ? 'Carregue o GeoTIFF SR2D4; escolha somente Red, NIR e SWIR. O Landsat térmico será localizado automaticamente.' : 'Load the GeoTIFF and choose Red, NIR and SWIR from all detected bands.',
+                lang === 'pt' ? 'A LST vem do Landsat ST_B10 mais próximo e é transferida ao SR2D4 por regressão coarse-to-fine conservativa.' : 'LST comes from the nearest Landsat ST_B10 and is transferred to SR2D4 with conservative coarse-to-fine regression.',
+                lang === 'pt' ? 'Use camadas, AOI, estatísticas, histogramas e exportações para documentar o resultado.' : 'Use layers, AOI, statistics, histograms and exports to document the result.',
+              ][tutorialStep]}
+            </p>
+            <div className="tutorial-dots">
+              {[0, 1, 2, 3].map((step) => (
+                <i className={step === tutorialStep ? 'active' : ''} key={step} />
+              ))}
+            </div>
+            <div className="tutorial-actions">
+              <button onClick={closeTutorial}>{lang === 'pt' ? 'Pular' : 'Skip'}</button>
+              {tutorialStep < 3 ? (
+                <button className="primary-button" onClick={() => setTutorialStep((step) => step + 1)}>
+                  {lang === 'pt' ? 'Próximo' : 'Next'} →
+                </button>
+              ) : (
+                <button className="primary-button" onClick={closeTutorial}>
+                  {lang === 'pt' ? 'Começar' : 'Start'} →
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
