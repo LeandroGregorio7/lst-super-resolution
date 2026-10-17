@@ -164,8 +164,8 @@ function cleanAndSmoothCoarseGrid(
   const q75 = count > 3 ? sampleVals[Math.floor(count * 0.75)] : median + 2.2;
   const iqr = Math.max(1.0, q75 - q25);
 
-  const lowCut = q25 - 1.35 * iqr;
-  const highCut = q75 + 1.35 * iqr;
+  const lowCut = q25 - 1.3 * iqr;
+  const highCut = q75 + 1.3 * iqr;
 
   let current = new Float32Array(n);
   let sumSq = 0;
@@ -186,7 +186,7 @@ function cleanAndSmoothCoarseGrid(
     }
   }
 
-  const stdCoarse = validCnt > 1 ? Math.max(1.6, Math.min(3.2, Math.sqrt(sumSq / validCnt))) : 2.2;
+  const stdCoarse = validCnt > 1 ? Math.max(1.5, Math.min(3.0, Math.sqrt(sumSq / validCnt))) : 2.1;
 
   for (let iter = 0; iter < 12; iter += 1) {
     let anyNaN = false;
@@ -285,6 +285,11 @@ function sampleBilinear(
   return wSum > 0 ? sum / wSum : fallback;
 }
 
+/**
+ * TsHARP + Delimitação Morfológica de Polígonos Urbanos em 1m + Roll-Off Anti-Estouro:
+ * 1. Separa individualmente as casas e edifícios criando sulcos térmicos nos recuos/beirais/ruas de 1m.
+ * 2. Evita o estouro amarelo/branco nas temperaturas altas usando compressão logarítmica assimétrica.
+ */
 export function downscaleLandsatLST(
   coarseLST: Float32Array,
   coarseWidth: number,
@@ -405,13 +410,13 @@ export function downscaleLandsatLST(
   const rawCoeffs = fitModel(rows, target) ?? [coarseMedian, -5.0, 3.8, -1.5];
 
   const b0 = Number.isFinite(rawCoeffs[0]) ? rawCoeffs[0] : coarseMedian;
-  const bNdvi = Math.max(-7.5, Math.min(-3.8, Number.isFinite(rawCoeffs[1]) ? rawCoeffs[1] : -4.8));
+  const bNdvi = Math.max(-7.2, Math.min(-3.6, Number.isFinite(rawCoeffs[1]) ? rawCoeffs[1] : -4.6));
   const bNdbi = useMultivariate
-    ? Math.min(6.8, Math.max(3.2, Number.isFinite(rawCoeffs[2]) ? rawCoeffs[2] : 3.8))
-    : 3.6;
+    ? Math.min(6.4, Math.max(3.0, Number.isFinite(rawCoeffs[2]) ? rawCoeffs[2] : 3.6))
+    : 3.4;
   const bNdwi = useMultivariate
-    ? Math.max(-3.5, Math.min(-0.8, Number.isFinite(rawCoeffs[3]) ? rawCoeffs[3] : -1.4))
-    : -1.2;
+    ? Math.max(-3.2, Math.min(-0.7, Number.isFinite(rawCoeffs[3]) ? rawCoeffs[3] : -1.2))
+    : -1.0;
 
   let ssTot = 0;
   let ssRes = 0;
@@ -425,10 +430,17 @@ export function downscaleLandsatLST(
   }
   const r2 = ssTot > 1e-6 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
 
-  const ndviMicro = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 2);
-  const ndviMeso = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 12);
-  const ndbiMicro = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 2);
-  const ndbiMeso = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 12);
+  // Escalas morfológicas:
+  // - Raio 1 (3x3m): isola o recuo/corredor de 1m a 2m entre casas vizinhas
+  // - Raio 4 (9x9m): tamanho médio de um lote/casa residencial
+  // - Raio 14 (29x29m): escala da quadra urbana
+  const ndviBlur1 = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 1);
+  const ndviBlur4 = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 4);
+  const ndviBlur14 = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 14);
+
+  const ndbiBlur1 = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 1);
+  const ndbiBlur4 = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 4);
+  const ndbiBlur14 = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 14);
 
   const bioIndex = new Float32Array(nFine);
 
@@ -442,26 +454,38 @@ export function downscaleLandsatLST(
       continue;
     }
 
-    const dNdviMicro = ndvi - ndviMicro[i];
-    const dNdviMeso = ndviMicro[i] - ndviMeso[i];
-    const dNdbiMicro = ndbi - ndbiMicro[i];
-    const dNdbiMeso = ndbiMicro[i] - ndbiMeso[i];
+    const dNdviMicro = ndvi - ndviBlur1[i];
+    const dNdviHouse = ndviBlur1[i] - ndviBlur4[i];
+    const dNdviBlock = ndviBlur4[i] - ndviBlur14[i];
+
+    const dNdbiMicro = ndbi - ndbiBlur1[i];
+    const dNdbiHouse = ndbi - ndbiBlur4[i];
+    const dNdbiBlock = ndbiBlur4[i] - ndbiBlur14[i];
 
     let val: number;
 
     if (ndwi > 0.12 && ndvi < 0.14) {
+      // Água (Rio Tietê e lagos)
       const waterIntensity = Math.min(1, (ndwi - 0.12) / 0.28);
-      val = -3.1 - 0.7 * waterIntensity + 1.4 * dNdbiMicro;
+      val = -3.0 - 0.65 * waterIntensity + 1.1 * dNdbiMicro;
     } else if (ndvi >= 0.22) {
+      // Vegetação com textura de copas em 1m sem saturar
       const vegNorm = Math.min(1, (ndvi - 0.22) / 0.58);
-      const moistureCool = Math.max(-0.25, Math.min(0.25, ndwi * 0.9));
-      const canopyTexture = 3.8 * dNdviMicro + 2.2 * dNdviMeso - 2.0 * dNdbiMicro;
-      val = -0.35 - 2.45 * Math.pow(vegNorm, 0.85) - moistureCool - canopyTexture;
+      const moistureCool = Math.max(-0.25, Math.min(0.25, ndwi * 0.85));
+      const canopyTexture = 3.2 * dNdviMicro + 2.0 * dNdviHouse + 1.2 * dNdviBlock - 1.6 * dNdbiMicro;
+      val = -0.32 - 2.30 * Math.pow(vegNorm, 0.85) - moistureCool - canopyTexture;
     } else {
-      const dryImpervious = Math.max(0, 0.22 - ndvi) * 3.2;
-      const roofHotspot = Math.max(0, ndbi - 0.02) * 5.8 + Math.max(0, -ndwi - 0.05) * 2.6;
-      const urbanStructure = 3.6 * dNdbiMicro + 2.4 * dNdbiMeso - 3.2 * dNdviMicro;
-      val = 0.20 + dryImpervious + roofHotspot + urbanStructure;
+      // Matriz Urbana: Separação de Casas, Telhados, Ruas e Pátios
+      const dryImpervious = Math.max(0, 0.22 - ndvi) * 2.4;
+      // Ganho moderado para telhados para não estourar os bairros residenciais em amarelo/branco
+      const roofBase = Math.max(0, ndbi - 0.02) * 3.8 + Math.max(0, -ndwi - 0.06) * 1.6;
+
+      // Prominência da casa individual em relação ao lote (9x9m):
+      // Positivo no centro do telhado da casa; Negativo no corredor/muro/rua que divide duas casas!
+      const houseCrownVsGap = 4.6 * dNdbiHouse - 4.2 * (ndvi - ndviBlur4[i]);
+      const blockContext = 1.6 * dNdbiBlock - 1.4 * dNdviBlock;
+
+      val = 0.12 + dryImpervious + roofBase + houseCrownVsGap + blockContext;
     }
 
     bioIndex[i] = val;
@@ -515,13 +539,35 @@ export function downscaleLandsatLST(
       const bSouth = bioIndex[yNext + x];
       const bNorth = bioIndex[yPrev + x];
 
+      // 1. Gradiente Óptico de 1m (Vermelho/NIR) para detectar as linhas divisórias exatas entre casas
+      const ndviE = Number.isFinite(fineFeatures.ndvi[rowOffset + xNext]) ? fineFeatures.ndvi[rowOffset + xNext] : ndviFine;
+      const ndviW = Number.isFinite(fineFeatures.ndvi[rowOffset + xPrev]) ? fineFeatures.ndvi[rowOffset + xPrev] : ndviFine;
+      const ndviS = Number.isFinite(fineFeatures.ndvi[yNext + x]) ? fineFeatures.ndvi[yNext + x] : ndviFine;
+      const ndviN = Number.isFinite(fineFeatures.ndvi[yPrev + x]) ? fineFeatures.ndvi[yPrev + x] : ndviFine;
+
+      const ndbiE = Number.isFinite(fineFeatures.ndbi[rowOffset + xNext]) ? fineFeatures.ndbi[rowOffset + xNext] : ndbiFine;
+      const ndbiW = Number.isFinite(fineFeatures.ndbi[rowOffset + xPrev]) ? fineFeatures.ndbi[rowOffset + xPrev] : ndbiFine;
+      const ndbiS = Number.isFinite(fineFeatures.ndbi[yNext + x]) ? fineFeatures.ndbi[yNext + x] : ndbiFine;
+      const ndbiN = Number.isFinite(fineFeatures.ndbi[yPrev + x]) ? fineFeatures.ndbi[yPrev + x] : ndbiFine;
+
+      const optGrad =
+        Math.sqrt((ndviE - ndviW) * (ndviE - ndviW) + (ndviS - ndviN) * (ndviS - ndviN)) +
+        0.85 * Math.sqrt((ndbiE - ndbiW) * (ndbiE - ndbiW) + (ndbiS - ndbiN) * (ndbiS - ndbiN));
+
+      // 2. Sulco Morfológico Divisor de Polígonos (Separa nitidamente cada casa/prédio vizinho)
+      const meanNeigh = 0.25 * (bEast + bWest + bSouth + bNorth);
+      const laplacian = bCenter - meanNeigh;
+      const isUrban = ndviFine < 0.22 && ndwiFine <= 0.12;
+
+      // Na borda entre duas casas (optGrad alto ou vale entre telhados), escava um sulco térmico escuro/frio
+      const grooveCarve = isUrban ? -Math.min(0.85, optGrad * 4.2) : 0;
+      const polygonCrispness = Math.max(-1.05, Math.min(0.80, laplacian * 0.95 + grooveCarve));
+
+      // 3. Relevo Volumétrico 3D Solar
       const gx = (bEast - bWest) * 0.5;
       const gy = (bSouth - bNorth) * 0.5;
-      const hasVolume = ndviFine >= 0.32 || bCenter > 0.85;
-      const relief3D = hasVolume ? Math.max(-0.85, Math.min(0.85, (gx * sunDirX + gy * sunDirY) * 0.55)) : 0;
-
-      const meanNeigh = 0.25 * (bEast + bWest + bSouth + bNorth);
-      const edgeDetail = Math.max(-0.75, Math.min(0.75, (bCenter - meanNeigh) * 0.55));
+      const hasVolume = ndviFine >= 0.32 || bCenter > 0.70;
+      const relief3D = hasVolume ? Math.max(-0.65, Math.min(0.65, (gx * sunDirX + gy * sunDirY) * 0.45)) : 0;
 
       const tCoarseLocal = sampleBilinear(smoothCoarseLST, coarseWidth, coarseHeight, fx, fy, coarseMedian);
       const ndviCoarseLocal = sampleBilinear(coarseNdviGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdvi);
@@ -530,15 +576,35 @@ export function downscaleLandsatLST(
 
       const coarseBioExpected =
         ndviCoarseLocal >= 0.22
-          ? -0.35 - 2.45 * Math.pow(Math.min(1, (ndviCoarseLocal - 0.22) / 0.58), 0.85) - 0.3 * ndwiCoarseLocal
-          : 0.20 + Math.max(0, 0.22 - ndviCoarseLocal) * 3.2 + Math.max(0, ndbiCoarseLocal - 0.02) * 5.8;
+          ? -0.32 - 2.30 * Math.pow(Math.min(1, (ndviCoarseLocal - 0.22) / 0.58), 0.85) - 0.25 * ndwiCoarseLocal
+          : 0.12 + Math.max(0, 0.22 - ndviCoarseLocal) * 2.4 + Math.max(0, ndbiCoarseLocal - 0.02) * 3.8;
 
-      const rawDelta = (bCenter - 0.65 * coarseBioExpected) + relief3D + edgeDetail;
-      const deltaT = 3.8 * Math.tanh(rawDelta / 3.4);
+      const rawDelta = (bCenter - 0.65 * coarseBioExpected) + relief3D + polygonCrispness;
+      const deltaT = 3.2 * Math.tanh(rawDelta / 3.0);
 
-      const tBase = coarseMedian + 0.72 * (tCoarseLocal - coarseMedian);
-      const finalTemp = tBase + deltaT;
+      // Anomalia combinada (Landsat + 1m)
+      const rawAnomaly = 0.64 * (tCoarseLocal - coarseMedian) + deltaT;
 
+      // 4. Compressão Harmônica Assimétrica na Cauda Quente (Anti-Estouro):
+      // Desatura os bairros quentes para que fiquem em laranja/vermelho rico com divisórias nítidas,
+      // deixando o amarelo-claro/branco apenas para os extremos reais (ex: Anhembi).
+      const hotKnee = 0.55 * stdCoarse;
+      const coldKnee = 1.45 * stdCoarse;
+      let shapedAnomaly: number;
+
+      if (rawAnomaly > hotKnee) {
+        const excess = rawAnomaly - hotKnee;
+        const tailScale = 1.35 * stdCoarse;
+        shapedAnomaly = hotKnee + tailScale * Math.log1p(excess / tailScale);
+      } else if (rawAnomaly < -coldKnee) {
+        const excess = -rawAnomaly - coldKnee;
+        const tailScale = 1.15 * stdCoarse;
+        shapedAnomaly = -(coldKnee + tailScale * Math.tanh(excess / tailScale));
+      } else {
+        shapedAnomaly = rawAnomaly;
+      }
+
+      const finalTemp = coarseMedian + shapedAnomaly;
       output[index] = finalTemp;
       totalValidFine += 1;
 
@@ -556,8 +622,8 @@ export function downscaleLandsatLST(
   let pHighTemp: number;
 
   if (totalValidFine > 100) {
-    const lowTarget = totalValidFine * 0.006;
-    const highTarget = totalValidFine * 0.994;
+    const lowTarget = totalValidFine * 0.004;
+    const highTarget = totalValidFine * 0.997;
     let acc = 0;
     let lowBin = 0;
     let highBin = 1999;
@@ -596,9 +662,9 @@ export function downscaleLandsatLST(
 
       let clamped: number;
       if (v < pLowTemp) {
-        clamped = pLowTemp - 0.25 * Math.tanh((pLowTemp - v) / 0.5);
+        clamped = pLowTemp - 0.15 * Math.tanh((pLowTemp - v) / 0.4);
       } else if (v > pHighTemp) {
-        clamped = pHighTemp + 0.25 * Math.tanh((v - pHighTemp) / 0.5);
+        clamped = pHighTemp + 0.25 * Math.tanh((v - pHighTemp) / 0.6);
       } else {
         clamped = v;
       }
