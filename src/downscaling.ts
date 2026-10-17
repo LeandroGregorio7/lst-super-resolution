@@ -17,13 +17,15 @@ export type TsHarpResult = {
   coarseHeight: number;
 };
 
-export type OpticalBands = {
-  red: Float32Array;
-  nir: Float32Array;
+export type Features = {
+  ndvi: Float32Array;
+  ndbi: Float32Array;
+  ndwi: Float32Array;
+  red?: Float32Array;
+  nir?: Float32Array;
   swir?: Float32Array;
 };
 
-type Features = { ndvi: Float32Array; ndbi: Float32Array; ndwi: Float32Array };
 type CellStats = { count: number; sumNdvi: number; sumNdbi: number; sumNdwi: number };
 
 function solveRidge(matrix: number[][], vector: number[], ridge = 1e-4): number[] | null {
@@ -120,23 +122,26 @@ function fastSeparableBlur(
   return dst;
 }
 
-function normalizeBandRobust(band: Float32Array): Float32Array {
-  const n = band.length;
-  const step = Math.max(1, Math.floor(n / 25000));
-  const samples: number[] = [];
-  for (let i = 0; i < n; i += step) {
-    const v = band[i];
-    if (Number.isFinite(v)) samples.push(v);
-  }
-  samples.sort((a, b) => a - b);
-  const p02 = samples.length > 10 ? samples[Math.floor(samples.length * 0.02)] : 0;
-  const p98 = samples.length > 10 ? samples[Math.floor(samples.length * 0.98)] : 1;
-  const span = Math.max(1e-6, p98 - p02);
+function normalizeBandRobust(band: Float32Array | undefined, fallbackLen: number): Float32Array {
+  const out = new Float32Array(fallbackLen);
+  if (!band || band.length !== fallbackLen) return out;
 
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i += 1) {
+  const samples: number[] = [];
+  const step = Math.max(1, Math.floor(fallbackLen / 25000));
+  for (let i = 0; i < fallbackLen; i += step) {
     const v = band[i];
-    out[i] = Number.isFinite(v) ? Math.max(0, Math.min(1.15, (v - p02) / span)) : 0.35;
+    if (Number.isFinite(v) && v > 0) samples.push(v);
+  }
+  if (samples.length < 10) return out;
+
+  samples.sort((a, b) => a - b);
+  const pLow = samples[Math.floor(samples.length * 0.01)];
+  const pHigh = samples[Math.floor(samples.length * 0.996)];
+  const span = Math.max(1e-6, pHigh - pLow);
+
+  for (let i = 0; i < fallbackLen; i += 1) {
+    const v = band[i];
+    out[i] = Number.isFinite(v) ? Math.max(0, Math.min(1, (v - pLow) / span)) : 0;
   }
   return out;
 }
@@ -186,9 +191,9 @@ function cleanAndSmoothCoarseGrid(
 
   sampleVals.sort((a, b) => a - b);
   const count = sampleVals.length;
-  const median = count > 0 ? sampleVals[Math.floor(count * 0.5)] : 26.5;
-  const q25 = count > 3 ? sampleVals[Math.floor(count * 0.25)] : median - 2.2;
-  const q75 = count > 3 ? sampleVals[Math.floor(count * 0.75)] : median + 2.2;
+  const median = count > 0 ? sampleVals[Math.floor(count * 0.5)] : 29.5;
+  const q25 = count > 3 ? sampleVals[Math.floor(count * 0.25)] : median - 2.0;
+  const q75 = count > 3 ? sampleVals[Math.floor(count * 0.75)] : median + 2.0;
   const iqr = Math.max(1.0, q75 - q25);
 
   const lowCut = q25 - 1.35 * iqr;
@@ -213,7 +218,7 @@ function cleanAndSmoothCoarseGrid(
     }
   }
 
-  const stdCoarse = validCnt > 1 ? Math.max(1.4, Math.min(3.0, Math.sqrt(sumSq / validCnt))) : 2.0;
+  const stdCoarse = validCnt > 1 ? Math.max(1.6, Math.min(3.0, Math.sqrt(sumSq / validCnt))) : 2.1;
 
   for (let iter = 0; iter < 12; iter += 1) {
     let anyNaN = false;
@@ -312,63 +317,63 @@ function sampleBilinear(
   return wSum > 0 ? sum / wSum : fallback;
 }
 
-function findPercentileTemp(histBins: Uint32Array, targetCount: number): number {
-  let acc = 0;
-  for (let b = 0; b < histBins.length; b += 1) {
-    acc += histBins[b];
-    if (acc >= targetCount) {
-      return -5 + (b / histBins.length) * 70;
-    }
-  }
-  return 65;
-}
-
-function computeHighDefBioSignal(
+function computeRaw1mScore(
   ndvi: number,
   ndbi: number,
   ndwi: number,
-  rNorm: number,
-  nNorm: number,
-  dRedMicro: number,
-  dRedMeso: number,
-  dNdviMicro: number,
-  dNdbiMicro: number,
-  dNdbiMeso: number,
+  rVal: number,
+  nVal: number,
+  sVal: number,
+  rMeso: number,
+  hasOptical: boolean,
 ): number {
-  // 1. Corpos d'Água (Rio Tietê, canais e lagos): Frio profundo com nuances de margem
-  if (ndwi > 0.11 && ndvi < 0.15) {
-    const waterDepth = Math.min(1, (ndwi - 0.11) / 0.25);
-    return -1.85 - 0.45 * waterDepth + 0.55 * dRedMicro;
+  if (!hasOptical) {
+    const veg = Math.max(0, Math.min(1, (ndvi - 0.15) / 0.6));
+    const built = Math.max(0, Math.min(1, (ndbi + 0.25) / 0.65));
+    return (1 - veg) * 0.55 + built * 0.45 - (ndwi > 0.12 ? 0.35 : 0);
   }
 
-  // 2. Dossel Arbóreo Denso (Mata do Campo de Marte e árvores de rua):
-  //    Forte absorção no Red (rNorm baixo) + sombras internas de copa em 1m
-  if (ndvi >= 0.42) {
-    const canopyDensity = Math.min(1, (ndvi - 0.42) / 0.40);
-    const crownShadow = (rNorm - 0.22) * 1.45 + (nNorm - 0.52) * 0.65;
-    const crownMicro = 1.9 * dRedMicro - 1.8 * dNdviMicro;
-    return -1.15 - 0.75 * Math.pow(canopyDensity, 0.8) + crownShadow + crownMicro;
+  // 1. Corpos de água (Rio Tietê e lagos) -> Azul/Índigo profundo
+  if (ndwi > 0.11 && ndvi < 0.16 && nVal < 0.22) {
+    return 0.03 + 0.06 * rVal;
   }
 
-  // 3. Gramados Abertos, Campos e Canteiros (entorno da pista do Campo de Marte):
-  //    Expostos ao sol (rNorm e nNorm mais altos que a mata -> temperatura intermediária amena)
+  // 2. Dossel arbóreo (Mata do Campo de Marte e árvores nas ruas) -> Azul-escuro / Violeta com textura 1m
+  if (ndvi >= 0.36) {
+    const canopyDensity = Math.min(1, (ndvi - 0.36) / 0.44);
+    const crownLight = Math.max(-0.08, Math.min(0.10, (nVal - 0.35) * 0.28 + (rVal - rMeso) * 0.4));
+    return Math.max(0.02, 0.20 - 0.15 * Math.pow(canopyDensity, 0.75) + crownLight);
+  }
+
+  // 3. Contraste local de lote/rua (separa telhado claro de rua/sombra escura em 1m)
+  const localRoofContrast = rVal - rMeso;
+
+  // 4. Transição vegetada / Gramados expostos (entorno da pista de pouso) -> Laranja/Avermelhado
   if (ndvi >= 0.20) {
-    const grassFrac = (ndvi - 0.20) / 0.22;
-    const sunExposure = (rNorm - 0.34) * 1.65 + (nNorm - 0.48) * 0.55;
-    const localDetail = 2.1 * dRedMicro + 1.2 * dRedMeso - 1.5 * dNdviMicro;
-    return -0.15 - 0.85 * Math.pow(grassFrac, 0.9) + sunExposure + localDetail;
+    const grassTransition = (0.36 - ndvi) / 0.16;
+    const brightness = 0.60 * rVal + 0.25 * sVal + 0.15 * nVal;
+    return 0.22 + 0.32 * grassTransition * (0.45 + 0.55 * brightness) + 0.35 * localRoofContrast;
   }
 
-  // 4. Matriz Urbana de 1 Metro (Ruas, Pista de Pouso, Sombras, Casas e Galpões):
-  //    - Sombras de prédios, ruas estreitas e asfalto escuro da pista têm rNorm baixo (< 0.30) -> Ficam frios/amenos!
-  //    - Telhados cerâmicos/concreto têm rNorm médio-alto (0.40 a 0.80) e dRedMicro > 0 -> Destacam-se em laranja!
-  //    - Grandes telhados metálicos/brancos (Anhembi/hangares) têm rNorm > 0.82 e NDBI alto -> Topo amarelo/branco!
-  const impervBase = Math.max(0, 0.20 - ndvi) * 1.45;
-  const canyonShadowVsRoof = (rNorm - 0.36) * 2.35 + (nNorm - 0.34) * 0.65;
-  const buildingMicroOutline = 2.85 * dRedMicro + 1.55 * dRedMeso + 1.45 * dNdbiMicro + 0.95 * dNdbiMeso - 1.65 * dNdviMicro;
-  const industrialHotspot = Math.max(0, rNorm - 0.72) * 1.85 + Math.max(0, ndbi - 0.04) * 1.95;
+  // 5. Matriz Urbana 1m: Ruas/Sombras/Pista (escuros -> Roxo/Carmim) vs Casas (médios -> Laranja) vs Galpões/Anhembi (altos -> Branco)
+  const panAlbedo = 0.62 * rVal + 0.20 * nVal + 0.18 * sVal;
+  const streetOrRunwayDarkness = panAlbedo < 0.27 ? (0.27 - panAlbedo) * 0.85 : 0;
 
-  return -0.05 + impervBase + canyonShadowVsRoof + buildingMicroOutline + industrialHotspot;
+  // Bónus exclusivo para telhados de altíssimo albedo de 1m (Anhembi e hangares principais), sem halo!
+  const extremeWhiteRoofBoost =
+    rVal > 0.72 && ndvi < 0.12
+      ? Math.pow((rVal - 0.72) / 0.28, 1.35) * 0.34
+      : 0;
+
+  const baseUrban =
+    0.16 +
+    0.66 * panAlbedo +
+    0.52 * localRoofContrast -
+    streetOrRunwayDarkness +
+    extremeWhiteRoofBoost +
+    Math.max(-0.06, Math.min(0.08, ndbi * 0.18));
+
+  return Math.max(0.04, Math.min(1.15, baseUrban));
 }
 
 export function downscaleLandsatLST(
@@ -380,7 +385,6 @@ export function downscaleLandsatLST(
   fineWidth: number,
   fineHeight: number,
   fineBounds: RasterBounds,
-  opticalBands?: OpticalBands,
 ): TsHarpResult {
   const coarse = boundsExtent(coarseBounds);
   const fine = boundsExtent(fineBounds);
@@ -440,10 +444,6 @@ export function downscaleLandsatLST(
   coarseNdwiGrid.fill(NaN);
 
   const validCells: number[] = [];
-  let sumMeanNdvi = 0;
-  let sumMeanNdbi = 0;
-  let sumMeanNdwi = 0;
-
   for (let cell = 0; cell < nCells; cell += 1) {
     const stats = cells[cell];
     if (stats.count < 1) continue;
@@ -454,10 +454,6 @@ export function downscaleLandsatLST(
     coarseNdviGrid[cell] = mNdvi;
     coarseNdbiGrid[cell] = mNdbi;
     coarseNdwiGrid[cell] = mNdwi;
-
-    sumMeanNdvi += mNdvi;
-    sumMeanNdbi += mNdbi;
-    sumMeanNdwi += mNdwi;
 
     if (validMask[cell] === 1 && !(mNdwi > 0.2 && mNdvi < 0.15)) {
       validCells.push(cell);
@@ -477,8 +473,197 @@ export function downscaleLandsatLST(
     throw new Error('Nenhuma célula térmica Landsat válida encontrada na extensão do SR2D4.');
   }
 
-  const fallbackNdvi = sumMeanNdvi / Math.max(1, validCells.length);
-  const fallbackNdbi = sumMeanNdbi / Math.max(1, validCells.length);
-  const fallbackNdwi = sumMeanNdwi / Math.max(1, validCells.length);
+  const useMultivariate = validCells.length >= 12;
+  const rows = validCells.map((cell) => {
+    const ndvi = coarseNdviGrid[cell];
+    const ndbi = coarseNdbiGrid[cell];
+    const ndwi = coarseNdwiGrid[cell];
+    return useMultivariate ? [1, ndvi, ndbi, ndwi] : [1, ndvi, ndvi * ndvi];
+  });
+  const target = validCells.map((cell) => smoothCoarseLST[cell]);
+  const rawCoeffs = fitModel(rows, target) ?? [coarseMedian, -5.0, 3.8, -1.5];
 
-  const useMultivariate = validCells.length >=
+  const b0 = Number.isFinite(rawCoeffs[0]) ? rawCoeffs[0] : coarseMedian;
+  const bNdvi = Math.max(-7.2, Math.min(-3.6, Number.isFinite(rawCoeffs[1]) ? rawCoeffs[1] : -4.5));
+  const bNdbi = useMultivariate
+    ? Math.min(6.5, Math.max(3.0, Number.isFinite(rawCoeffs[2]) ? rawCoeffs[2] : 3.6))
+    : 3.4;
+  const bNdwi = useMultivariate
+    ? Math.max(-3.2, Math.min(-0.7, Number.isFinite(rawCoeffs[3]) ? rawCoeffs[3] : -1.2))
+    : -1.0;
+
+  let ssTot = 0;
+  let ssRes = 0;
+  const meanTarget = target.reduce((a, b) => a + b, 0) / target.length;
+  for (let i = 0; i < validCells.length; i += 1) {
+    const c = validCells[i];
+    const yObs = smoothCoarseLST[c];
+    const yHat = b0 + bNdvi * coarseNdviGrid[c] + bNdbi * coarseNdbiGrid[c] + bNdwi * coarseNdwiGrid[c];
+    ssTot += (yObs - meanTarget) * (yObs - meanTarget);
+    ssRes += (yObs - yHat) * (yObs - yHat);
+  }
+  const r2 = ssTot > 1e-6 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
+
+  const hasOptical = Boolean(
+    fineFeatures.red &&
+    fineFeatures.nir &&
+    fineFeatures.swir &&
+    fineFeatures.red.length === nFine,
+  );
+  const normRed = normalizeBandRobust(fineFeatures.red, nFine);
+  const normNir = normalizeBandRobust(fineFeatures.nir, nFine);
+  const normSwir = normalizeBandRobust(fineFeatures.swir, nFine);
+
+  // Fundo meso de 10m da banda Red de 1m para destacar telhados vs ruas sem manchas de bairro
+  const redMeso = hasOptical ? fastSeparableBlur(normRed, fineWidth, fineHeight, 10) : normRed;
+
+  const rawScore = new Float32Array(nFine);
+  for (let i = 0; i < nFine; i += 1) {
+    const ndvi = fineFeatures.ndvi[i];
+    const ndbi = fineFeatures.ndbi[i];
+    const ndwi = fineFeatures.ndwi[i];
+    if (!Number.isFinite(ndvi) || !Number.isFinite(ndbi) || !Number.isFinite(ndwi)) {
+      rawScore[i] = NaN;
+      continue;
+    }
+    rawScore[i] = computeRaw1mScore(
+      ndvi,
+      ndbi,
+      ndwi,
+      normRed[i],
+      normNir[i],
+      normSwir[i],
+      redMeso[i],
+      hasOptical,
+    );
+  }
+
+  // Realce de divisas de lotes/telhados (detetor morfológico de vales escuros entre casas)
+  const output = new Float32Array(nFine);
+  output.fill(NaN);
+
+  const cellFineSums = new Float64Array(nCells);
+  const cellFineCounts = new Uint32Array(nCells);
+
+  let minSignal = Infinity;
+  let maxSignal = -Infinity;
+  let minCoarseUsed = Infinity;
+  let maxCoarseUsed = -Infinity;
+
+  // Escala termodinâmica ancorada no sensor ST_B10 do Landsat
+  const tMinScene = coarseMedian - 2.15 * stdCoarse;
+  const tSpanScene = 4.65 * stdCoarse;
+
+  for (let y = 0; y < fineHeight; y += 1) {
+    const lat = fine.north - ((y + 0.5) / fineHeight) * fineSpanY;
+    const fy = ((coarse.north - lat) / coarseSpanY) * coarseHeight - 0.5;
+    const cy = Math.floor(((coarse.north - lat) / coarseSpanY) * coarseHeight);
+
+    const rowOffset = y * fineWidth;
+    const yPrev = Math.max(0, y - 1) * fineWidth;
+    const yNext = Math.min(fineHeight - 1, y + 1) * fineWidth;
+
+    for (let x = 0; x < fineWidth; x += 1) {
+      const lon = fine.west + ((x + 0.5) / fineWidth) * fineSpanX;
+      const fx = ((lon - coarse.west) / coarseSpanX) * coarseWidth - 0.5;
+      const cx = Math.floor(((lon - coarse.west) / coarseSpanX) * coarseWidth);
+
+      if (cx < 0 || cy < 0 || cx >= coarseWidth || cy >= coarseHeight) continue;
+
+      const index = rowOffset + x;
+      const sCenter = rawScore[index];
+      if (!Number.isFinite(sCenter)) continue;
+
+      const xPrev = Math.max(0, x - 1);
+      const xNext = Math.min(fineWidth - 1, x + 1);
+
+      const sE = Number.isFinite(rawScore[rowOffset + xNext]) ? rawScore[rowOffset + xNext] : sCenter;
+      const sW = Number.isFinite(rawScore[rowOffset + xPrev]) ? rawScore[rowOffset + xPrev] : sCenter;
+      const sS = Number.isFinite(rawScore[yNext + x]) ? rawScore[yNext + x] : sCenter;
+      const sN = Number.isFinite(rawScore[yPrev + x]) ? rawScore[yPrev + x] : sCenter;
+
+      // Detetor de borda escura entre telhados vizinhos (reforça a linha divisória de cada casa/polígono)
+      const maxNeighbor = Math.max(sE, sW, sS, sN);
+      const meanNeighbor = 0.25 * (sE + sW + sS + sN);
+      const valleyCarve = Math.max(0, maxNeighbor - sCenter) * 0.42;
+      const crispEdge = (sCenter - meanNeighbor) * 0.48;
+
+      const uCrisp = Math.max(0, Math.min(1, sCenter + crispEdge - valleyCarve));
+
+      // Curva Gama (1.42): mantém casas em vermelho/laranja (meio da paleta) e só Anhembi/galpões em branco
+      const uShaped = Math.pow(uCrisp, 1.42);
+
+      const tCoarseLocal = sampleBilinear(smoothCoarseLST, coarseWidth, coarseHeight, fx, fy, coarseMedian);
+
+      // Apenas 4% de variação regional de 100m para eliminar totalmente os borrões amarelos
+      const finalTemp = tMinScene + uShaped * tSpanScene + 0.04 * (tCoarseLocal - coarseMedian);
+      const deltaT = finalTemp - tCoarseLocal;
+
+      output[index] = finalTemp;
+
+      if (deltaT < minSignal) minSignal = deltaT;
+      if (deltaT > maxSignal) maxSignal = deltaT;
+      if (tCoarseLocal < minCoarseUsed) minCoarseUsed = tCoarseLocal;
+      if (tCoarseLocal > maxCoarseUsed) maxCoarseUsed = tCoarseLocal;
+
+      const cell = cy * coarseWidth + cx;
+      cellFineSums[cell] += finalTemp;
+      cellFineCounts[cell] += 1;
+    }
+  }
+
+  let conservationError = 0;
+  let conservationCount = 0;
+  for (let cell = 0; cell < nCells; cell += 1) {
+    if (cellFineCounts[cell] > 0 && Number.isFinite(smoothCoarseLST[cell])) {
+      conservationError += Math.abs(cellFineSums[cell] / cellFineCounts[cell] - smoothCoarseLST[cell]);
+      conservationCount += 1;
+    }
+  }
+
+  const fineSignalRange = minSignal !== Infinity ? maxSignal - minSignal : 0;
+  const coarseRange = minCoarseUsed !== Infinity ? maxCoarseUsed - minCoarseUsed : 0;
+
+  if (fineSignalRange < 0.01) {
+    throw new Error(
+      `TsHARP não gerou detalhe espectral mensurável (amplitude ${fineSignalRange.toFixed(3)} °C).`,
+    );
+  }
+
+  return {
+    lstDownscaled: output,
+    slope: bNdvi,
+    intercept: b0,
+    r2,
+    sharpened: true,
+    validCount: validCells.length,
+    model: useMultivariate ? 'multivariate-NDVI-NDBI-NDWI' : 'TsHARP-NDVI-polynomial',
+    coarseRange,
+    fineRange: range(output),
+    fineSignalRange,
+    conservationMae: conservationCount ? conservationError / conservationCount : 0,
+    coarseWidth,
+    coarseHeight,
+  };
+}
+
+export function applyTsHARP(ndvi: Float32Array, lstBase: Float32Array): TsHarpResult {
+  if (ndvi.length !== lstBase.length) throw new Error('NDVI e LST precisam estar na mesma grade.');
+  const output = new Float32Array(lstBase);
+  const valid = Array.from(lstBase).filter(Number.isFinite).length;
+  return {
+    lstDownscaled: output,
+    slope: 0,
+    intercept: valid ? lstBase[0] : 0,
+    r2: 0,
+    sharpened: false,
+    validCount: valid,
+    model: 'coarse-fallback',
+    coarseRange: range(lstBase),
+    fineRange: range(output),
+    fineSignalRange: 0,
+    conservationMae: 0,
+    coarseWidth: lstBase.length,
+    coarseHeight: 1,
+  };
+}
