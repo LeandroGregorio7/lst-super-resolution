@@ -80,7 +80,6 @@ const TILE_URLS: Record<Provider, string> = {
   esri: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 };
 
-// Paradas de cores enriquecidas nas temperaturas frias/amenas para evitar concentração em tons parecidos
 const PALETTE_STOPS: Record<Exclude<PaletteType, 'custom' | 'uhi'>, string[]> = {
   ironbow: ['#061342', '#103b8c', '#186d8a', '#522b96', '#961774', '#cf2226', '#f26d18', '#ffca28', '#ffffff'],
   spectral: ['#323896', '#2668b8', '#2ba198', '#68c96e', '#c4e667', '#fee08b', '#f88d51', '#d53e4f', '#9e0142'],
@@ -240,10 +239,6 @@ function hexToRgbTuple(hex: string): [number, number, number] {
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 }
 
-/**
- * Curva perceptual que expande a separação cromática nas temperaturas frias e amenas
- * (0.0 a 0.55) mantendo o destaque nítido das temperaturas mais altas (0.55 a 1.0).
- */
 function perceptualCoolExpansion(t: number): number {
   const c = Math.max(0, Math.min(1, t));
   if (c < 0.56) {
@@ -278,11 +273,32 @@ function buildPaletteLut1024(palette: PaletteType, customColors: string[]): Uint
   return lut;
 }
 
+function sampleUhiColor(z: number): [number, number, number] {
+  if (z <= UHI_STOPS[0][0]) {
+    return [UHI_STOPS[0][1], UHI_STOPS[0][2], UHI_STOPS[0][3]];
+  }
+  for (let s = 0; s < UHI_STOPS.length - 1; s += 1) {
+    const [z0, r0, g0, b0] = UHI_STOPS[s];
+    const [z1, r1, g1, b1] = UHI_STOPS[s + 1];
+    if (z <= z1) {
+      const t = Math.max(0, Math.min(1, (z - z0) / (z1 - z0)));
+      const tStepped = 0.72 * t + 0.28 * (Math.round(t * 2) / 2);
+      return [
+        r0 + (r1 - r0) * tStepped,
+        g0 + (g1 - g0) * tStepped,
+        b0 + (b1 - b0) * tStepped,
+      ];
+    }
+  }
+  const last = UHI_STOPS[UHI_STOPS.length - 1];
+  return [last[1], last[2], last[3]];
+}
+
 function sampleCssColorAt(t: number, palette: PaletteType, customColors: string[], isUhi: boolean): string {
   if (isUhi) {
     const z = -1.65 + Math.max(0, Math.min(1, t)) * 3.6;
     const [r, g, b] = sampleUhiColor(z);
-    return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+    return `rgb(${Math.round(r)}, ${Math.round(g)},${Math.round(b)})`;
   }
   const stops = getPaletteStopList(palette, customColors).map(hexToRgbTuple);
   const maxSeg = stops.length - 1;
@@ -291,7 +307,7 @@ function sampleCssColorAt(t: number, palette: PaletteType, customColors: string[
   const frac = p - idx;
   const [r0, g0, b0] = stops[idx];
   const [r1, g1, b1] = stops[idx + 1];
-  return `rgb(${Math.round(r0 + (r1 - r0) * frac)}, ${Math.round(g0 + (g1 - g0) * frac)}, ${Math.round(b0 + (b1 - b0) * frac)})`;
+  return `rgb(${Math.round(r0 + (r1 - r0) * frac)}, ${Math.round(g0 + (g1 - g0) * frac)},${Math.round(b0 + (b1 - b0) * frac)})`;
 }
 
 function computeRasterStats(data: Float32Array): RasterStats | null {
@@ -371,27 +387,10 @@ function renderPerceptualLstToCanvas(
   return stats;
 }
 
-function sampleUhiColor(z: number): [number, number, number] {
-  if (z <= UHI_STOPS[0][0]) {
-    return [UHI_STOPS[0][1], UHI_STOPS[0][2], UHI_STOPS[0][3]];
-  }
-  for (let s = 0; s < UHI_STOPS.length - 1; s += 1) {
-    const [z0, r0, g0, b0] = UHI_STOPS[s];
-    const [z1, r1, g1, b1] = UHI_STOPS[s + 1];
-    if (z <= z1) {
-      const t = Math.max(0, Math.min(1, (z - z0) / (z1 - z0)));
-      const tStepped = 0.72 * t + 0.28 * (Math.round(t * 2) / 2);
-      return [
-        r0 + (r1 - r0) * tStepped,
-        g0 + (g1 - g0) * tStepped,
-        b0 + (b1 - b0) * tStepped,
-      ];
-    }
-  }
-  const last = UHI_STOPS[UHI_STOPS.length - 1];
-  return [last[1], last[2], last[3]];
-}
-
+/**
+ * Transformação unificada de clustering UHI usada tanto pela imagem 1m (via LUT rápida)
+ * quanto pelas Isotermas Vetoriais (para que os contornos mudem junto com o método e a potenciação).
+ */
 function computeClusteredZ(
   val: number,
   neighborMean: number,
@@ -399,25 +398,56 @@ function computeClusteredZ(
   method: UhiClusterMethod,
   power: number,
 ): number {
-  const safeStd = Math.max(0.6, stats.stdDev);
-  const iqr = Math.max(0.5, stats.q75 - stats.q25);
+  const safeStd = Math.max(0.55, stats.stdDev);
+  const iqr = Math.max(0.45, stats.q75 - stats.q25);
+  const span = Math.max(0.8, stats.max - stats.min);
 
   let baseZ: number;
   if (method === 'quantiles') {
-    baseZ = ((val - stats.q50) / (iqr * 0.68)) * 0.92;
+    // Quantis Adaptativos (IQR): expande o miolo urbano entre Q25 e Q75
+    const diff = val - stats.q50;
+    const asymScale = diff < 0 ? Math.max(0.3, stats.q50 - stats.q25) * 1.15 : Math.max(0.3, stats.q75 - stats.q50) * 1.05;
+    baseZ = (diff / asymScale) * 0.72 + ((val - stats.mean) / iqr) * 0.28;
   } else if (method === 'natural') {
-    const norm = (val - stats.min) / Math.max(0.5, stats.max - stats.min);
-    const centered = (norm - 0.46) * 3.3;
-    baseZ = centered + 0.18 * Math.sin(centered * Math.PI);
+    // Quebras Naturais (Jenks-Otsu): S-Curve bimodal que separa vegetação, quadras e grandes telhados
+    const norm = Math.max(0, Math.min(1, (val - stats.min) / span));
+    const pivot = Math.max(0.25, Math.min(0.65, (stats.mean - stats.min) / span));
+    const centered = (norm - pivot) * 3.4;
+    baseZ = centered + 0.34 * Math.sin(centered * 1.85);
   } else if (method === 'kernel') {
-    const spatialBlend = 0.42 * val + 0.58 * neighborMean;
-    baseZ = ((spatialBlend - stats.mean) / safeStd) * 1.15;
+    // Kernel Espacial (Gi* Hotspot): agrega vizinhança para destacar manchas térmicas contíguas
+    const spatialVal = 0.35 * val + 0.65 * neighborMean;
+    baseZ = ((spatialVal - stats.mean) / safeStd) * 1.24;
   } else {
+    // Z-Score clássico
     baseZ = (val - stats.mean) / safeStd;
   }
 
   const sign = baseZ < 0 ? -1 : 1;
   return sign * Math.pow(Math.abs(baseZ), power);
+}
+
+/**
+ * Pré-calcula uma LUT de 4096 níveis para o modo UHI:
+ * Evita rodar Math.pow e Math.sin 17,2 milhões de vezes, tornando a troca de método instantânea!
+ */
+function buildUhiLut4096(
+  stats: RasterStats,
+  method: UhiClusterMethod,
+  power: number,
+): Uint8Array {
+  const lut = new Uint8Array(4096 * 3);
+  const span = Math.max(1e-5, stats.max - stats.min);
+
+  for (let i = 0; i < 4096; i += 1) {
+    const temp = stats.min + (i / 4095) * span;
+    const z = computeClusteredZ(temp, temp, stats, method, power);
+    const [r, g, b] = sampleUhiColor(z);
+    lut[i * 3] = Math.max(0, Math.min(255, Math.round(r)));
+    lut[i * 3 + 1] = Math.max(0, Math.min(255, Math.round(g)));
+    lut[i * 3 + 2] = Math.max(0, Math.min(255, Math.round(b)));
+  }
+  return lut;
 }
 
 function renderHighDefUhiToCanvas(
@@ -435,14 +465,17 @@ function renderHighDefUhiToCanvas(
   if (!ctx) return;
   const img = ctx.createImageData(width, height);
   const out = img.data;
-  const safeStd = Math.max(0.8, stats.stdDev);
+
+  const lut = buildUhiLut4096(stats, method, power);
+  const minVal = stats.min;
+  const invSpan = 4095 / Math.max(1e-5, stats.max - minVal);
+  const invStdShade = 1 / Math.max(0.8, stats.stdDev);
+  const isKernel = method === 'kernel';
 
   for (let y = 0; y < height; y += 1) {
     const row = y * width;
-    const yPrev = Math.max(0, y - 1) * width;
-    const yNext = Math.min(height - 1, y + 1) * width;
-    const yFarPrev = Math.max(0, y - 3) * width;
-    const yFarNext = Math.min(height - 1, y + 3) * width;
+    const yPrev = (y > 0 ? y - 1 : 0) * width;
+    const yNext = (y < height - 1 ? y + 1 : height - 1) * width;
 
     for (let x = 0; x < width; x += 1) {
       const i = row + x;
@@ -454,33 +487,32 @@ function renderHighDefUhiToCanvas(
         continue;
       }
 
-      const xPrev = Math.max(0, x - 1);
-      const xNext = Math.min(width - 1, x + 1);
-      const xFarPrev = Math.max(0, x - 3);
-      const xFarNext = Math.min(width - 1, x + 3);
+      const xPrev = x > 0 ? x - 1 : 0;
+      const xNext = x < width - 1 ? x + 1 : width - 1;
 
-      const vE = Number.isFinite(data[row + xNext]) ? data[row + xNext] : val;
-      const vW = Number.isFinite(data[row + xPrev]) ? data[row + xPrev] : val;
-      const vS = Number.isFinite(data[yNext + x]) ? data[yNext + x] : val;
-      const vN = Number.isFinite(data[yPrev + x]) ? data[yPrev + x] : val;
+      const vE = data[row + xNext];
+      const vW = data[row + xPrev];
+      const vS = data[yNext + x];
+      const vN = data[yPrev + x];
 
-      const vFarE = Number.isFinite(data[row + xFarNext]) ? data[row + xFarNext] : val;
-      const vFarW = Number.isFinite(data[row + xFarPrev]) ? data[row + xFarPrev] : val;
-      const vFarS = Number.isFinite(data[yFarNext + x]) ? data[yFarNext + x] : val;
-      const vFarN = Number.isFinite(data[yFarPrev + x]) ? data[yFarPrev + x] : val;
+      const safeE = Number.isFinite(vE) ? vE : val;
+      const safeW = Number.isFinite(vW) ? vW : val;
+      const safeS = Number.isFinite(vS) ? vS : val;
+      const safeN = Number.isFinite(vN) ? vN : val;
 
-      const neighborMean = 0.125 * (vE + vW + vS + vN + vFarE + vFarW + vFarS + vFarN);
-      const z = computeClusteredZ(val, neighborMean, stats, method, power);
+      const mean4 = 0.25 * (safeE + safeW + safeS + safeN);
+      const effectiveTemp = isKernel ? 0.38 * val + 0.62 * mean4 : val;
 
-      const slopeShade = ((vE - vW) * 0.7 - (vS - vN) * 0.7) / safeStd;
-      const edgeLap = (val - 0.25 * (vE + vW + vS + vN)) / safeStd;
-      const reliefFactor = Math.max(-0.24, Math.min(0.24, slopeShade * 0.28 + edgeLap * 0.38));
+      const lutIdx = Math.max(0, Math.min(4095, Math.round((effectiveTemp - minVal) * invSpan))) * 3;
 
-      const [r, g, b] = sampleUhiColor(z);
-      const shadeMult = 1 + reliefFactor;
-      out[px] = Math.max(0, Math.min(255, Math.round(r * shadeMult)));
-      out[px + 1] = Math.max(0, Math.min(255, Math.round(g * shadeMult)));
-      out[px + 2] = Math.max(0, Math.min(255, Math.round(b * shadeMult)));
+      const slopeShade = (safeE - safeW - (safeS - safeN)) * 0.19 * invStdShade;
+      const edgeLap = (val - mean4) * 0.36 * invStdShade;
+      const relief = Math.max(-0.24, Math.min(0.24, slopeShade + edgeLap));
+      const shadeMult = 1 + relief;
+
+      out[px] = Math.max(0, Math.min(255, Math.round(lut[lutIdx] * shadeMult)));
+      out[px + 1] = Math.max(0, Math.min(255, Math.round(lut[lutIdx + 1] * shadeMult)));
+      out[px + 2] = Math.max(0, Math.min(255, Math.round(lut[lutIdx + 2] * shadeMult)));
       out[px + 3] = 255;
     }
   }
@@ -488,6 +520,10 @@ function renderHighDefUhiToCanvas(
   ctx.putImageData(img, 0, 0);
 }
 
+/**
+ * Gera isotermas/clusters em meso-escala aplicando o MESMO método de clustering (zscore, quantiles, natural, kernel)
+ * e a MESMA potenciação (power) sobre o campo agregado, para que os contornos se ajustem dinamicamente!
+ */
 function buildMesoIsothermsGeoJSON(
   data: Float32Array,
   width: number,
@@ -498,8 +534,8 @@ function buildMesoIsothermsGeoJSON(
   power: number,
 ): IsothermCollection {
   const ext = boundsExtent(bounds);
-  const gW = 96;
-  const gH = Math.max(24, Math.round((height / Math.max(1, width)) * gW));
+  const gW = 108;
+  const gH = Math.max(28, Math.round((height / Math.max(1, width)) * gW));
   const rawGrid = new Float32Array(gW * gH);
   const counts = new Uint32Array(gW * gH);
 
@@ -516,14 +552,15 @@ function buildMesoIsothermsGeoJSON(
     }
   }
 
-  let grid = new Float32Array(gW * gH);
-  for (let i = 0; i < grid.length; i += 1) {
-    grid[i] = counts[i] > 0 ? rawGrid[i] / counts[i] : stats.mean;
+  let tempGrid = new Float32Array(gW * gH);
+  for (let i = 0; i < tempGrid.length; i += 1) {
+    tempGrid[i] = counts[i] > 0 ? rawGrid[i] / counts[i] : stats.mean;
   }
 
-  const passes = method === 'kernel' ? 4 : 3;
+  // Número de passagens de suavização espacial varia conforme o método de clustering escolhido
+  const smoothPasses = method === 'kernel' ? 5 : method === 'natural' ? 2 : 3;
   const kernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
-  for (let pass = 0; pass < passes; pass += 1) {
+  for (let pass = 0; pass < smoothPasses; pass += 1) {
     const next = new Float32Array(gW * gH);
     for (let y = 0; y < gH; y += 1) {
       for (let x = 0; x < gW; x += 1) {
@@ -534,59 +571,76 @@ function buildMesoIsothermsGeoJSON(
             const ny = Math.max(0, Math.min(gH - 1, y + ky));
             const nx = Math.max(0, Math.min(gW - 1, x + kx));
             const kw = kernel[(ky + 1) * 3 + (kx + 1)];
-            sum += grid[ny * gW + nx] * kw;
+            sum += tempGrid[ny * gW + nx] * kw;
             wSum += kw;
           }
         }
         next[y * gW + x] = sum / wSum;
       }
     }
-    grid = next;
+    tempGrid = next;
   }
 
-  const safeStd = Math.max(0.8, stats.stdDev);
-  const invPower = 1 / Math.max(0.5, power);
-  const baseZ = [-0.95, -0.35, 0.20, 0.75, 1.25];
-  const labels = [
-    { label: 'Ilha de Frescor', color: '#38bdf8', kmlColor: 'fff8bd38' },
-    { label: 'Zona Amenizada', color: '#34d399', kmlColor: 'ff99d334' },
-    { label: 'Limiar UHI Leve', color: '#fde047', kmlColor: 'ff47e0fd' },
-    { label: 'Cluster UHI Forte', color: '#fb923c', kmlColor: 'ff3c92fb' },
-    { label: 'Hotspot Extremo', color: '#f43f5e', kmlColor: 'ff5e3ff4' },
-  ];
+  // Converte a grade meso-escala de temperatura para o índice Z do método + potenciação selecionados
+  const zGrid = new Float32Array(gW * gH);
+  for (let y = 0; y < gH; y += 1) {
+    for (let x = 0; x < gW; x += 1) {
+      const idx = y * gW + x;
+      const vC = tempGrid[idx];
+      const vE = tempGrid[y * gW + Math.min(gW - 1, x + 1)];
+      const vW = tempGrid[y * gW + Math.max(0, x - 1)];
+      const vS = tempGrid[Math.min(gH - 1, y + 1) * gW + x];
+      const vN = tempGrid[Math.max(0, y - 1) * gW + x];
+      const neighMean = 0.25 * (vE + vW + vS + vN);
+      zGrid[idx] = computeClusteredZ(vC, neighMean, stats, method, power);
+    }
+  }
 
-  const centerRef = method === 'quantiles' ? stats.q50 : stats.mean;
-  const scaleRef = method === 'quantiles' ? Math.max(0.6, (stats.q75 - stats.q25) * 0.75) : safeStd;
+  const levels = [
+    { zCut: -0.95, label: 'Ilha de Frescor', color: '#38bdf8', kmlColor: 'fff8bd38' },
+    { zCut: -0.35, label: 'Zona Amenizada', color: '#34d399', kmlColor: 'ff99d334' },
+    { zCut: 0.20, label: 'Limiar UHI Leve', color: '#fde047', kmlColor: 'ff47e0fd' },
+    { zCut: 0.75, label: 'Cluster UHI Forte', color: '#fb923c', kmlColor: 'ff3c92fb' },
+    { zCut: 1.25, label: 'Hotspot Extremo', color: '#f43f5e', kmlColor: 'ff5e3ff4' },
+  ];
 
   const toLng = (gx: number) => ext.west + ((gx + 0.5) / gW) * (ext.east - ext.west);
   const toLat = (gy: number) => ext.north - ((gy + 0.5) / gH) * (ext.north - ext.south);
 
   const features: IsothermFeature[] = [];
 
-  labels.forEach((lvl, idx) => {
-    const rawZ = baseZ[idx];
-    const zAdj = (rawZ < 0 ? -1 : 1) * Math.pow(Math.abs(rawZ), invPower);
-    const iso = Number((centerRef + zAdj * scaleRef).toFixed(2));
+  levels.forEach((lvl, idx) => {
+    const isoZ = lvl.zCut;
     const segments: [number, number][][] = [];
+    let tempSum = 0;
+    let tempCount = 0;
 
     for (let y = 0; y < gH - 1; y += 1) {
       for (let x = 0; x < gW - 1; x += 1) {
-        const v0 = grid[y * gW + x];
-        const v1 = grid[y * gW + (x + 1)];
-        const v2 = grid[(y + 1) * gW + (x + 1)];
-        const v3 = grid[(y + 1) * gW + x];
+        const i0 = y * gW + x;
+        const i1 = y * gW + (x + 1);
+        const i2 = (y + 1) * gW + (x + 1);
+        const i3 = (y + 1) * gW + x;
+
+        const v0 = zGrid[i0];
+        const v1 = zGrid[i1];
+        const v2 = zGrid[i2];
+        const v3 = zGrid[i3];
 
         const mask =
-          (v0 >= iso ? 1 : 0) +
-          (v1 >= iso ? 2 : 0) +
-          (v2 >= iso ? 4 : 0) +
-          (v3 >= iso ? 8 : 0);
+          (v0 >= isoZ ? 1 : 0) +
+          (v1 >= isoZ ? 2 : 0) +
+          (v2 >= isoZ ? 4 : 0) +
+          (v3 >= isoZ ? 8 : 0);
 
         if (mask === 0 || mask === 15) continue;
 
+        tempSum += 0.25 * (tempGrid[i0] + tempGrid[i1] + tempGrid[i2] + tempGrid[i3]);
+        tempCount += 1;
+
         const interp = (a: number, b: number) => {
           const d = b - a;
-          return Math.abs(d) < 1e-6 ? 0.5 : Math.max(0, Math.min(1, (iso - a) / d));
+          return Math.abs(d) < 1e-6 ? 0.5 : Math.max(0, Math.min(1, (isoZ - a) / d));
         };
 
         const top: [number, number] = [toLng(x + interp(v0, v1)), toLat(y)];
@@ -611,12 +665,13 @@ function buildMesoIsothermsGeoJSON(
     }
 
     if (segments.length > 0) {
+      const equivTemp = tempCount > 0 ? Number((tempSum / tempCount).toFixed(2)) : Number((stats.mean + isoZ * stats.stdDev).toFixed(2));
       features.push({
         type: 'Feature',
         properties: {
           level: idx + 1,
-          tempCelsius: iso,
-          label: `${lvl.label} (${iso.toFixed(1)}°C)`,
+          tempCelsius: equivTemp,
+          label: `${lvl.label} (${equivTemp.toFixed(1)}°C · ${method.toUpperCase()})`,
           color: lvl.color,
           kmlColor: lvl.kmlColor,
         },
@@ -721,7 +776,7 @@ async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, num
     bounds,
   );
   const resolutionLabel = tiff.isProjected ? `${Math.abs(tiff.resolution[0]).toFixed(2)} m/pixel` : `${Math.abs(tiff.resolution[0]).toFixed(6)} graus/pixel`;
-  onProgress?.(`Fusão concluída: ${result.model} · ${result.validCount} células coarse · coef. NDVI ${result.slope.toFixed(4)} · saída ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · resolução ${resolutionLabel}`);
+  onProgress?.(`Fusão concluída: ${result.model} ·${result.validCount} células coarse · coef. NDVI ${result.slope.toFixed(4)} · saída ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · resolução ${resolutionLabel}`);
   onProgress?.(`Prova numérica: LST coarse ${result.coarseRange.toFixed(2)} °C · LST fina ${result.fineRange.toFixed(2)} °C · sinal transferido do SR2D4 ${result.fineSignalRange.toFixed(2)} °C · erro médio de conservação ${result.conservationMae.toFixed(3)} °C`);
   return { tiff, bounds, indices, landsat, result };
 }
@@ -856,6 +911,7 @@ export default function App() {
   const [displayMode, setDisplayMode] = useState<'temperature' | 'uhi'>('temperature');
   const [uhiMethod, setUhiMethod] = useState<UhiClusterMethod>('zscore');
   const [uhiPower, setUhiPower] = useState(1.10);
+  const [draftUhiPower, setDraftUhiPower] = useState(1.10);
   const [file, setFile] = useState<File | null>(null);
   const [bandCount, setBandCount] = useState(3);
   const [bandLabels, setBandLabels] = useState<string[]>([]);
@@ -915,13 +971,19 @@ export default function App() {
   const comparisonPrimary = comparisonImages[0] ?? null;
   const comparisonSecondary = comparisonImages[1] ?? null;
 
-  // Debounce de 140ms para que o seletor de cores Custom rode liso sem travar o navegador
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setCustomColors(draftCustomColors);
-    }, 140);
+    }, 110);
     return () => window.clearTimeout(timer);
   }, [draftCustomColors]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setUhiPower(draftUhiPower);
+    }, 90);
+    return () => window.clearTimeout(timer);
+  }, [draftUhiPower]);
 
   const differenceRender = useMemo(() => {
     if (!comparisonPrimary || !comparisonSecondary || !differenceReady) return null;
@@ -1223,12 +1285,20 @@ export default function App() {
     }
   }, [aoi]);
 
+  // Calcula a grade UHI bruta apenas 1 vez quando o raster muda (evita lentidão ao trocar o método)
   useEffect(() => {
     if (raster) {
       setUhiSurface(buildUhiSurface({ data: raster.data, width: raster.width, height: raster.height, bounds: raster.bounds, mean: raster.stats.mean, stdDev: raster.stats.stdDev }));
-      setIsotherms(buildMesoIsothermsGeoJSON(raster.data, raster.width, raster.height, raster.bounds, raster.stats.mean ? raster.stats : raster.stats, uhiMethod, uhiPower));
     } else {
       setUhiSurface(null);
+    }
+  }, [raster]);
+
+  // Atualiza as isotermas/clusters dinamicamente junto com o método e a potenciação
+  useEffect(() => {
+    if (raster) {
+      setIsotherms(buildMesoIsothermsGeoJSON(raster.data, raster.width, raster.height, raster.bounds, raster.stats, uhiMethod, uhiPower));
+    } else {
       setIsotherms(null);
     }
   }, [raster, uhiMethod, uhiPower]);
@@ -1265,7 +1335,7 @@ export default function App() {
           id: 'uhi-surface-line',
           type: 'line',
           source: 'uhi-surface',
-          paint: { 'line-color': ['get', 'color'], 'line-opacity': 0.96, 'line-width': 1.9 },
+          paint: { 'line-color': ['get', 'color'], 'line-opacity': 0.96, 'line-width': 2.1 },
         });
       }
       const vis = uhiSurfaceVisible ? 'visible' : 'none';
@@ -1464,7 +1534,7 @@ export default function App() {
       const blob = new Blob([JSON.stringify(isotherms, null, 2)], { type: 'application/geo+json' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'SR2D4-Isotermas-Meso.geojson';
+      link.download = `SR2D4-Isotermas-${uhiMethod}.geojson`;
       link.click();
       URL.revokeObjectURL(link.href);
     } else {
@@ -1473,14 +1543,14 @@ export default function App() {
           const linesXml = f.geometry.coordinates
             .map((seg) => `<LineString><coordinates>${seg.map((c) => `${c[0]},${c[1]},0`).join(' ')}</coordinates></LineString>`)
             .join('');
-          return `<Placemark><name>${f.properties.label}</name><description>Isoterma Meso-escala: ${f.properties.tempCelsius}°C</description><Style><LineStyle><color>${f.properties.kmlColor}</color><width>2.5</width></LineStyle></Style><MultiGeometry>${linesXml}</MultiGeometry></Placemark>`;
+          return `<Placemark><name>${f.properties.label}</name><description>Isoterma Meso-escala (${uhiMethod.toUpperCase()}):${f.properties.tempCelsius}°C</description><Style><LineStyle><color>${f.properties.kmlColor}</color><width>2.5</width></LineStyle></Style><MultiGeometry>${linesXml}</MultiGeometry></Placemark>`;
         })
         .join('');
-      const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>SR2D4 Isotermas e Clusters Meso-escala</name>${placemarks}</Document></kml>`;
+      const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>SR2D4 Isotermas e Clusters (${uhiMethod.toUpperCase()})</name>${placemarks}</Document></kml>`;
       const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'SR2D4-Isotermas-Meso.kml';
+      link.download = `SR2D4-Isotermas-${uhiMethod}.kml`;
       link.click();
       URL.revokeObjectURL(link.href);
     }
@@ -1528,7 +1598,7 @@ export default function App() {
         stats,
         ndvi: automatic.indices.ndvi,
         ndbi: automatic.indices.ndbi,
-        fileName: `${selectedFile.name} · ${automatic.landsat.itemId}`,
+        fileName: `${selectedFile.name} ·${automatic.landsat.itemId}`,
         bands: automatic.tiff.rasters.length,
       };
       lstCanvas.current = lst;
@@ -1548,7 +1618,6 @@ export default function App() {
     }
   };
 
-  // Histograma duplo de 24 faixas (Temperatura + Cores Perceptuais da Paleta Ativa)
   const colorTempHistogram = useMemo(() => {
     if (!raster) return [];
     const numBins = 24;
@@ -1570,16 +1639,26 @@ export default function App() {
       const tempStart = raster.stats.min + (span * i) / numBins;
       const tempEnd = raster.stats.min + (span * (i + 1)) / numBins;
       const pct = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0';
+      const midTemp = (tempStart + tempEnd) * 0.5;
+      const barColor =
+        displayMode === 'uhi'
+          ? (() => {
+              const z = computeClusteredZ(midTemp, midTemp, raster.stats, uhiMethod, draftUhiPower);
+              const [r, g, b] = sampleUhiColor(z);
+              return `rgb(${Math.round(r)}, ${Math.round(g)},${Math.round(b)})`;
+            })()
+          : sampleCssColorAt(tNorm, palette, draftCustomColors, false);
+
       return {
         count,
         pct,
         height: Math.max(6, Math.pow(count / peak, 0.78) * 100),
         tempLabel: `${tempStart.toFixed(1)}°C – ${tempEnd.toFixed(1)}°C (${pct}%)`,
-        shortLabel: `${((tempStart + tempEnd) * 0.5).toFixed(0)}°`,
-        color: sampleCssColorAt(tNorm, palette, draftCustomColors, displayMode === 'uhi'),
+        shortLabel: `${midTemp.toFixed(0)}°`,
+        color: barColor,
       };
     });
-  }, [displayMode, draftCustomColors, palette, raster]);
+  }, [displayMode, draftCustomColors, draftUhiPower, palette, raster, uhiMethod]);
 
   const legendStops = (selected: PaletteType) => getPaletteStopList(selected, draftCustomColors);
 
@@ -1689,1016 +1768,4 @@ export default function App() {
     drawLegend(ctx, 16, canvas.height - 190);
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
-    a.download = `SR2D4-${displayMode === 'uhi' ? 'UHI-classes' : `LST-${palette}`}.png`;
-    a.click();
-  };
-
-  const goTo = (lng: number, lat: number) => {
-    if (Number.isFinite(lng) && Number.isFinite(lat)) mapInstance.current?.flyTo({ center: [lng, lat], zoom: 13, essential: true });
-  };
-
-  const locateMe = () =>
-    navigator.geolocation?.getCurrentPosition(
-      ({ coords }) => goTo(coords.longitude, coords.latitude),
-      () => setSearchError(lang === 'pt' ? 'Permita o acesso à localização no navegador.' : 'Allow location access in your browser.'),
-    );
-
-  const searchPlace = async () => {
-    if (!search.trim()) return;
-    setSearching(true);
-    setSearchError('');
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=${lang === 'pt' ? 'pt-BR' : 'en'}&q=${encodeURIComponent(search.trim())}`,
-      );
-      const results = (await response.json()) as SearchResult[];
-      setSearchResults(results);
-      if (results[0]) goTo(Number(results[0].lon), Number(results[0].lat));
-      else setSearchError(t.searchError);
-    } catch {
-      setSearchError(t.searchError);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const startCurtainDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!swipeActive || !differenceReady) return;
-    event.preventDefault();
-    event.stopPropagation();
-    curtainDragging.current = true;
-    document.body.classList.add('is-curtain-dragging');
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  };
-
-  const goToCoordinates = () => {
-    const values = coordText.split(/[,;\s]+/).map(Number);
-    if (values.length >= 2) goTo(values[0], values[1]);
-  };
-
-  const zoomIn = () => mapInstance.current?.zoomIn();
-  const zoomOut = () => mapInstance.current?.zoomOut();
-
-  const togglePan = () => {
-    if (drawAoi || identifyMode) return;
-    const next = !panEnabled;
-    setPanEnabled(next);
-    if (next) mapInstance.current?.dragPan.enable();
-    else mapInstance.current?.dragPan.disable();
-  };
-
-  const toggleIdentify = () => {
-    const next = !identifyMode;
-    setIdentifyMode(next);
-    setHoverSample(null);
-    if (next) {
-      setPanEnabled(false);
-      mapInstance.current?.dragPan.disable();
-    } else {
-      setPanEnabled(true);
-      mapInstance.current?.dragPan.enable();
-    }
-  };
-
-  const visibleBandCount = raster?.bands ?? bandCount;
-  const displayBandLabels =
-    bandLabels.length === visibleBandCount
-      ? bandLabels
-      : Array.from({ length: visibleBandCount }, (_, i) => `${lang === 'pt' ? 'Camada' : 'Layer'} ${String(i + 1).padStart(2, '0')} · ${lang === 'pt' ? 'nome ausente' : 'name missing'}`);
-  const isStandardSr2d4TenBand =
-    displayBandLabels.length === 10 &&
-    displayBandLabels[2]?.includes('B04') &&
-    displayBandLabels[6]?.includes('B08') &&
-    displayBandLabels[8]?.includes('B11') &&
-    displayBandLabels[9]?.includes('B12');
-  const hasSpectralMetadata = displayBandLabels.some((label) => /B(?:and)?[-_ ]?0?[1-9]|B(?:and)?[-_ ]?1[0-2]|red|nir|swir/i.test(label));
-  const options = Array.from({ length: visibleBandCount }, (_, i) => (
-    <option value={i} key={i}>
-      {displayBandLabels[i]}
-    </option>
-  ));
-
-  const updateBand = (index: number, value: string) => setBands((prev) => prev.map((v, i) => (i === index ? value : v)));
-
-  const restoreMapNavigation = () => {
-    mapInstance.current?.dragPan.enable();
-    mapInstance.current?.scrollZoom.enable();
-    mapInstance.current?.doubleClickZoom.enable();
-    mapInstance.current?.touchZoomRotate.enable();
-    setPanEnabled(true);
-  };
-
-  const pauseMapNavigation = () => {
-    mapInstance.current?.dragPan.disable();
-    mapInstance.current?.scrollZoom.disable();
-    mapInstance.current?.doubleClickZoom.disable();
-    mapInstance.current?.touchZoomRotate.disable();
-    setPanEnabled(false);
-  };
-
-  const clearAoi = () => {
-    setAoi([]);
-    setDrawAoi(false);
-    restoreMapNavigation();
-  };
-
-  const finishAoi = () => {
-    if (aoi.length >= 3) {
-      setDrawAoi(false);
-      restoreMapNavigation();
-    }
-  };
-
-  const toggleAoi = () => {
-    const next = !drawAoi;
-    setDrawAoi(next);
-    setIdentifyMode(false);
-    setAoi(next ? [] : aoi);
-    setAoiStats(null);
-    if (next) pauseMapNavigation();
-    else restoreMapNavigation();
-  };
-
-  const analyzeAoi = () => {
-    if (!raster || aoi.length < 3 || !extent) return;
-    const values: number[] = [];
-    raster.data.forEach((value, index) => {
-      const lng = extent.west + ((index % raster.width) / raster.width) * (extent.east - extent.west);
-      const lat = extent.north - (Math.floor(index / raster.width) / raster.height) * (extent.north - extent.south);
-      if (pointInPolygon([lng, lat], aoi) && Number.isFinite(value)) values.push(value);
-    });
-    if (!values.length) {
-      setAoiStats(null);
-      return;
-    }
-    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-    let min = Infinity;
-    let max = -Infinity;
-    for (const value of values) {
-      min = Math.min(min, value);
-      max = Math.max(max, value);
-    }
-    const stats = { count: values.length, min, max, mean };
-    setAoiStats(stats);
-    setStatus(lang === 'pt' ? `AOI analisada · ${values.length.toLocaleString()} pixels` : `AOI analyzed · ${values.length.toLocaleString()} pixels`);
-  };
-
-  const downloadReport = () => {
-    if (!raster || !lstCanvas.current || !opticalCanvas.current) return;
-    let vegetation = 0;
-    let built = 0;
-    let water = 0;
-    let valid = 0;
-    raster.ndvi.forEach((value, index) => {
-      const ndbi = raster.ndbi[index];
-      if (!Number.isFinite(value) || !Number.isFinite(ndbi)) return;
-      valid++;
-      if (value > 0.3) vegetation++;
-      else if (value < 0 && ndbi < 0) water++;
-      else if (ndbi > 0.1) built++;
-    });
-    const pct = (value: number) => (valid ? ((value / valid) * 100).toFixed(1) : '0.0');
-    const image = document.createElement('canvas');
-    image.width = lstCanvas.current.width;
-    image.height = lstCanvas.current.height;
-    const imageCtx = image.getContext('2d');
-    if (!imageCtx) return;
-    imageCtx.drawImage(opticalCanvas.current, 0, 0);
-    imageCtx.globalAlpha = opacity;
-    imageCtx.drawImage(lstCanvas.current, 0, 0);
-    imageCtx.globalAlpha = 1;
-    const report = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Relatório SR2D4 / LST</title><style>body{font:15px Arial;color:#17343a;max-width:1050px;margin:0 auto;padding:35px}h1{color:#b96800}h2{border-bottom:2px solid #d7e4e2;padding-bottom:7px}.hero{width:100%;border-radius:8px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{padding:14px;background:#edf5f2;border-radius:7px}.metric b{display:block;font-size:24px;color:#b96800}.bar{height:20px;background:#55a58c;margin:6px 0;border-radius:3px}.note{padding:14px;background:#fff4d4;border-left:4px solid #ffb000}</style><h1>SR2D4 / LST Explorer</h1><p><b>Relatório técnico para apoio à gestão térmica urbana</b></p><p>Arquivo: ${raster.fileName} · EPSG:${raster.epsg} · ${raster.width} × ${raster.height} pixels</p><img class="hero" src="${image.toDataURL('image/png')}" alt="Mapa composto LST e imagem óptica"><h2>Resumo térmico</h2><div class="grid"><div class="metric">Mínima<b>${raster.stats.min.toFixed(1)} °C</b></div><div class="metric">Média<b>${raster.stats.mean.toFixed(1)} °C</b></div><div class="metric">Máxima<b>${raster.stats.max.toFixed(1)} °C</b></div><div class="metric">Desvio-padrão<b>${raster.stats.stdDev.toFixed(2)} °C</b></div></div><h2>Perfil espacial estimado</h2><p>Proporções calculadas a partir dos índices ópticos disponíveis; são indicadores de triagem, não classificação temática definitiva.</p><p>Vegetação (NDVI &gt; 0,3): <b>${pct(vegetation)}%</b></p><div class="bar" style="width:${pct(vegetation)}%"></div><p>Superfícies construídas (NDBI &gt; 0,1): <b>${pct(built)}%</b></p><div class="bar" style="width:${pct(built)}%;background:#d77951"></div><p>Possível água/superfície escura (NDVI e NDBI &lt; 0): <b>${pct(water)}%</b></p><div class="bar" style="width:${pct(water)}%;background:#4b87b9"></div><h2>Implicações para gestão</h2><ul><li>Priorizar inspeção de hotspots acima de ${(raster.stats.mean + 1.5 * raster.stats.stdDev).toFixed(1)} °C.</li><li>Comparar áreas construídas com parques e corredores de arborização.</li><li>Avaliar sombreamento, pavimentos e telhados com dados locais complementares.</li><li>Usar a AOI para comparar setores e orientar campanhas de campo.</li></ul><div class="note"><b>Limitação:</b> com Red/NIR/SWIR, árvores, asfalto, telhados, parques e água são estimados por índices e temperatura. A distinção entre telhado e pavimento, por exemplo, exige bandas, resolução ou dados auxiliares adicionais.</div><p>Gerado em ${new Date().toLocaleString('pt-BR')} pelo SR2D4 / LST Explorer.</p></html>`;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([report], { type: 'text/html' }));
-    a.download = 'SR2D4-LST-relatorio.html';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  const downloadComparisonPanel = async () => {
-    if (!comparisonPrimary || !comparisonSecondary || !differenceRender) return;
-    const load = (url: string) =>
-      new Promise<HTMLImageElement>((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = reject;
-        image.src = url;
-      });
-    const [a, b, d] = await Promise.all([load(comparisonPrimary.lstUrl), load(comparisonSecondary.lstUrl), load(differenceRender.url)]);
-    const width = 720;
-    const imageHeight = Math.round((width * a.height) / a.width);
-    const legendHeight = 150;
-    const height = imageHeight + legendHeight + 68;
-    const canvas = document.createElement('canvas');
-    canvas.width = width * 3;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.fillStyle = '#f1f1ee';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const panels = [
-      { image: a, title: `DATA A · ${comparisonPrimary.dateLabel} (LST °C)` },
-      { image: b, title: `DATA B · ${comparisonSecondary.dateLabel} (LST °C)` },
-      { image: d, title: 'DIFERENÇA (B − A) em °C' },
-    ];
-    ctx.font = '700 24px Arial';
-    ctx.textAlign = 'center';
-    panels.forEach((panel, index) => {
-      const x = index * width;
-      ctx.fillStyle = '#202428';
-      ctx.fillText(panel.title, x + width / 2, 34);
-      ctx.drawImage(panel.image, x + 12, 52, width - 24, imageHeight - 24);
-      ctx.strokeStyle = '#777';
-      ctx.strokeRect(x + 8, 44, width - 16, imageHeight + 36);
-      if (index === 2) {
-        drawDifferenceLegend(ctx, x + 12, imageHeight + 48, width - 24, differenceStats ?? { min: 0, max: 0 });
-      } else {
-        const stats = index === 0 ? comparisonPrimary.stats : comparisonSecondary.stats;
-        const gradient = ctx.createLinearGradient(x + 24, imageHeight + 72, x + width - 24, imageHeight + 72);
-        legendStops(palette).forEach((color, stopIndex, colors) => gradient.addColorStop(stopIndex / Math.max(colors.length - 1, 1), color));
-        ctx.fillStyle = gradient;
-        ctx.fillRect(x + 24, imageHeight + 62, width - 48, 18);
-        ctx.fillStyle = '#202428';
-        ctx.font = '600 16px Arial';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${stats.min.toFixed(1)} °C`, x + 24, imageHeight + 108);
-        ctx.textAlign = 'right';
-        ctx.fillText(`${stats.max.toFixed(1)} °C`, x + width - 24, imageHeight + 108);
-        ctx.textAlign = 'left';
-      }
-    });
-    const link = document.createElement('a');
-    link.href = canvas.toDataURL('image/png');
-    link.download = `mapa-diferenca-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`;
-    link.click();
-  };
-
-  const uhiLevel = raster ? raster.stats.mean + 1.5 * raster.stats.stdDev : 0;
-
-  return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <LogoMark />
-          <div>
-            <span className="eyebrow">{t.eyebrow}</span>
-            <h1>{t.title}</h1>
-          </div>
-        </div>
-        <div className="top-actions">
-          <span className={`status-dot ${raster ? 'active' : ''}`} />
-          <span className="status-label">{status || (raster ? t.ready : t.noData)}</span>
-          <button className="icon-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title={t.theme}>
-            <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
-          </button>
-          <button className="lang-button" onClick={() => setLang(lang === 'pt' ? 'en' : 'pt')}>
-            {lang === 'pt' ? 'EN' : 'PT'}
-          </button>
-        </div>
-      </header>
-
-      <div className="intro-strip">
-        <div>
-          <strong>{t.subtitle}</strong>
-          <span>
-            {raster
-              ? `${raster.fileName} · ${raster.width.toLocaleString()} × ${raster.height.toLocaleString()} px · EPSG:${raster.epsg}`
-              : 'Local-first analysis for SR2D4 multispectral products'}
-          </span>
-        </div>
-        <a className="colab-button" href={COLAB_URL} target="_blank" rel="noreferrer">
-          ↗ {t.colab}
-        </a>
-      </div>
-
-      <main className="workspace" style={{ '--rail-width': `${panelWidth}px` } as React.CSSProperties}>
-        <section className="map-stage">
-          <div ref={mapRef} className={`map-container ${identifyMode ? 'identify-active' : ''}`} />
-          {swipeActive && differenceReady && (
-            <div className="curtain-map" ref={curtainContainerRef} style={{ clipPath: `inset(0 0 0 ${swipePosition}%)` }} aria-label="Imagem da data 2" />
-          )}
-          {swipeActive && differenceReady && (
-            <>
-              <div className="curtain-label curtain-left">{comparisonPrimary?.dateLabel ?? 'DATA A'}</div>
-              <div className="curtain-label curtain-right">{comparisonSecondary?.dateLabel ?? 'DATA B'}</div>
-              <div
-                className="curtain-divider"
-                style={{ left: `${swipePosition}%` }}
-                onPointerDown={startCurtainDrag}
-                role="slider"
-                aria-label={lang === 'pt' ? 'Arrastar cortina entre data 1 e data 2' : 'Drag curtain between date 1 and date 2'}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={swipePosition}
-                tabIndex={0}
-              />
-            </>
-          )}
-          {showSearch ? (
-            <div className="map-search">
-              <div className="search-line">
-                <Icon name="search" />
-                <input value={search} placeholder={t.search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchPlace()} />
-                <button onClick={searchPlace} disabled={searching}>
-                  {searching ? '…' : t.go}
-                </button>
-                <button
-                  className="search-close"
-                  onClick={() => {
-                    setShowSearch(false);
-                    setSearchResults([]);
-                  }}
-                  aria-label={lang === 'pt' ? 'Fechar busca' : 'Close search'}
-                >
-                  ×
-                </button>
-              </div>
-              {searchResults.length > 0 && (
-                <div className="search-results">
-                  {searchResults.map((result) => (
-                    <button
-                      key={`${result.lat}-${result.lon}`}
-                      onClick={() => {
-                        goTo(Number(result.lon), Number(result.lat));
-                        setSearchResults([]);
-                      }}
-                    >
-                      {result.display_name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="coord-line">
-                <Icon name="pin" />
-                <input value={coordText} placeholder={t.coords} onChange={(e) => setCoordText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && goToCoordinates()} />
-                <button onClick={goToCoordinates}>{t.go}</button>
-                <button className="gps-button" onClick={locateMe} title={t.locate}>
-                  <Icon name="gps" />
-                </button>
-              </div>
-              {searchError && <small className="search-error">{searchError}</small>}
-            </div>
-          ) : (
-            <button className="search-open" onClick={() => setShowSearch(true)} title={t.search}>
-              <Icon name="search" />
-            </button>
-          )}
-          {!raster && !differenceReady && (
-            <div className="map-empty">
-              <div className="empty-orbit">◌</div>
-              <strong>{t.noData}</strong>
-              <span>{t.uploadHint}</span>
-            </div>
-          )}
-          {raster && (
-            <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '340px', zIndex: 5 }}>
-              <span>
-                {displayMode === 'uhi'
-                  ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})`
-                  : comparisonMode === 'difference' && differenceReady
-                    ? `Δ LST · ${comparisonPrimary?.dateLabel ?? 'data 1'} → ${comparisonSecondary?.dateLabel ?? 'data 2'}`
-                    : t.lst}
-              </span>
-              {comparisonMode === 'difference' && differenceReady && differenceStats ? (
-                <>
-                  <div className="difference-gradient" />
-                  <div>
-                    <b>{-differenceExtent.toFixed(1)}°C · ↓ resfria</b>
-                    <b>0°C</b>
-                    <b>+{differenceExtent.toFixed(1)}°C · ↑ aquece</b>
-                  </div>
-                  <small className="difference-note">Δ = imagem 2 − imagem 1</small>
-                </>
-              ) : displayMode === 'uhi' ? (
-                <>
-                  <div className="legend-gradient" style={{ background: uhiGradient }} />
-                  <div>
-                    <b>Frescor</b>
-                    <b>Neutro</b>
-                    <b>Forte</b>
-                    <b>Hotspot</b>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="legend-gradient" style={{ background: legendGradient }} />
-                  <div>
-                    <b>{(differenceStats?.min ?? raster.stats.min).toFixed(1)}°C</b>
-                    <b>{raster.stats.mean.toFixed(1)}°C</b>
-                    <b>{(differenceStats?.max ?? raster.stats.max).toFixed(1)}°C</b>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-          <div className="map-tools">
-            <button onClick={zoomIn} title="Zoom in">＋</button>
-            <button onClick={zoomOut} title="Zoom out">−</button>
-            <button className={panEnabled ? 'active' : ''} onClick={togglePan} title="Pan">✋</button>
-            <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title="Identify">ⓘ</button>
-            <button className={drawAoi ? 'active' : ''} onClick={toggleAoi} title={t.draw}>⌗</button>
-            {drawAoi && aoi.length >= 3 && (
-              <button onClick={finishAoi} title={lang === 'pt' ? 'Finalizar desenho' : 'Finish drawing'}>✓</button>
-            )}
-            {!drawAoi && aoi.length >= 3 && (
-              <button onClick={analyzeAoi} title={t.clip}>✓</button>
-            )}
-          </div>
-        </section>
-
-        <div
-          className="resize-handle"
-          onPointerDown={() => {
-            resizing.current = true;
-            document.body.classList.add('is-resizing');
-          }}
-          title={t.resize}
-        >
-          <Icon name="resize" />
-        </div>
-
-        <aside className="control-rail">
-          <div className="rail-scroll">
-            <div className="scroll-map-tools" aria-label={lang === 'pt' ? 'Controles rápidos do mapa' : 'Quick map controls'}>
-              <button onClick={zoomIn} title="Zoom in">＋</button>
-              <button onClick={zoomOut} title="Zoom out">−</button>
-              <button className={panEnabled ? 'active' : ''} onClick={togglePan} title="Pan">✋</button>
-              <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title={lang === 'pt' ? 'Identificar temperatura' : 'Identify temperature'}>ⓘ</button>
-              <button
-                className={drawAoi ? 'active' : ''}
-                onClick={drawAoi ? finishAoi : aoi.length >= 3 ? clearAoi : toggleAoi}
-                title={drawAoi ? (lang === 'pt' ? 'Finalizar AOI' : 'Finish AOI') : aoi.length >= 3 ? t.clear : t.draw}
-              >
-                ⌗
-              </button>
-            </div>
-
-            <section className="rail-card start-card">
-              <div className="card-kicker">00 / START HERE</div>
-              <div className="card-heading">
-                <h3>{lang === 'pt' ? 'Primeiros passos' : 'Start here'}</h3>
-                <span className="chip">{tutorialStep + 1}/4</span>
-              </div>
-              <p className="microcopy">{lang === 'pt' ? 'Veja o tutorial, entenda a metodologia e depois carregue seu raster.' : 'Watch the tutorial, review the methodology, then load your raster.'}</p>
-              <div className="start-actions">
-                <button onClick={() => { setTutorialStep(0); setShowTutorial(true); }}>▶ Tutorial</button>
-                <button onClick={() => setShowMethod(true)}>◈ {t.method}</button>
-                <button onClick={() => setShowHelp(true)}>？ {t.help}</button>
-                <button onClick={() => setShowLimits(true)}>△ {t.limitation}</button>
-                <button onClick={() => setShowMeta(true)} disabled={!raster}>⌁ {t.metadata}</button>
-              </div>
-            </section>
-
-            <section className="rail-card hero-card">
-              <div className="card-kicker">01 / INPUT</div>
-              <h2>{t.upload}</h2>
-              <p>{t.uploadHint}</p>
-              <label className="file-drop" style={{ cursor: 'pointer', position: 'relative', zIndex: 10 }}>
-                <input
-                  type="file"
-                  accept=".tif,.tiff,image/tiff,application/geotiff,application/octet-stream"
-                  style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', zIndex: 12 }}
-                  onChange={(e) => void handleFileChange(e.target.files?.[0] || null)}
-                />
-                <span className="upload-icon">↑</span>
-                <strong>{file ? file.name : lang === 'pt' ? 'Escolher GeoTIFF' : 'Choose GeoTIFF'}</strong>
-                <small>
-                  {file
-                    ? `${(file.size / 1024 / 1024).toFixed(1)} MB · ${visibleBandCount} ${lang === 'pt' ? 'bandas detectadas' : 'bands detected'}`
-                    : 'TIFF / BigTIFF supported by GeoTIFF reader'}
-                </small>
-              </label>
-
-              <div className="band-grid">
-                <h3>{t.bands}</h3>
-                <label title={lang === 'pt' ? 'Selecione a banda vermelha do sensor. Em Sentinel-2, normalmente Banda 04.' : 'Select the sensor red band. In Sentinel-2, usually Band 04.'}>
-                  {t.red}
-                  <small className="band-role">{lang === 'pt' ? 'selecione a camada identificada como Red/B04' : 'select the layer identified as Red/B04'}</small>
-                  <select value={bands[0]} onChange={(e) => updateBand(0, e.target.value)}>{options}</select>
-                </label>
-                <label title={lang === 'pt' ? 'Selecione a banda NIR. Em Sentinel-2, normalmente Banda 08.' : 'Select the NIR band. In Sentinel-2, usually Band 08.'}>
-                  {t.nir}
-                  <small className="band-role">{lang === 'pt' ? 'selecione a camada identificada como NIR/B08' : 'select the layer identified as NIR/B08'}</small>
-                  <select value={bands[1]} onChange={(e) => updateBand(1, e.target.value)}>{options}</select>
-                </label>
-                <label title={lang === 'pt' ? 'Selecione a banda SWIR. Em Sentinel-2, normalmente Banda 11 ou 12.' : 'Select the SWIR band. In Sentinel-2, usually Band 11 or 12.'}>
-                  {t.swir}
-                  <small className="band-role">{lang === 'pt' ? 'somente SWIR/B11 ou SWIR/B12; não use B10 por posição' : 'only SWIR/B11 or SWIR/B12; do not infer B10 by position'}</small>
-                  <select value={bands[2]} onChange={(e) => updateBand(2, e.target.value)}>{options}</select>
-                </label>
-              </div>
-
-              <div className="processing-log" aria-live="polite">
-                <div className="processing-log-head">
-                  <b>{lang === 'pt' ? 'Log de processamento' : 'Processing log'}</b>
-                  <span>{busy ? (lang === 'pt' ? 'em andamento' : 'running') : processingLog.length ? (lang === 'pt' ? 'última execução' : 'last run') : '—'}</span>
-                </div>
-                {processingLog.length ? (
-                  <div className="processing-log-list">
-                    {processingLog.map((entry, index) => (
-                      <div className={`processing-log-entry ${entry.level}`} key={`${entry.time}-${index}`}>
-                        <time>{entry.time}</time>
-                        <span>{entry.message}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p>{lang === 'pt' ? 'As etapas aparecerão aqui quando você clicar em Calcular temperatura.' : 'Steps will appear here when you click Calculate temperature.'}</p>
-                )}
-              </div>
-
-              {isStandardSr2d4TenBand && (
-                <p className="microcopy" style={{ color: '#9edb86' }}>
-                  <b>SR2D4/MS x10 reconhecido:</b> Camada 03 = B04 Red; Camada 07 = B08 NIR; Camada 09 = B11 SWIR-1 (recomendado) ou Camada 10 = B12 SWIR-2.{' '}
-                  <a href="https://www.researchgate.net/figure/Sentinel-2-band-characteristics_tbl1_314119510" target="_blank" rel="noreferrer">
-                    Referência das bandas Sentinel-2
-                  </a>.
-                </p>
-              )}
-              {!hasSpectralMetadata && (
-                <p className="microcopy" style={{ color: '#f2b84b' }}>
-                  {lang === 'pt'
-                    ? 'Aviso: este GeoTIFF não informa os nomes espectrais no metadata. Camada 10 não significa Sentinel-2 B10 nem SWIR. Confira a ordem usada no Colab antes de calcular.'
-                    : 'Warning: this GeoTIFF has no spectral names in its metadata. Layer 10 does not mean Sentinel-2 B10 or SWIR. Check the Colab export order before calculating.'}
-                </p>
-              )}
-
-              <button className="primary-button" onClick={() => void processFile()} disabled={!file || busy}>
-                {busy ? t.processing : t.calculate}
-                <span>→</span>
-              </button>
-              {error && <div className="error-box">{error}</div>}
-            </section>
-
-            {(raster || hoverSample || sample || identifyMode) && (
-              <section className="rail-card inspector-rail-card">
-                <div className="card-heading">
-                  <h3>ⓘ {t.sample}</h3>
-                  <span className="chip">{displayMode === 'uhi' ? 'UHI 1m' : '°C'}</span>
-                </div>
-                <div className="inspector-split">
-                  <div>
-                    <strong className="inspector-temperature">
-                      {hoverSample || sample ? `${(hoverSample || sample)!.temp.toFixed(1)}°C` : `${raster?.stats.mean.toFixed(1) ?? '—'}°C`}
-                    </strong>
-                    {raster && (
-                      <span className="inspector-uhi-class">
-                        {hoverSample || sample ? `${lang === 'pt' ? 'Nível local' : 'Local level'}: ` : `${lang === 'pt' ? 'Média da cena' : 'Scene mean'} · `}
-                        <b>
-                          {hoverSample || sample
-                            ? uhiClassLabel((hoverSample || sample)!.temp, raster.stats, uhiMethod, uhiPower, lang)
-                            : `${raster.stats.min.toFixed(1)}°C – ${raster.stats.max.toFixed(1)}°C`}
-                        </b>
-                      </span>
-                    )}
-                    {(hoverSample || sample) && (
-                      <div className="inspector-coordinates">
-                        Lat: {(hoverSample || sample)!.lat.toFixed(4)} · Lon: {(hoverSample || sample)!.lng.toFixed(4)}
-                      </div>
-                    )}
-                  </div>
-                  <div className="side-legends">
-                    <div className="side-legend">
-                      <b>{displayMode === 'uhi' ? 'Escala UHI (8 níveis)' : lang === 'pt' ? `Paleta: ${palette}` : `Palette: ${palette}`}</b>
-                      <i className="legend-gradient" style={{ background: legendGradient }} />
-                      <small>
-                        {displayMode === 'uhi' ? 'Frescor → Neutro → Hotspot' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}
-                      </small>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Histograma Integrado de Cores + Distribuição de Temperatura logo abaixo da leitura */}
-                {raster && colorTempHistogram.length > 0 && (
-                  <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(0,0,0,0.22)', borderRadius: '8px', border: '1px solid rgba(121,226,220,0.14)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', fontSize: '11px', opacity: 0.85 }}>
-                      <b>{t.histogram}</b>
-                      <span>σ = {raster.stats.stdDev.toFixed(2)}°C</span>
-                    </div>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: `repeat(${colorTempHistogram.length}, 1fr)`,
-                        alignItems: 'end',
-                        gap: '2px',
-                        height: '64px',
-                        paddingBottom: '4px',
-                      }}
-                    >
-                      {colorTempHistogram.map((bar, idx) => (
-                        <div
-                          key={idx}
-                          title={bar.tempLabel}
-                          style={{
-                            height: `${bar.height}%`,
-                            background: bar.color,
-                            borderRadius: '2px 2px 0 0',
-                            boxShadow: '0 0 2px rgba(0,0,0,0.4)',
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <div className="legend-gradient" style={{ background: legendGradient, height: '8px', borderRadius: '4px', margin: '2px 0 5px' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', opacity: 0.82 }}>
-                      <span>{raster.stats.min.toFixed(1)}°C</span>
-                      <span>Q25: {raster.stats.q25.toFixed(1)}°</span>
-                      <b>μ: {raster.stats.mean.toFixed(1)}°C</b>
-                      <span>Q75: {raster.stats.q75.toFixed(1)}°</span>
-                      <span>{raster.stats.max.toFixed(1)}°C</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="control-row" style={{ marginTop: '10px' }}>
-                  <span>{lang === 'pt' ? 'Modo' : 'Mode'}</span>
-                  <select value={displayMode} onChange={(e) => setDisplayMode(e.target.value as 'temperature' | 'uhi')}>
-                    <option value="temperature">{lang === 'pt' ? 'Temperatura (°C)' : 'Temperature (°C)'}</option>
-                    <option value="uhi">UHI / {lang === 'pt' ? 'ilhas de calor (1m)' : 'heat islands (1m)'}</option>
-                  </select>
-                </div>
-
-                {displayMode === 'temperature' ? (
-                  <>
-                    <div className="control-row">
-                      <span>{t.palette}</span>
-                      <select value={palette} onChange={(e) => setPalette(e.target.value as PaletteType)}>
-                        <option value="ironbow">Ironbow (Perceptual HD)</option>
-                        <option value="spectral">Spectral</option>
-                        <option value="jet">Jet</option>
-                        <option value="viridis">Viridis</option>
-                        <option value="magma">Magma</option>
-                        <option value="coolwarm">Coolwarm</option>
-                        <option value="terrain">Terrain</option>
-                        <option value="grayscale">Grayscale</option>
-                        <option value="custom">Custom (Rápido)</option>
-                      </select>
-                    </div>
-                    {palette === 'custom' && (
-                      <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                          <small style={{ fontSize: '11px', opacity: 0.85 }}>
-                            {lang === 'pt' ? 'Toque para editar paradas (instantâneo):' : 'Edit stops (instant):'}
-                          </small>
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <button
-                              type="button"
-                              style={{ padding: '2px 6px', fontSize: '10px' }}
-                              onClick={() => setDraftCustomColors((prev) => [...prev].reverse())}
-                            >
-                              ⇄ {lang === 'pt' ? 'Inverter' : 'Invert'}
-                            </button>
-                            <button
-                              type="button"
-                              style={{ padding: '2px 6px', fontSize: '10px' }}
-                              onClick={() => setDraftCustomColors(DEFAULT_CUSTOM_COLORS)}
-                            >
-                              ↺ Reset
-                            </button>
-                          </div>
-                        </div>
-                        <div className="custom-colors" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px' }}>
-                          {draftCustomColors.map((color, index) => (
-                            <input
-                              key={index}
-                              type="color"
-                              value={color}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setDraftCustomColors((colors) => colors.map((item, i) => (i === index ? val : item)));
-                              }}
-                              title={`Stop ${index + 1}`}
-                              style={{ width: '100%', height: '28px', cursor: 'pointer', border: 'none', borderRadius: '4px' }}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div className="control-row">
-                      <span>{lang === 'pt' ? 'Clustering UHI' : 'UHI Clustering'}</span>
-                      <select value={uhiMethod} onChange={(e) => setUhiMethod(e.target.value as UhiClusterMethod)}>
-                        <option value="zscore">{lang === 'pt' ? 'Z-Score (Desvio-Padrão)' : 'Z-Score (Std Dev)'}</option>
-                        <option value="quantiles">{lang === 'pt' ? 'Quantis Adaptativos (IQR)' : 'Adaptive Quantiles (IQR)'}</option>
-                        <option value="natural">{lang === 'pt' ? 'Quebras Naturais (Jenks-Otsu)' : 'Natural Breaks (Jenks)'}</option>
-                        <option value="kernel">{lang === 'pt' ? 'Kernel Espacial (Gi* Hotspot)' : 'Spatial Kernel (Gi* Hotspot)'}</option>
-                      </select>
-                    </div>
-                    <div className="control-row">
-                      <span>
-                        {lang === 'pt' ? 'Potenciação (γ)' : 'Power (γ)'} <b>{uhiPower.toFixed(2)}x</b>
-                      </span>
-                      <input
-                        type="range"
-                        min="0.60"
-                        max="2.20"
-                        step="0.05"
-                        value={uhiPower}
-                        onChange={(e) => setUhiPower(Number(e.target.value))}
-                      />
-                    </div>
-                  </>
-                )}
-
-                <p className="microcopy">{lang === 'pt' ? 'Clique em qualquer ponto do mapa para inspecionar a temperatura de 1m.' : 'Click anywhere on the map to inspect 1m temperature.'}</p>
-              </section>
-            )}
-
-            <section className="rail-card">
-              <div className="card-heading">
-                <h3><Icon name="layers" /> {t.layers}</h3>
-                <span className="chip">{raster ? (uhiSurfaceVisible ? '3' : '2') : '0'}</span>
-              </div>
-              <LayerRow label={t.lst} visible={visibleLst} onToggle={() => setVisibleLst(!visibleLst)} color="thermal" />
-              <LayerRow label={t.optical} visible={visibleOptical} onToggle={() => setVisibleOptical(!visibleOptical)} color="optical" />
-              {raster && (
-                <LayerRow
-                  label={lang === 'pt' ? 'Clusterizar / Isotermas (vetor)' : 'Cluster / Isotherms (vector)'}
-                  visible={uhiSurfaceVisible}
-                  onToggle={() => setUhiSurfaceVisible(!uhiSurfaceVisible)}
-                  color="thermal"
-                />
-              )}
-              <div className="control-row">
-                <span>{t.basemap}</span>
-                <select value={provider} onChange={(e) => setProvider(e.target.value as Provider)}>
-                  <option value="osm">OpenStreetMap</option>
-                  <option value="esri">Esri World Imagery</option>
-                </select>
-              </div>
-              <div className="control-row">
-                <span>{t.opacity}</span>
-                <input type="range" min="0" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} />
-              </div>
-              <div className="control-row">
-                <span>{t.contrast}</span>
-                <input type="range" min="-1" max="1" step="0.05" value={contrast} onChange={(e) => setContrast(Number(e.target.value))} />
-              </div>
-            </section>
-
-            <section className="rail-card compare-card">
-              <div className="card-heading">
-                <h3>{t.compare}</h3>
-                <span className="chip">{comparisonImages.length ? `${comparisonImages.length} LST` : '—'}</span>
-              </div>
-              <p className="microcopy comparison-help">
-                {lang === 'pt'
-                  ? 'Escolha quantas datas deseja comparar. Este módulo é independente: você pode carregar apenas as imagens da comparação, sem carregar o produto principal. Cada arquivo será processado em RGB, LST e UHI; o nome mostra a data detectada (AAAA-MM-DD).'
-                  : 'Choose how many dates to compare. Each file is processed as RGB, LST and UHI; the name shows the detected date (YYYY-MM-DD).'}
-              </p>
-              <div className="control-row comparison-count">
-                <span>{lang === 'pt' ? 'Quantidade de imagens' : 'Number of images'}</span>
-                <select value={comparisonCount} onChange={(e) => updateComparisonCount(Number(e.target.value))}>
-                  {[2, 3, 4, 5, 6].map((value) => (
-                    <option key={value} value={value}>{value}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="comparison-file-list">
-                {comparisonFiles.map((selected, index) => (
-                  <label className="comparison-file" key={index} style={{ cursor: 'pointer', position: 'relative' }}>
-                    <span>
-                      <b>{lang === 'pt' ? `Imagem ${index + 1}` : `Image ${index + 1}`}</b>
-                      <small>{selected ? `${imageDateLabel(selected.name, index)} · ${selected.name}` : lang === 'pt' ? 'Selecione um GeoTIFF SR2D4/MS' : 'Select an SR2D4/MS GeoTIFF'}</small>
-                    </span>
-                    <input
-                      type="file"
-                      accept=".tif,.tiff,image/tiff,application/geotiff,application/octet-stream"
-                      style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', zIndex: 12 }}
-                      onChange={(e) => {
-                        const selectedFile = e.target.files?.[0] ?? null;
-                        setComparisonFiles((previous) => previous.map((item, itemIndex) => (itemIndex === index ? selectedFile : item)));
-                        setDifferenceReady(false);
-                      }}
-                      disabled={busy}
-                    />
-                  </label>
-                ))}
-              </div>
-              {comparisonImages.length > 0 && (
-                <div className="comparison-list">
-                  {comparisonImages.map((image) => (
-                    <div className="comparison-result" key={image.id}>
-                      <b>{image.dateLabel}</b>
-                      <span>{image.name}</span>
-                      <em>RGB · LST · UHI</em>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="compare-actions">
-                <button onClick={calculateDifference} disabled={busy || comparisonFiles.filter(Boolean).length < 2}>
-                  {busy ? (lang === 'pt' ? 'Processando…' : 'Processing…') : lang === 'pt' ? 'Calcular diferença Δ LST (2 − 1)' : 'Calculate Δ LST (2 − 1)'}
-                </button>
-                <button onClick={() => setSwipeActive(!swipeActive)} disabled={!differenceReady} className={swipeActive ? 'active' : ''}>
-                  {swipeActive ? (lang === 'pt' ? 'Cortina ativa' : 'Curtain active') : lang === 'pt' ? 'Cortina' : 'Curtain'}
-                </button>
-                <button onClick={() => void downloadComparisonPanel()} disabled={!differenceReady}>
-                  {lang === 'pt' ? 'Exportar A / B / Δ' : 'Export A / B / Δ'}
-                </button>
-              </div>
-              {swipeActive && differenceReady && (
-                <label className="swipe-control">
-                  <span>
-                    {lang === 'pt' ? 'Cortina · esquerda data 1 / direita data 2' : 'Date 1 → date 2'} <b>{swipePosition}%</b>
-                  </span>
-                  <input type="range" min="0" max="100" value={swipePosition} onChange={(e) => setSwipePosition(Number(e.target.value))} />
-                </label>
-              )}
-              {differenceReady && (
-                <p className="microcopy comparison-help">
-                  {lang === 'pt'
-                    ? 'A diferença é calculada pixel a pixel. Variações menores que 1 desvio-padrão são tratadas como mudança fraca.'
-                    : 'The difference is calculated pixel by pixel. Changes below 1 standard deviation are treated as weak.'}
-                </p>
-              )}
-              {differenceReady && differenceRender && comparisonPrimary && comparisonSecondary && (
-                <div className="comparison-triptych">
-                  <figure>
-                    <img src={comparisonPrimary.lstUrl} alt="Data A LST" />
-                    <figcaption>DATA A · {comparisonPrimary.dateLabel}</figcaption>
-                  </figure>
-                  <figure>
-                    <img src={comparisonSecondary.lstUrl} alt="Data B LST" />
-                    <figcaption>DATA B · {comparisonSecondary.dateLabel}</figcaption>
-                  </figure>
-                  <figure>
-                    <img src={differenceRender.url} alt="Diferença LST" />
-                    <figcaption>Δ LST · B − A</figcaption>
-                  </figure>
-                </div>
-              )}
-            </section>
-
-            {raster && (
-              <>
-                <section className="rail-card">
-                  <div className="card-heading">
-                    <h3>{t.stats}</h3>
-                    <span className="chip">°C</span>
-                  </div>
-                  <div className="metric-grid">
-                    <Metric label={t.min} value={raster.stats.min.toFixed(1)} />
-                    <Metric label={t.mean} value={raster.stats.mean.toFixed(1)} />
-                    <Metric label={t.max} value={raster.stats.max.toFixed(1)} />
-                    <Metric label={t.std} value={raster.stats.stdDev.toFixed(2)} />
-                  </div>
-                  <p className="microcopy">
-                    {t.uhiText} {raster.stats.max >= uhiLevel ? `Hotspot threshold: ${uhiLevel.toFixed(1)}°C` : ''}
-                  </p>
-                </section>
-
-                <section className="rail-card">
-                  <div className="card-heading">
-                    <h3>{t.indices}</h3>
-                    <span className="chip">MS</span>
-                  </div>
-                  <div className="metric-grid index-grid">
-                    <Metric label={t.ndvi} value={meanOf(raster.ndvi).toFixed(3)} />
-                    <Metric label={t.ndbi} value={meanOf(raster.ndbi).toFixed(3)} />
-                  </div>
-                </section>
-
-                <section className="rail-card">
-                  <div className="card-heading">
-                    <h3>{t.aoi}</h3>
-                    <span className="chip">{aoi.length >= 3 ? 'active' : drawAoi ? `${aoi.length} pts` : '—'}</span>
-                  </div>
-                  <p className="microcopy">
-                    {aoi.length >= 3
-                      ? aoiStats
-                        ? `${lang === 'pt' ? 'Resultado: ' : 'Result: '}${aoiStats.mean.toFixed(2)}°C · ${aoiStats.count.toLocaleString()} pixels · ${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C`
-                        : lang === 'pt'
-                          ? 'AOI pronta. Clique em Analisar AOI para calcular os pixels internos.'
-                          : 'AOI ready. Click Analyze AOI to calculate the pixels inside.'
-                      : t.aoiHelp}
-                  </p>
-                  <div className="button-row">
-                    <button onClick={drawAoi ? finishAoi : aoi.length >= 3 ? clearAoi : toggleAoi}>
-                      {drawAoi ? (lang === 'pt' ? 'Finalizar AOI' : 'Finish AOI') : aoi.length >= 3 ? t.clear : t.draw}
-                    </button>
-                    <button disabled={aoi.length < 3} onClick={analyzeAoi}>{t.clip}</button>
-                    <button disabled={aoi.length < 3} onClick={exportAoiPng}>AOI PNG</button>
-                    <button disabled={aoi.length < 3} onClick={exportAoiTiff}>AOI GeoTIFF</button>
-                  </div>
-                </section>
-
-                <section className="rail-card">
-                  <div className="card-heading">
-                    <h3>{t.export}</h3>
-                  </div>
-                  <div className="export-grid">
-                    <button onClick={() => setUhiSurfaceVisible(!uhiSurfaceVisible)}>
-                      {uhiSurfaceVisible ? (lang === 'pt' ? 'Ocultar Isotermas' : 'Hide Isotherms') : lang === 'pt' ? 'Ver Isotermas (Meso)' : 'Show Isotherms'}
-                    </button>
-                    <button onClick={() => exportVectorIsotherms('geojson')}>{lang === 'pt' ? 'Isotermas GeoJSON' : 'Isotherms GeoJSON'}</button>
-                    <button onClick={() => exportVectorIsotherms('kml')}>{lang === 'pt' ? 'Isotermas KML' : 'Isotherms KML'}</button>
-                    <button onClick={exportPng}>{t.png}</button>
-                    <button onClick={() => downloadFloat32Tiff(raster.data, raster.width, raster.height, 'LST-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected)}>
-                      {t.tiff}
-                    </button>
-                    <button onClick={() => downloadUhiTiff(raster.data, raster.width, raster.height, 'UHI-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected, raster.stats.mean, raster.stats.stdDev)}>
-                      {t.uhi}
-                    </button>
-                    <button disabled={!uhiSurface} onClick={() => uhiSurface && downloadUhiSurface(uhiSurface)}>
-                      {lang === 'pt' ? 'Grade UHI GeoJSON' : 'UHI Grid GeoJSON'}
-                    </button>
-                    <button onClick={downloadReport}>{t.report}</button>
-                  </div>
-                </section>
-              </>
-            )}
-          </div>
-        </aside>
-      </main>
-
-      {(showMethod || showHelp || showMeta || showLimits) && (
-        <div
-          className="dialog-backdrop"
-          onClick={() => {
-            setShowMethod(false);
-            setShowHelp(false);
-            setShowMeta(false);
-            setShowLimits(false);
-          }}
-        >
-          <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
-            <button
-              className="dialog-close"
-              onClick={() => {
-                setShowMethod(false);
-                setShowHelp(false);
-                setShowMeta(false);
-                setShowLimits(false);
-              }}
-            >
-              ×
-            </button>
-            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
-            <h2>{showMethod ? t.method : showHelp ? t.help : showLimits ? t.limitation : t.metadata}</h2>
-            {showMethod && <p>{t.methodText}</p>}
-            {showHelp && <p>{t.helpText}</p>}
-            {showLimits && <p>{t.limitationText}</p>}
-            {showMeta && raster && (
-              <div className="meta-list">
-                <span><b>File</b>{raster.fileName}</span>
-                <span><b>Dimensions</b>{raster.width} × {raster.height}</span>
-                <span><b>EPSG</b>{raster.epsg}</span>
-                <span><b>Bounds</b>{extent?.west.toFixed(4)}, {extent?.south.toFixed(4)} → {extent?.east.toFixed(4)}, {extent?.north.toFixed(4)}</span>
-                <span><b>Bands</b>{raster.bands}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {showTutorial && (
-        <div className="tutorial-backdrop">
-          <div className="tutorial-card">
-            <div className="tutorial-visual">
-              <div className={`tutorial-orbit step-${tutorialStep}`}>
-                <LogoMark />
-                <span>{tutorialStep + 1}</span>
-              </div>
-            </div>
-            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
-            <h2>
-              {[
-                lang === 'pt' ? 'Explore o mapa' : 'Explore the map',
-                lang === 'pt' ? 'Carregue suas bandas' : 'Load your bands',
-                lang === 'pt' ? 'Calcule a temperatura' : 'Calculate temperature',
-                lang === 'pt' ? 'Compare e exporte' : 'Compare and export',
-              ][tutorialStep]}
-            </h2>
-            <p>
-              {[
-                lang === 'pt' ? 'Busque uma cidade, use o GPS ou digite longitude e latitude para posicionar o mapa.' : 'Search a place, use GPS, or enter longitude and latitude to position the map.',
-                lang === 'pt' ? 'Carregue o GeoTIFF SR2D4; escolha somente Red, NIR e SWIR. O Landsat térmico será localizado automaticamente.' : 'Load the GeoTIFF and choose Red, NIR and SWIR from all detected bands.',
-                lang === 'pt' ? 'A LST vem do Landsat ST_B10 mais próximo e é transferida ao SR2D4 por regressão coarse-to-fine conservativa.' : 'LST comes from the nearest Landsat ST_B10 and is transferred to SR2D4 with conservative coarse-to-fine regression.',
-                lang === 'pt' ? 'Use camadas, AOI, estatísticas, histogramas e exportações para documentar o resultado.' : 'Use layers, AOI, statistics, histograms and exports to document the result.',
-              ][tutorialStep]}
-            </p>
-            <div className="tutorial-dots">
-              {[0, 1, 2, 3].map((step) => (
-                <i className={step === tutorialStep ? 'active' : ''} key={step} />
-              ))}
-            </div>
-            <div className="tutorial-actions">
-              <button onClick={closeTutorial}>{lang === 'pt' ? 'Pular' : 'Skip'}</button>
-              {tutorialStep < 3 ? (
-                <button className="primary-button" onClick={() => setTutorialStep((step) => step + 1)}>
-                  {lang === 'pt' ? 'Próximo' : 'Next'} →
-                </button>
-              ) : (
-                <button className="primary-button" onClick={closeTutorial}>
-                  {lang === 'pt' ? 'Começar' : 'Start'} →
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+    a.download = `SR2D4-${displayMode
