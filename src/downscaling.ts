@@ -17,14 +17,7 @@ export type TsHarpResult = {
   coarseHeight: number;
 };
 
-type Features = {
-  ndvi: Float32Array;
-  ndbi: Float32Array;
-  ndwi: Float32Array;
-  red?: Float32Array;
-  nir?: Float32Array;
-};
-
+type Features = { ndvi: Float32Array; ndbi: Float32Array; ndwi: Float32Array };
 type CellStats = { count: number; sumNdvi: number; sumNdbi: number; sumNdwi: number };
 
 function solveRidge(matrix: number[][], vector: number[], ridge = 1e-4): number[] | null {
@@ -292,63 +285,41 @@ function sampleBilinear(
   return wSum > 0 ? sum / wSum : fallback;
 }
 
-/**
- * Normaliza uma banda óptica arbitrária (como Red B04 ou NIR B08 de 1m) para [0, 1]
- * usando percentis robustos para extrair bordas de telhados, recuos sombreados e ruas.
- */
-function buildNormalizedOptical1m(
-  redBand: Float32Array | undefined,
-  nirBand: Float32Array | undefined,
-  ndvi: Float32Array,
-  ndbi: Float32Array,
-  nFine: number,
-): { roofIndex1m: Float32Array; lum1m: Float32Array } {
-  const roofIndex1m = new Float32Array(nFine);
-  const lum1m = new Float32Array(nFine);
-
-  if (!redBand || !nirBand || redBand.length !== nFine || nirBand.length !== nFine) {
-    for (let i = 0; i < nFine; i += 1) {
-      const vNdvi = Number.isFinite(ndvi[i]) ? ndvi[i] : 0;
-      const vNdbi = Number.isFinite(ndbi[i]) ? ndbi[i] : 0;
-      roofIndex1m[i] = Math.max(0, Math.min(1, 0.5 + 0.8 * vNdbi - 0.6 * vNdvi));
-      lum1m[i] = roofIndex1m[i];
-    }
-    return { roofIndex1m, lum1m };
-  }
-
-  const samplesR: number[] = [];
-  const samplesN: number[] = [];
-  const step = Math.max(1, Math.floor(nFine / 25000));
-  for (let i = 0; i < nFine; i += step) {
-    const r = redBand[i];
-    const n = nirBand[i];
-    if (Number.isFinite(r) && r > 0 && Number.isFinite(n) && n > 0) {
-      samplesR.push(r);
-      samplesN.push(n);
+function findPercentileTemp(histBins: Uint32Array, targetCount: number): number {
+  let acc = 0;
+  for (let b = 0; b < histBins.length; b += 1) {
+    acc += histBins[b];
+    if (acc >= targetCount) {
+      return -5 + (b / histBins.length) * 70;
     }
   }
+  return 65;
+}
 
-  samplesR.sort((a, b) => a - b);
-  samplesN.sort((a, b) => a - b);
-
-  const rLow = samplesR.length > 10 ? samplesR[Math.floor(samplesR.length * 0.02)] : 0;
-  const rHigh = samplesR.length > 10 ? samplesR[Math.floor(samplesR.length * 0.98)] : 1;
-  const nLow = samplesN.length > 10 ? samplesN[Math.floor(samplesN.length * 0.02)] : 0;
-  const nHigh = samplesN.length > 10 ? samplesN[Math.floor(samplesN.length * 0.98)] : 1;
-
-  const rSpan = Math.max(1e-5, rHigh - rLow);
-  const nSpan = Math.max(1e-5, nHigh - nLow);
-
-  for (let i = 0; i < nFine; i += 1) {
-    const rNorm = Math.max(0, Math.min(1.15, (redBand[i] - rLow) / rSpan));
-    const nNorm = Math.max(0, Math.min(1.15, (nirBand[i] - nLow) / nSpan));
-    // Luminância pancromática de 1m: separa telhados iluminados vs recuos/sombras/asfalto escuro
-    lum1m[i] = 0.62 * rNorm + 0.38 * nNorm;
-    // Índice de telhado em 1m: telha cerâmica/metálica tem Red alto; rua asfaltada e sombra têm Red baixo
-    roofIndex1m[i] = 0.75 * rNorm + 0.25 * Math.max(0, rNorm - 0.65 * nNorm);
+function computeBioSignal(
+  ndvi: number,
+  ndbi: number,
+  ndwi: number,
+  dNdviMicro: number,
+  dNdviMeso: number,
+  dNdbiMicro: number,
+  dNdbiMeso: number,
+): number {
+  if (ndwi > 0.12 && ndvi < 0.14) {
+    const waterIntensity = Math.min(1, (ndwi - 0.12) / 0.28);
+    return -2.8 - 0.55 * waterIntensity + 1.2 * dNdbiMicro;
   }
-
-  return { roofIndex1m, lum1m };
+  if (ndvi >= 0.22) {
+    const vegNorm = Math.min(1, (ndvi - 0.22) / 0.58);
+    const moistureCool = Math.max(-0.25, Math.min(0.25, ndwi * 0.8));
+    const canopyTexture = 3.4 * dNdviMicro + 1.9 * dNdviMeso - 1.8 * dNdbiMicro;
+    return -0.28 - 2.15 * Math.pow(vegNorm, 0.85) - moistureCool - canopyTexture;
+  }
+  const dryImpervious = Math.max(0, 0.22 - ndvi) * 2.4;
+  const rawRoof = Math.max(0, ndbi - 0.02) * 4.4 + Math.max(0, -ndwi - 0.05) * 1.8;
+  const roofHotspot = 2.2 * Math.tanh(rawRoof / 2.2);
+  const houseBoundaryContrast = 4.4 * dNdbiMicro + 1.9 * dNdbiMeso - 3.6 * dNdviMicro;
+  return 0.15 + dryImpervious + roofHotspot + houseBoundaryContrast;
 }
 
 export function downscaleLandsatLST(
@@ -491,22 +462,10 @@ export function downscaleLandsatLST(
   }
   const r2 = ssTot > 1e-6 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
 
-  // Extração da morfologia óptica real de 1m (Red B04 e NIR B08) + SWIR estabilizado em 8m
-  const { roofIndex1m, lum1m } = buildNormalizedOptical1m(
-    fineFeatures.red,
-    fineFeatures.nir,
-    fineFeatures.ndvi,
-    fineFeatures.ndbi,
-    nFine,
-  );
-
   const ndviMicro = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 2);
   const ndviMeso = fastSeparableBlur(fineFeatures.ndvi, fineWidth, fineHeight, 12);
-  // Estabiliza o NDBI com raio 6m para eliminar a inversão de sinal de 1m do NIR contra o SWIR de 20m
-  const ndbiSmooth = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 6);
-  const lumMicro = fastSeparableBlur(lum1m, fineWidth, fineHeight, 2);
-  const lumMeso = fastSeparableBlur(lum1m, fineWidth, fineHeight, 14);
-  const roofMeso = fastSeparableBlur(roofIndex1m, fineWidth, fineHeight, 12);
+  const ndbiMicro = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 2);
+  const ndbiMeso = fastSeparableBlur(fineFeatures.ndbi, fineWidth, fineHeight, 12);
 
   const bioIndex = new Float32Array(nFine);
 
@@ -522,39 +481,10 @@ export function downscaleLandsatLST(
 
     const dNdviMicro = ndvi - ndviMicro[i];
     const dNdviMeso = ndviMicro[i] - ndviMeso[i];
-    // Contraste real de 1 metro entre telhado iluminado (>0) e recuo/muro/rua sombreada (<0)
-    const dLumMicro = lum1m[i] - lumMicro[i];
-    const dRoofMeso = roofIndex1m[i] - roofMeso[i];
+    const dNdbiMicro = ndbi - ndbiMicro[i];
+    const dNdbiMeso = ndbiMicro[i] - ndbiMeso[i];
 
-    let val: number;
-
-    if (ndwi > 0.12 && ndvi < 0.14) {
-      const waterIntensity = Math.min(1, (ndwi - 0.12) / 0.28);
-      val = -2.85 - 0.55 * waterIntensity + 1.1 * dLumMicro;
-    } else if (ndvi >= 0.22) {
-      const vegNorm = Math.min(1, (ndvi - 0.22) / 0.58);
-      const moistureCool = Math.max(-0.25, Math.min(0.25, ndwi * 0.8));
-      const canopyTexture = 3.2 * dNdviMicro + 1.8 * dNdviMeso + 1.4 * dLumMicro;
-      val = -0.32 - 2.15 * Math.pow(vegNorm, 0.85) - moistureCool + canopyTexture;
-    } else {
-      // Malha Urbana em 1 Metro:
-      // 1) Base impermeável moderada (ruas e calçadas ficam em vermelho/laranja-escuro, não amarelo!)
-      const dryImpervious = Math.max(0, 0.22 - ndvi) * 1.85;
-      // 2) Diferenciação Telhado vs Rua: guiada pelo Red/NIR de 1m + SWIR meso estabilizado
-      const swMeso = Math.max(0, ndbiSmooth[i] - 0.01) * 2.6;
-      const roofSignal = Math.max(-0.65, Math.min(1.35, (roofIndex1m[i] - 0.42) * 2.4 + dRoofMeso * 1.9));
-      // 3) Divisa de Polígonos em 1m: frestas, muros e recuos sombreados entre casas (dLumMicro < 0) esfriam nitidamente!
-      const wallAndStreetSeparation =
-        dLumMicro < 0 ? 4.8 * dLumMicro : 2.4 * dLumMicro - 2.2 * dNdviMicro;
-
-      // 4) Bônus exclusivo para Mega-Coberturas Industriais/Comerciais (Anhembi, Hangares: alta luminância na janela de 29m)
-      const megaRoofHotspot = Math.max(0, lumMeso[i] - 0.62) * 3.4;
-
-      const rawUrban = 0.08 + dryImpervious + swMeso + roofSignal + wallAndStreetSeparation + megaRoofHotspot;
-      val = 2.65 * Math.tanh(rawUrban / 2.45);
-    }
-
-    bioIndex[i] = val;
+    bioIndex[i] = computeBioSignal(ndvi, ndbi, ndwi, dNdviMicro, dNdviMeso, dNdbiMicro, dNdbiMeso);
   }
 
   const output = new Float32Array(nFine);
@@ -607,16 +537,15 @@ export function downscaleLandsatLST(
 
       const gx = (bEast - bWest) * 0.5;
       const gy = (bSouth - bNorth) * 0.5;
-      const hasVolume = ndviFine >= 0.30 || bCenter > 0.45;
-      const relief3D = hasVolume ? Math.max(-0.68, Math.min(0.68, (gx * sunDirX + gy * sunDirY) * 0.45)) : 0;
+      const hasVolume = ndviFine >= 0.32 || bCenter > 0.75;
+      const relief3D = hasVolume ? Math.max(-0.70, Math.min(0.70, (gx * sunDirX + gy * sunDirY) * 0.46)) : 0;
 
-      // Operador de Borda Assimétrico: acentua o sulco escuro/frio que divide cada telhado do vizinho
       const meanNeigh = 0.25 * (bEast + bWest + bSouth + bNorth);
-      const lap = bCenter - meanNeigh;
-      const polygonGroove =
-        lap < 0
-          ? Math.max(-1.15, lap * 1.15)
-          : Math.min(0.65, lap * 0.60);
+      const laplacianEdge = bCenter - meanNeigh;
+      const polygonWallLine =
+        ndviFine < 0.22
+          ? Math.max(-1.05, Math.min(1.05, laplacianEdge * 0.95 + (ndbiFine - ndbiMicro[index]) * 1.4))
+          : Math.max(-0.70, Math.min(0.70, laplacianEdge * 0.55));
 
       const tCoarseLocal = sampleBilinear(smoothCoarseLST, coarseWidth, coarseHeight, fx, fy, coarseMedian);
       const ndviCoarseLocal = sampleBilinear(coarseNdviGrid, coarseWidth, coarseHeight, fx, fy, fallbackNdvi);
@@ -625,22 +554,22 @@ export function downscaleLandsatLST(
 
       const coarseBioExpected =
         ndviCoarseLocal >= 0.22
-          ? -0.32 - 2.15 * Math.pow(Math.min(1, (ndviCoarseLocal - 0.22) / 0.58), 0.85) - 0.25 * ndwiCoarseLocal
-          : 0.12 + Math.max(0, 0.22 - ndviCoarseLocal) * 1.85 + Math.max(0, ndbiCoarseLocal - 0.01) * 2.6;
+          ? -0.28 - 2.15 * Math.pow(Math.min(1, (ndviCoarseLocal - 0.22) / 0.58), 0.85) - 0.25 * ndwiCoarseLocal
+          : 0.15 + Math.max(0, 0.22 - ndviCoarseLocal) * 2.4 + Math.max(0, ndbiCoarseLocal - 0.02) * 3.8;
 
-      const rawDelta = (bCenter - 0.60 * coarseBioExpected) + relief3D + polygonGroove;
+      const rawDelta = (bCenter - 0.62 * coarseBioExpected) + relief3D + polygonWallLine;
       const deltaT =
         rawDelta > 0
-          ? 2.75 * Math.tanh(rawDelta / 2.75)
-          : 3.25 * Math.tanh(rawDelta / 3.25);
+          ? 2.85 * Math.tanh(rawDelta / 2.85)
+          : 3.30 * Math.tanh(rawDelta / 3.30);
 
       const coarseDiff = tCoarseLocal - coarseMedian;
       const dampedCoarseDiff =
-        coarseDiff > 0.85 * stdCoarse
-          ? 0.85 * stdCoarse + 0.75 * stdCoarse * Math.tanh((coarseDiff - 0.85 * stdCoarse) / (1.25 * stdCoarse))
+        coarseDiff > stdCoarse
+          ? stdCoarse + 0.85 * stdCoarse * Math.tanh((coarseDiff - stdCoarse) / (1.2 * stdCoarse))
           : coarseDiff;
 
-      const tBase = coarseMedian + 0.65 * dampedCoarseDiff;
+      const tBase = coarseMedian + 0.68 * dampedCoarseDiff;
       const finalTemp = tBase + deltaT;
 
       output[index] = finalTemp;
@@ -656,33 +585,14 @@ export function downscaleLandsatLST(
     }
   }
 
-  let pLowTemp: number;
-  let pHighTemp: number;
-
-  if (totalValidFine > 100) {
-    const lowTarget = totalValidFine * 0.004;
-    const highTarget = totalValidFine * 0.996;
-    let acc = 0;
-    let lowBin = 0;
-    let highBin = 1999;
-    let foundLow = false;
-    for (let b = 0; b < 2000; b += 1) {
-      acc += histBins[b];
-      if (!foundLow && acc >= lowTarget) {
-        lowBin = b;
-        foundLow = true;
-      }
-      if (acc >= highTarget) {
-        highBin = b;
-        break;
-      }
-    }
-    pLowTemp = -5 + (lowBin / 2000) * 70;
-    pHighTemp = -5 + (highBin / 2000) * 70;
-  } else {
-    pLowTemp = coarseMedian - 2.4 * stdCoarse;
-    pHighTemp = coarseMedian + 2.6 * stdCoarse;
-  }
+  const pLowTemp =
+    totalValidFine > 100
+      ? findPercentileTemp(histBins, totalValidFine * 0.005)
+      : coarseMedian - 2.4 * stdCoarse;
+  const pHighTemp =
+    totalValidFine > 100
+      ? findPercentileTemp(histBins, totalValidFine * 0.992)
+      : coarseMedian + 2.5 * stdCoarse;
 
   const cellFineSums = new Float64Array(nCells);
   const cellFineCounts = new Uint32Array(nCells);
@@ -698,14 +608,12 @@ export function downscaleLandsatLST(
       const v = output[idx];
       if (!Number.isFinite(v)) continue;
 
-      let clamped: number;
-      if (v < pLowTemp) {
-        clamped = pLowTemp - 0.18 * Math.tanh((pLowTemp - v) / 0.45);
-      } else if (v > pHighTemp) {
-        clamped = pHighTemp + 0.18 * Math.tanh((v - pHighTemp) / 0.45);
-      } else {
-        clamped = v;
-      }
+      const clamped =
+        v < pLowTemp
+          ? pLowTemp - 0.2 * Math.tanh((pLowTemp - v) / 0.5)
+          : v > pHighTemp
+            ? pHighTemp + 0.2 * Math.tanh((v - pHighTemp) / 0.5)
+            : v;
       output[idx] = clamped;
 
       const lon = fine.west + ((x + 0.5) / fineWidth) * fineSpanX;
