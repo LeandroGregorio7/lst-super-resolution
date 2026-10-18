@@ -9,6 +9,7 @@ import { renderRGBBasemapToCanvas, type PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { boundsExtent, rasterBoundsToWgs84, type RasterBounds } from './rasterGeo';
 import { buildUhiSurface, downloadUhiSurface, type UhiSurface } from './uhiSurface';
+import { downloadExpandedTechnicalReport } from './reportExpanded';
 
 type Lang = 'pt' | 'en';
 type Theme = 'light' | 'dark';
@@ -1311,170 +1312,32 @@ export default function App() {
     const lnk = document.createElement('a'); lnk.href = c.toDataURL('image/png'); lnk.download = `SR2D4-Comparacao-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`; lnk.click();
   };
 
-  // Relatório Executivo Completo com leitura de Ruas e Bairros da base OpenStreetMap + Gráficos SVG + 6 Eixos Setoriais
+// Relatório Técnico Expandido com Mapas LST + UHI, Bairros/Ruas OSM e Botão PT/EN
   const downloadReport = async () => {
     if (!raster || !lstCanvas.current || !opticalCanvas.current) return;
-    setStatus('Lendo ruas e bairros da base OpenStreetMap e gerando gráficos do relatório…');
+    setStatus('Lendo ruas e bairros da base OpenStreetMap e gerando relatório expandido…');
     const osm = await fetchOsmUrbanFeatures(raster);
-
-    let veg = 0; let built = 0; let water = 0; let bare = 0; let valid = 0;
-    const uhiCnt = [0, 0, 0, 0, 0, 0];
-    let discomfortMod = 0; let discomfortSev = 0;
-    for (let i = 0; i < raster.data.length; i += 1) {
-      const v = raster.data[i]; const ndvi = raster.ndvi[i]; const ndbi = raster.ndbi[i];
-      if (!Number.isFinite(v)) continue;
-      valid += 1;
-      if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
-        if (ndvi > 0.3) veg += 1;
-        else if (ndvi < 0 && ndbi < 0) water += 1;
-        else if (ndbi > 0.08) built += 1;
-        else bare += 1;
-      }
-      const z = computeClusteredZ(v, v, raster.stats, uhiMethod, uhiPower);
-      if (z < -0.95) uhiCnt[0] += 1;
-      else if (z < -0.3) uhiCnt[1] += 1;
-      else if (z < 0.25) uhiCnt[2] += 1;
-      else if (z < 0.85) uhiCnt[3] += 1;
-      else if (z < 1.4) uhiCnt[4] += 1;
-      else uhiCnt[5] += 1;
-      if (v >= 29 && v < 32.5) discomfortMod += 1;
-      else if (v >= 32.5) discomfortSev += 1;
-    }
-
-    const pct = (n: number) => (valid ? Number(((n / valid) * 100).toFixed(1)) : 0);
-    const comp = document.createElement('canvas'); comp.width = lstCanvas.current.width; comp.height = lstCanvas.current.height;
-    const iCtx = comp.getContext('2d');
-    if (iCtx) { iCtx.drawImage(opticalCanvas.current, 0, 0); iCtx.globalAlpha = opacity; iCtx.drawImage(lstCanvas.current, 0, 0); iCtx.globalAlpha = 1; }
-
-    const uhiLvl = raster.stats.mean + 1.5 * raster.stats.stdDev;
-    const utfviScene = (uhiCnt[4] + uhiCnt[5]) / Math.max(1, valid);
-    const greenDeficit = Math.max(0, 30 - pct(veg));
-    const walkabilityScore = Math.max(0, Math.min(100, Math.round(100 - pct(discomfortSev) * 1.4 - pct(built) * 0.35 + pct(veg) * 0.8)));
-    const ozoneRisk = raster.stats.max > 33 ? 'ALTO (Fotocatálise de O₃ acelerada e retenção de MP₂,₅)' : 'MODERADO (Monitorar inversão térmica)';
-
-    const histSvgBars = colorTempHistogram.map((b, i) => {
-      const bx = 20 + i * 24;
-      const bh = Math.round((b.height / 100) * 110);
-      return `<rect x="${bx}" y="${130 - bh}" width="19" height="${bh}" rx="3" fill="${b.color}" /><text x="${bx + 9}" y="146" font-size="9" text-anchor="middle" fill="#334e54">${i % 3 === 0 ? `${(raster.stats.min + ((raster.stats.max - raster.stats.min) * i) / 24).toFixed(0)}°` : ''}</text>`;
-    }).join('');
-
-    const uhiLabels = [
-      ['Ilha de Frescor (< -0,95σ)', pct(uhiCnt[0]), '#185a9d'],
-      ['Zona Amenizada (-0,95σ a -0,30σ)', pct(uhiCnt[1]), '#2b8c68'],
-      ['Zona Neutra (-0,30σ a +0,25σ)', pct(uhiCnt[2]), '#8ac46e'],
-      ['UHI Moderada (+0,25σ a +0,85σ)', pct(uhiCnt[3]), '#f5b041'],
-      ['UHI Forte (+0,85σ a +1,40σ)', pct(uhiCnt[4]), '#e86825'],
-      ['Hotspot Extremo (> +1,40σ)', pct(uhiCnt[5]), '#d42026'],
-    ] as const;
-
-    const uhiBarsHtml = uhiLabels.map(([lbl, p, col]) => `<div class="bar-item"><div class="bar-label"><span><b>${lbl}</b></span><span><b>${p.toFixed(1)}%</b></span></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, p)}%;background:${col}"></div></div></div>`).join('');
-
-    const bairrosRows = osm.bairros.map((b) => `<tr><td><b>${b.name}</b></td><td>${b.meanTemp.toFixed(2)} °C</td><td><b>${b.maxTemp.toFixed(2)} °C</b></td><td>${b.ndvi.toFixed(3)}</td><td>${b.ndbi.toFixed(3)}</td><td><span class="badge">${b.uhiClass}</span></td></tr>`).join('');
-    const viasRows = osm.vias.length
-      ? osm.vias.map((v) => `<tr><td><b>${v.name}</b></td><td>${v.meanTemp.toFixed(2)} °C</td><td><b>${v.maxTemp.toFixed(2)} °C</b></td><td>${v.ndbi.toFixed(3)}</td><td>${v.mobilityRisk}</td></tr>`).join('')
-      : `<tr><td colspan="5">Corredores viários analisados via matriz raster (Média viária impermeável: ${(raster.stats.mean + 0.65 * raster.stats.stdDev).toFixed(2)} °C).</td></tr>`;
-    const parquesRows = osm.parques.length
-      ? osm.parques.map((p) => `<tr><td><b>${p.name}</b></td><td>${p.meanTemp.toFixed(2)} °C</td><td>${(p.meanTemp - raster.stats.mean).toFixed(2)} °C</td><td>${p.ndvi.toFixed(3)}</td><td>Sumidouro Térmico Ativo</td></tr>`).join('')
-      : '';
-
-    const aoiSection = aoiAnalysis
-      ? `<div class="card full"><h2>7. Diagnóstico Específico da Área de Interesse (AOI - ${aoiAnalysis.shape.toUpperCase()})</h2><div class="kpi-grid"><div class="kpi"><span>Área Recortada</span><b>${aoiAnalysis.areaHa.toFixed(2)} ha</b><small>${aoiAnalysis.areaM2.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} m² · ${aoiAnalysis.count.toLocaleString('pt-BR')} px</small></div><div class="kpi"><span>LST Média / Máx AOI</span><b>${aoiAnalysis.mean.toFixed(2)} °C</b><small>Máx: ${aoiAnalysis.max.toFixed(1)} °C · Mín: ${aoiAnalysis.min.toFixed(1)} °C</small></div><div class="kpi"><span>Conforto Térmico AOI</span><b>${aoiAnalysis.comfortLabel}</b><small>UTFVI: ${aoiAnalysis.utfvi.toFixed(4)}</small></div><div class="kpi"><span>Vegetação vs Construído</span><b>${aoiAnalysis.vegPct.toFixed(1)}% / ${aoiAnalysis.builtPct.toFixed(1)}%</b><small>NDVI: ${aoiAnalysis.ndviMean.toFixed(3)} · NDBI: ${aoiAnalysis.ndbiMean.toFixed(3)}</small></div></div></div>`
-      : '';
-
-    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório Executivo SR2D4 / LST Explorer</title><style>
-      *{box-sizing:border-box}body{font:14px/1.55 'Segoe UI',system-ui,Arial,sans-serif;color:#14282d;background:#eef3f2;margin:0;padding:28px}
-      .page{max-width:1180px;margin:0 auto;background:#fff;border-radius:14px;box-shadow:0 10px 32px rgba(0,0,0,.08);overflow:hidden}
-      .header{background:linear-gradient(135deg,#071317 0%,#0f2c36 100%);color:#fff;padding:32px 36px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #ffb000}
-      .header h1{margin:4px 0;font-size:28px;color:#ffb000}.header p{margin:2px 0;color:#b9d2d6;font-size:13px}
-      .badge-top{background:rgba(121,226,220,.15);border:1px solid #79e2dc;color:#79e2dc;padding:6px 12px;border-radius:99px;font-size:11px;font-weight:700}
-      .content{padding:30px 36px;display:grid;grid-template-columns:1fr 1fr;gap:22px}
-      .full{grid-column:1 / -1}.card{background:#f9fbfb;border:1px solid #dce8e6;border-radius:10px;padding:20px}
-      h2{margin:0 0 12px;font-size:17px;color:#0b2930;border-bottom:2px solid #e1ecea;padding-bottom:7px;text-transform:uppercase;letter-spacing:.03em}
-      .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.kpi{background:#fff;border:1px solid #d8e6e3;border-left:4px solid #b96800;padding:12px 14px;border-radius:8px}
-      .kpi span{font-size:11px;text-transform:uppercase;color:#526e75;display:block}.kpi b{font-size:22px;color:#0b2930;display:block;margin:3px 0}.kpi small{font-size:11px;color:#627d84}
-      .hero-wrap{display:grid;grid-template-columns:1.35fr 1fr;gap:18px;align-items:center}.hero{width:100%;border-radius:8px;border:1px solid #c8dad7}
-      .bar-item{margin:8px 0}.bar-label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
-      .bar-track{height:14px;background:#e3ecea;border-radius:7px;overflow:hidden}.bar-fill{height:100%;border-radius:7px}
-      table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px;background:#fff}th,td{border:1px solid #d8e6e3;padding:8px 10px;text-align:left}
-      th{background:#e7f1ef;color:#0b2930;font-weight:700}.badge{background:#fff3d1;color:#945200;padding:2px 8px;border-radius:99px;font-weight:700;font-size:11px}
-      .sector-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.sector-box{background:#fff;border:1px solid #d8e6e3;border-radius:8px;padding:14px}
-      .sector-box h3{margin:0 0 8px;font-size:14px;color:#b96800}.sector-box ul{margin:6px 0 0;padding-left:18px;font-size:12.5px}
-      .footer{background:#071317;color:#9ab0b5;padding:18px 36px;font-size:12px;display:flex;justify-content:space-between}
-      @media print{body{padding:0;background:#fff}.page{box-shadow:none}}
-    </style></head><body><div class="page">
-      <div class="header"><div><span class="badge-top">INTELIGÊNCIA GEOESPACIAL • SUPER-RESOLUÇÃO TÉRMICA 1 METRO</span><h1>SR2D4 / LST Explorer — Diagnóstico Urbano, Saúde & Clima</h1><p>Cena: <b>${raster.fileName}</b> · EPSG:${raster.epsg} · Grade: ${raster.width.toLocaleString('pt-BR')}×${raster.height.toLocaleString('pt-BR')} px (${valid.toLocaleString('pt-BR')} m² analisados)</p></div><div style="text-align:right"><b style="font-size:24px;color:#79e2dc">${raster.stats.mean.toFixed(1)} °C</b><p>Média da Cena (σ = ${raster.stats.stdDev.toFixed(2)} °C)</p></div></div>
-      <div class="content">
-        <div class="card full"><h2>1. Indicadores-Chave de Gestão Urbana, Ambiental e Saúde (KPIs)</h2>
-          <div class="kpi-grid">
-            <div class="kpi"><span>Amplitude Térmica (Mín–Máx)</span><b>${raster.stats.min.toFixed(1)}° – ${raster.stats.max.toFixed(1)}°C</b><small>Q25: ${raster.stats.q25.toFixed(1)}° · Med: ${raster.stats.q50.toFixed(1)}° · Q75: ${raster.stats.q75.toFixed(1)}°C</small></div>
-            <div class="kpi"><span>Área em Estresse Térmico (>32,5°C)</span><b>${pct(discomfortSev).toFixed(1)}%</b><small>Limiar Hotspot (μ+1,5σ): ${uhiLvl.toFixed(1)} °C</small></div>
-            <div class="kpi"><span>Índice de Caminhabilidade Térmica</span><b>${walkabilityScore} / 100</b><small>${walkabilityScore < 60 ? 'Alerta para pedestres e ciclistas' : 'Conforto viário moderado/bom'}</small></div>
-            <div class="kpi"><span>Cobertura Vegetal vs Impermeável</span><b>${pct(veg).toFixed(1)}% / ${pct(built).toFixed(1)}%</b><small>Déficit arbóreo estimado: ${greenDeficit.toFixed(1)}%</small></div>
-          </div>
-        </div>
-        <div class="card full hero-wrap">
-          <div><h2>2. Mapa Térmico de Alta Definição (1 m)</h2><img class="hero" src="${comp.toDataURL('image/png')}" alt="Mapa LST 1m" /></div>
-          <div><h2>Distribuição Cromática & Estratificação UHI</h2>
-            <svg viewBox="0 0 600 155" style="width:100%;background:#fff;border:1px solid #dce8e6;border-radius:8px;padding:6px">${histSvgBars}</svg>
-            <div style="margin-top:12px">${uhiBarsHtml}</div>
-          </div>
-        </div>
-        <div class="card full"><h2>3. Análise Espacial Toponímica — Bairros, Ruas e Avenidas Lidos da Base (OpenStreetMap)</h2>
-          <p style="margin:0 0 8px;font-size:12.5px">Cruzamento direto das feições viárias e bairros da base cartográfica com os pixels térmicos de 1m (SR2D4 + Landsat ST_B10):</p>
-          <table><thead><tr><th>Bairro / Setor Urbano Identificado</th><th>LST Média</th><th>Pico Térmico (Máx)</th><th>NDVI Médio</th><th>NDBI Médio</th><th>Diagnóstico UHI</th></tr></thead><tbody>${bairrosRows}</tbody></table>
-          <table style="margin-top:12px"><thead><tr><th>Via / Avenida / Rua Principal da Base</th><th>LST Média na Via</th><th>Topo Térmico</th><th>NDBI (Impermeab.)</th><th>Impacto na Mobilidade & Pavimento</th></tr></thead><tbody>${viasRows}</tbody></table>
-          ${parquesRows ? `<table style="margin-top:12px"><thead><tr><th>Parque / Área de Referência</th><th>LST Média</th><th>Efeito Oásis (Δ vs Cena)</th><th>NDVI</th><th>Função Microclimática</th></tr></thead><tbody>${parquesRows}</tbody></table>` : ''}
-        </div>
-        ${aoiSection}
-        <div class="card full"><h2>4. Análise Setorial Integrada: Conforto Térmico, Saúde, Mobilidade e Poluição</h2>
-          <div class="sector-grid">
-            <div class="sector-box"><h3>🌡️ Conforto Térmico Humano & Ergonomia</h3>
-              <ul>
-                <li><b>UTFVI (Variância do Campo Térmico):</b> Fração crítica de <b>${(utfviScene * 100).toFixed(1)}%</b> da área sob efeito de ilha de calor forte/extrema.</li>
-                <li><b>Zonas de Desconforto:</b> <b>${pct(discomfortMod).toFixed(1)}%</b> sob desconforto moderado (29–32,5 °C) e <b>${pct(discomfortSev).toFixed(1)}%</b> sob estresse severo (&gt; 32,5 °C).</li>
-                <li><b>Balanco Radiante:</b> Coberturas com NDBI &gt; 0,15 elevam a Temperatura Média Radiante (TMR) em até +4,5 °C ao nível do pedestre.</li>
-              </ul>
-            </div>
-            <div class="sector-box"><h3>🏥 Saúde Pública & Vigilância Epidemiológica</h3>
-              <ul>
-                <li><b>Vulnerabilidade Cardiovascular e Respiratória:</b> Setores em <i>Hotspot Extremo</i> (&gt; ${uhiLvl.toFixed(1)} °C) ampliam o risco de exaustão térmica e desidratação em idosos e crianças.</li>
-                <li><b>Ecologia de Vetores (Arboviroses/Dengue):</b> Ilhas de calor intraurbanas aceleram o ciclo extrínseco do <i>Aedes aegypti</i> em áreas densas com sombreamento parcial.</li>
-                <li><b>Prioridade Sanitária:</b> Focar agentes de saúde e hidratação nos bairros de maior média térmica listados na Tabela 3.</li>
-              </ul>
-            </div>
-            <div class="sector-box"><h3>🚶 Mobilidade Urbana, Caminhabilidade & Infraestrutura</h3>
-              <ul>
-                <li><b>Índice de Caminhabilidade Térmica (${walkabilityScore}/100):</b> Vias com baixa arborização apresentam estresse térmico severo para deslocamento ativo (a pé/bicicleta) e espera em pontos de ônibus.</li>
-                <li><b>Degradação de Pavimentos:</b> Avenidas com pico acima de ${(raster.stats.max - 1.0).toFixed(1)} °C sofrem fadiga acelerada do ligante asfáltico e trilhas de roda.</li>
-                <li><b>Recomendação Viária:</b> Implantar corredores verdes e abrigos sombreados nas vias críticas identificadas na base OSM.</li>
-              </ul>
-            </div>
-            <div class="sector-box"><h3>🌫️ Poluição Atmosférica & Qualidade do Ar</h3>
-              <ul>
-                <li><b>Potencial Fotoquímico de Ozônio (O₃):</b> Classificado como <b>${ozoneRisk}</b>. Temperaturas superficiais elevadas catalisam reações entre NOₓ veicular e COVs.</li>
-                <li><b>Domo Convectivo e Material Particulado (MP₂,₅ / MP₁₀):</b> A diferença térmica de <b>${(raster.stats.max - raster.stats.min).toFixed(1)} °C</b> gera células de recirculação que aprisionam poluentes junto às vias.</li>
-                <li><b>Biofiltragem:</b> Os <b>${pct(veg).toFixed(1)}%</b> de vegetação vigorosa atuam na deposição seca de particulados; recompor áreas com déficit de <b>${greenDeficit.toFixed(1)}%</b>.</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div class="card full"><h2>5. Matriz de Indicadores para Gestão Pública (ODS 11 & 13)</h2>
-          <table><thead><tr><th>Indicador Urbano-Saúde-Ambiental</th><th>Valor Observado</th><th>Meta de Referência</th><th>Ação Recomendada para Gestão</th></tr></thead><tbody>
-            <tr><td><b>Índice de Cobertura Vegetal Efetiva (NDVI &gt; 0,3)</b></td><td><b>${pct(veg).toFixed(1)}%</b></td><td>&ge; 30,0% (OMS/ONU)</td><td>Plantio prioritário de árvores de copa ampla nos setores com NDBI &gt; 0,10.</td></tr>
-            <tr><td><b>Taxa de Impermeabilização Crítica (NDBI &gt; 0,1)</b></td><td><b>${pct(built).toFixed(1)}%</b></td><td>&le; 45,0%</td><td>Exigir telhados frios/verdes (albedo &gt; 0,65) em galpões e grandes coberturas.</td></tr>
-            <tr><td><b>Fração de Hotspots Críticos (UHI Forte + Extrema)</b></td><td><b>${(pct(uhiCnt[4]) + pct(uhiCnt[5])).toFixed(1)}%</b></td><td>&le; 15,0%</td><td>Intervenção microclimática imediata nas vias e quadras destacadas em vermelho.</td></tr>
-            <tr><td><b>Índice de Caminhabilidade Térmica</b></td><td><b>${walkabilityScore} / 100</b></td><td>&ge; 75 / 100</td><td>Sombreamento de calçadas, ciclovias e paradas de transporte coletivo.</td></tr>
-          </tbody></table>
-        </div>
-      </div>
-      <div class="footer"><span>SR2D4 / LST Explorer · Fusão TsHARP 1m (Sentinel-2 SR2D4 + Landsat 8/9 ST_B10)</span><span>Gerado em ${new Date().toLocaleString('pt-BR')}</span></div>
-    </div></body></html>`;
-
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-    a.download = 'SR2D4-Relatorio-Executivo-Urbano-Saude-Clima.html';
-    a.click();
-    URL.revokeObjectURL(a.href);
+    downloadExpandedTechnicalReport({
+      raster,
+      opticalCanvas: opticalCanvas.current,
+      lstCanvas: lstCanvas.current,
+      opacity,
+      paletteName: palette,
+      uhiMethod,
+      uhiPower,
+      aoiStats: aoiStats ? { vertices: aoi, ...aoiStats } : null,
+      diffStats:
+        differenceReady && differenceStats && comparisonPrimary && comparisonSecondary
+          ? {
+              beforeLabel: comparisonPrimary.dateLabel,
+              afterLabel: comparisonSecondary.dateLabel,
+              ...differenceStats,
+            }
+          : null,
+      osmData: osm,
+    });
+    setStatus('Relatório técnico expandido exportado.');
+  };
     setStatus('Relatório Executivo gerado com sucesso.');
   };
 
