@@ -10,12 +10,19 @@ import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { boundsExtent, rasterBoundsToWgs84, type RasterBounds } from './rasterGeo';
 import { buildUhiSurface, downloadUhiSurface, type UhiSurface } from './uhiSurface';
 import { downloadExpandedTechnicalReport } from './reportExpanded';
+import {
+  AoiAnalysisModal,
+  AoiToolbar,
+  analyzeAoiDetailed,
+  buildShapeVertices,
+  type AoiDetailedStats,
+  type AoiShapeMode,
+} from './aoiToolkit';
 
 type Lang = 'pt' | 'en';
 type Theme = 'light' | 'dark';
 type Provider = 'osm' | 'esri';
 type UhiClusterMethod = 'zscore' | 'quantiles' | 'natural' | 'kernel';
-type AoiShape = 'polygon' | 'rectangle' | 'square' | 'circle';
 type SearchResult = { display_name: string; lat: string; lon: string };
 type RasterStats = { min: number; max: number; mean: number; stdDev: number; q25: number; q50: number; q75: number };
 type DifferenceStats = {
@@ -26,28 +33,6 @@ type DifferenceStats = {
 type InspectPoint = {
   temp: number; lng: number; lat: number;
   beforeTemp?: number; afterTemp?: number; diffTemp?: number;
-};
-type AoiAnalysis = {
-  shape: AoiShape;
-  count: number;
-  areaM2: number;
-  areaHa: number;
-  min: number;
-  max: number;
-  mean: number;
-  median: number;
-  stdDev: number;
-  ndviMean: number;
-  ndbiMean: number;
-  vegPct: number;
-  builtPct: number;
-  waterPct: number;
-  utfvi: number;
-  comfortLabel: string;
-  comfortColor: string;
-  uhiCounts: number[];
-  histBins: { label: string; pct: number; color: string }[];
-  previewUrl: string;
 };
 type OsmFeatureStat = {
   name: string;
@@ -113,12 +98,12 @@ const copy = {
     metadata: 'Metadados', theme: 'Tema', basemap: 'Mapa-base', ready: 'Pronto',
     error: 'Não foi possível processar. Carregue um GeoTIFF SR2D4 com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.',
     methodText: 'O app extrai a data AAAAMMDD do nome do SR2D4, busca automaticamente a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL, decodifica ST_B10 e executa fusão física TsHARP HD 1m guiada por reflectância e índices ópticos.',
-    helpText: '1. Gere o produto MS no Colab com AAAAMMDD e _MS.tif. 2. Carregue o GeoTIFF SR2D4. 3. Confirme Red/NIR/SWIR. 4. Escolha a forma da AOI (Polígono, Retângulo, Quadrado ou Círculo) ou gere o Relatório Executivo com leitura de ruas e bairros.',
+    helpText: '1. Gere o produto MS no Colab com AAAAMMDD e _MS.tif. 2. Carregue o GeoTIFF SR2D4. 3. Confirme Red/NIR/SWIR. 4. Escolha a forma da AOI (Retângulo, Quadrado, Círculo ou Polígono) ou gere o Relatório Executivo.',
     noData: 'Carregue um GeoTIFF para começar', search: 'Buscar cidade, bairro ou lugar', coords: 'Longitude, latitude',
     locate: 'Minha localização', go: 'Ir', compare: 'Comparar antes/depois', indices: 'Índices espectrais',
     ndvi: 'NDVI vegetação', ndbi: 'NDBI construído', report: 'Relatório Executivo', resize: 'Arraste para redimensionar o painel',
     searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Leve, Forte e Extremo.',
-    aoiHelp: 'Escolha a forma geométrica (Polígono, Retângulo, Quadrado ou Círculo), desenhe no mapa e veja o diagnóstico em Pop-up.',
+    aoiHelp: 'Escolha a forma geométrica (Retângulo, Quadrado, Círculo ou Polígono), desenhe no mapa e veja o diagnóstico em Pop-up.',
     limitation: 'Limitações da super-resolução',
     limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Use-a para investigação espacial e comparação.',
   },
@@ -140,7 +125,7 @@ const copy = {
     locate: 'My location', go: 'Go', compare: 'Compare before/after', indices: 'Spectral indices',
     ndvi: 'NDVI vegetation', ndbi: 'NDBI built-up', report: 'Executive Report', resize: 'Drag to resize the panel',
     searchError: 'Place not found.', uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Mild, Strong and Extreme.',
-    aoiHelp: 'Select shape (Polygon, Rectangle, Square, Circle), draw on map and open the Pop-up analysis.',
+    aoiHelp: 'Select shape (Rectangle, Square, Circle, Polygon), draw on map and open the Pop-up analysis.',
     limitation: 'Super-resolution limitations',
     limitationText: 'Detailed LST is an optical-guided estimate. Validate results with field data.',
   },
@@ -391,38 +376,6 @@ function buildMesoIsothermsGeoJSON(
   });
   return { type: 'FeatureCollection', features };
 }
-
-function buildShapeVertices(shape: AoiShape, a: [number, number], b: [number, number]): [number, number][] {
-  const [lng1, lat1] = a;
-  const [lng2, lat2] = b;
-  const cosLat = Math.cos((lat1 * Math.PI) / 180) || 1;
-  if (shape === 'rectangle') {
-    return [[lng1, lat1], [lng2, lat1], [lng2, lat2], [lng1, lat2]];
-  }
-  if (shape === 'square') {
-    const dLng = lng2 - lng1;
-    const dLat = lat2 - lat1;
-    const sideDegLat = Math.max(Math.abs(dLng * cosLat), Math.abs(dLat));
-    const sideDegLng = sideDegLat / cosLat;
-    const sLng = dLng >= 0 ? sideDegLng : -sideDegLng;
-    const sLat = dLat >= 0 ? sideDegLat : -sideDegLat;
-    return [[lng1, lat1], [lng1 + sLng, lat1], [lng1 + sLng, lat1 + sLat], [lng1, lat1 + sLat]];
-  }
-  if (shape === 'circle') {
-    const dx = (lng2 - lng1) * cosLat;
-    const dy = lat2 - lat1;
-    const rDegLat = Math.sqrt(dx * dx + dy * dy);
-    const rDegLng = rDegLat / cosLat;
-    const pts: [number, number][] = [];
-    for (let i = 0; i < 64; i += 1) {
-      const ang = (i / 64) * Math.PI * 2;
-      pts.push([lng1 + Math.cos(ang) * rDegLng, lat1 + Math.sin(ang) * rDegLat]);
-    }
-    return pts;
-  }
-  return [a, b];
-}
-
 function LogoMark() {
   return (
     <svg className="logo-mark" viewBox="0 0 44 44" role="img" aria-label="SR2D4 LST Explorer logo">
@@ -477,14 +430,6 @@ async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, num
   const resLabel = tiff.isProjected ? `${Math.abs(tiff.resolution[0]).toFixed(2)} m/pixel` : `${Math.abs(tiff.resolution[0]).toFixed(6)} graus/pixel`;
   onProgress?.(`Fusão concluída: ${result.model} · ${result.validCount} células coarse · saída ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · ${resLabel}`);
   return { tiff, bounds, indices, landsat, result };
-}
-function pointInPolygon(point: [number, number], polygon: [number, number][]) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i]; const [xj, yj] = polygon[j];
-    if (((yi > point[1]) !== (yj > point[1])) && point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || Number.EPSILON) + xi) inside = !inside;
-  }
-  return inside;
 }
 function thermalDifference(
   primary: { data: Float32Array; width: number; height: number; bounds: RasterBounds },
@@ -618,11 +563,7 @@ function paletteGradient(palette: string, customColors: string[]) {
 }
 
 // Consulta ruas, avenidas, bairros e parques reais da base OpenStreetMap (Overpass API) e cruza com os pixels de 1m do raster
-async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{
-  bairros: OsmFeatureStat[];
-  vias: OsmFeatureStat[];
-  parques: OsmFeatureStat[];
-}> {
+async function fetchOsmUrbanFeatures(raster: RasterState) {
   const ext = boundsExtent(raster.bounds);
   const sampleAt = (lng: number, lat: number) => {
     const x = Math.floor(((lng - ext.west) / (ext.east - ext.west)) * raster.width);
@@ -646,15 +587,15 @@ async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{
     }
     if (!cnt) return null;
     const meanTemp = sumT / cnt;
-    return { meanTemp, maxTemp: maxT, ndvi: sumV / cnt, ndbi: sumB / cnt };
+    return { meanTemp, maxTemp: maxT, ndvi: sumV / cnt, ndbi: sumB / cnt, count: cnt };
   };
 
-  const bairrosMap = new Map<string, OsmFeatureStat>();
-  const viasMap = new Map<string, OsmFeatureStat>();
+  const bairrosMap = new Map<string, OsmFeatureStat & { id?: string; count?: number;highway?: string }>();
+  const viasMap = new Map<string, OsmFeatureStat & { id?: string; count?: number; highway?: string }>();
   const parquesMap = new Map<string, OsmFeatureStat>();
 
   try {
-    const query = `[out:json][timeout:6];(node["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["highway"~"primary|secondary|tertiary|trunk|residential"]["name"](${ext.south},${ext.west},${ext.north},${ext.east});way["leisure"~"park|nature_reserve|pitch"]["name"](${ext.south},${ext.west},${ext.north},${ext.east});way["aeroway"]["name"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 120;`;
+    const query = `[out:json][timeout:6];(node["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["highway"~"primary|secondary|tertiary|trunk|residential"]["name"](${ext.south},${ext.west},${ext.north},${ext.east});way["leisure"~"park|nature_reserve|pitch"]["name"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 120;`;
     const resp = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
     if (resp.ok) {
       const json = (await resp.json()) as { elements?: any[] };
@@ -667,38 +608,33 @@ async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{
         const s = sampleAt(lon, lat);
         if (!s) continue;
         const uhiClass = uhiClassLabel(s.meanTemp, raster.stats, 'zscore', 1.1, 'pt');
-        const mobilityRisk = s.meanTemp > raster.stats.mean + 0.85 * raster.stats.stdDev ? 'Crítico (Estresse Pedestre / Dilatação)' : s.meanTemp > raster.stats.mean ? 'Moderado (Desconforto Solar)' : 'Adequado (Corredor Amenizado)';
+        const mobilityRisk = s.meanTemp > raster.stats.mean + 0.85 * raster.stats.stdDev ? 'Crítico' : s.meanTemp > raster.stats.mean ? 'Moderado' : 'Adequado';
+        const osmId = `${el.type}/${el.id}`;
         if (el.tags?.place) {
-          if (!bairrosMap.has(name)) bairrosMap.set(name, { name, kind: 'Bairro / Setor', ...s, uhiClass, mobilityRisk });
+          if (!bairrosMap.has(name)) bairrosMap.set(name, { name, id: osmId, kind: 'Bairro / Setor', ...s, uhiClass, mobilityRisk });
         } else if (el.tags?.highway) {
           const existing = viasMap.get(name);
           if (!existing || s.meanTemp > existing.meanTemp) {
-            viasMap.set(name, { name, kind: 'Via / Corredor', ...s, uhiClass, mobilityRisk });
+            viasMap.set(name, { name, id: osmId, highway: el.tags.highway, kind: 'Via / Corredor', ...s, uhiClass, mobilityRisk });
           }
         } else if (!parquesMap.has(name)) {
           parquesMap.set(name, { name, kind: 'Parque / Referência', ...s, uhiClass, mobilityRisk });
         }
       }
     }
-  } catch { /* fallback to sector grid if offline */ }
+  } catch { /* ignore network error */ }
 
-  if (bairrosMap.size === 0) {
-    const sectors = [
-      ['Setor Noroeste (NW)', 0.25, 0.25], ['Setor Nordeste (NE)', 0.75, 0.25],
-      ['Setor Central', 0.50, 0.50], ['Setor Sudoeste (SW)', 0.25, 0.75], ['Setor Sudeste (SE)', 0.75, 0.75],
-    ] as const;
-    for (const [label, fx, fy] of sectors) {
-      const lng = ext.west + fx * (ext.east - ext.west);
-      const lat = ext.north - fy * (ext.north - ext.south);
-      const s = sampleAt(lng, lat);
-      if (s) bairrosMap.set(label, { name: label, kind: 'Bairro / Setor', ...s, uhiClass: uhiClassLabel(s.meanTemp, raster.stats, 'zscore', 1.1, 'pt'), mobilityRisk: s.meanTemp > raster.stats.mean ? 'Moderado' : 'Adequado' });
-    }
-  }
+  const bairros = [...bairrosMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 10);
+  const vias = [...viasMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 15);
+  const parques = [...parquesMap.values()].sort((a, b) => a.meanTemp - b.meanTemp).slice(0, 6);
 
   return {
-    bairros: [...bairrosMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 8),
-    vias: [...viasMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 12),
-    parques: [...parquesMap.values()].sort((a, b) => a.meanTemp - b.meanTemp).slice(0, 6),
+    bairros,
+    neighborhoods: bairros,
+    vias,
+    ruas: vias,
+    streets: vias,
+    parques,
   };
 }
 
@@ -739,10 +675,11 @@ export default function App() {
   const [tutorialStep, setTutorialStep] = useState(0);
   const [showSearch, setShowSearch] = useState(true);
   const [aoi, setAoi] = useState<[number, number][]>([]);
-  const [aoiShape, setAoiShape] = useState<AoiShape>('polygon');
-  const [aoiAnchor, setAoiAnchor] = useState<[number, number] | null>(null);
   const [drawAoi, setDrawAoi] = useState(false);
-  const [aoiAnalysis, setAoiAnalysis] = useState<AoiAnalysis | null>(null);
+  const [aoiStats, setAoiStats] = useState<{ count: number; min: number; max: number; mean: number } | null>(null);
+  const [aoiShapeMode, setAoiShapeMode] = useState<AoiShapeMode>('rectangle');
+  const [aoiAnchor, setAoiAnchor] = useState<[number, number] | null>(null);
+  const [aoiDetailed, setAoiDetailed] = useState<AoiDetailedStats | null>(null);
   const [showAoiModal, setShowAoiModal] = useState(false);
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -791,7 +728,7 @@ export default function App() {
   }, [comparisonPrimary, comparisonSecondary, differenceReady]);
 
   const mapClickMode = useRef({
-    drawAoi: false, aoiShape: 'polygon' as AoiShape, aoiAnchor: null as [number, number] | null,
+    drawAoi: false, aoiShapeMode: 'rectangle' as AoiShapeMode, aoiAnchor: null as [number, number] | null,
     raster: null as RasterState | null, extent: null as ReturnType<typeof boundsExtent> | null,
     identifyMode: false, comparisonPrimary: null as ComparisonImage | null,
     comparisonSecondary: null as ComparisonImage | null, differenceData: null as Float32Array | null,
@@ -803,12 +740,13 @@ export default function App() {
   const differenceStats = differenceRender?.stats ?? null;
 
   useEffect(() => { localStorage.setItem('lst-theme', theme); document.documentElement.dataset.theme = theme; }, [theme]);
+
   useEffect(() => {
     mapClickMode.current = {
-      drawAoi, aoiShape, aoiAnchor, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary,
+      drawAoi, aoiShapeMode, aoiAnchor, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary,
       differenceData: differenceRender?.data ?? null, showingComparison,
     };
-  }, [drawAoi, aoiShape, aoiAnchor, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary, differenceRender, showingComparison]);
+  }, [drawAoi, aoiShapeMode, aoiAnchor, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary, differenceRender, showingComparison]);
 
   useEffect(() => {
     const onMove = (ev: PointerEvent) => {
@@ -825,8 +763,12 @@ export default function App() {
       resizing.current = false; curtainDragging.current = false;
       document.body.classList.remove('is-resizing', 'is-curtain-dragging');
     };
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
-    return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
   }, []);
 
   useEffect(() => {
@@ -838,6 +780,7 @@ export default function App() {
     });
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+
     const inspectAt = (event: maplibregl.MapMouseEvent, commit: boolean) => {
       const m = mapClickMode.current;
       if (m.showingComparison && m.comparisonPrimary && m.comparisonSecondary && m.differenceData) {
@@ -869,49 +812,77 @@ export default function App() {
         }
       }
     };
+
     map.on('click', (ev) => {
       const m = mapClickMode.current;
       if (m.drawAoi) {
         ev.preventDefault();
         const pt: [number, number] = [ev.lngLat.lng, ev.lngLat.lat];
-        if (m.aoiShape === 'polygon') {
+        if (m.aoiShapeMode === 'polygon') {
           setAoi((p) => [...p, pt]);
         } else if (!m.aoiAnchor) {
           setAoiAnchor(pt);
           setAoi([pt]);
         } else {
-          const poly = buildShapeVertices(m.aoiShape, m.aoiAnchor, pt);
+          const poly = buildShapeVertices(m.aoiShapeMode, m.aoiAnchor, pt);
           setAoi(poly);
           setAoiAnchor(null);
           setDrawAoi(false);
           setPanEnabled(true);
           map.dragPan.enable(); map.scrollZoom.enable(); map.doubleClickZoom.enable();
+          if (m.raster) {
+            const det = analyzeAoiDetailed(m.raster, poly, m.aoiShapeMode, opticalCanvas.current, lstCanvas.current, 0.94);
+            if (det) {
+              setAoiDetailed(det);
+              setAoiStats({ count: det.count, min: det.min, max: det.max, mean: det.mean });
+              setShowAoiModal(true);
+            }
+          }
         }
         return;
       }
       inspectAt(ev, true);
     });
+
     map.on('dblclick', (ev) => {
-      if (!mapClickMode.current.drawAoi) return;
+      const m = mapClickMode.current;
+      if (!m.drawAoi) return;
       ev.preventDefault();
       setAoi((p) => {
         const cl = p.length > 1 && Math.abs(p[p.length - 1][0] - ev.lngLat.lng) < 1e-7 && Math.abs(p[p.length - 1][1] - ev.lngLat.lat) < 1e-7 ? p.slice(0, -1) : p;
-        if (cl.length >= 3) { setDrawAoi(false); setPanEnabled(true); map.dragPan.enable(); map.doubleClickZoom.enable(); map.scrollZoom.enable(); map.touchZoomRotate.enable(); }
+        if (cl.length >= 3) {
+          setDrawAoi(false); setPanEnabled(true);
+          map.dragPan.enable(); map.doubleClickZoom.enable(); map.scrollZoom.enable(); map.touchZoomRotate.enable();
+          if (m.raster) {
+            const det = analyzeAoiDetailed(m.raster, cl, m.aoiShapeMode, opticalCanvas.current, lstCanvas.current, 0.94);
+            if (det) {
+              setAoiDetailed(det);
+              setAoiStats({ count: det.count, min: det.min, max: det.max, mean: det.mean });
+              setShowAoiModal(true);
+            }
+          }
+        }
         return cl;
       });
     });
+
     let hf = 0;
     map.on('mousemove', (ev) => {
       const m = mapClickMode.current;
-      if (m.drawAoi && m.aoiShape !== 'polygon' && m.aoiAnchor) {
-        const pt: [number, number] = [ev.lngLat.lng, ev.lngLat.lat];
-        setAoi(buildShapeVertices(m.aoiShape, m.aoiAnchor, pt));
+      if (m.drawAoi && m.aoiShapeMode !== 'polygon' && m.aoiAnchor) {
+        if (!hf) {
+          hf = requestAnimationFrame(() => {
+            setAoi(buildShapeVertices(m.aoiShapeMode, m.aoiAnchor!, [ev.lngLat.lng, ev.lngLat.lat]));
+            hf = 0;
+          });
+        }
         return;
       }
       if (!m.drawAoi && m.identifyMode && !hf) {
         hf = requestAnimationFrame(() => { inspectAt(ev, false); hf = 0; });
       }
     });
+
     map.on('dragstart', () => setHoverSample(null));
     map.dragPan.enable(); mapInstance.current = map;
     return () => { map.remove(); mapInstance.current = null; };
@@ -1062,7 +1033,8 @@ export default function App() {
 
   const clearMainAnalysis = () => {
     setRaster(null); setFile(null); setLstUrl(null); setOpticalUrl(null);
-    setAoi([]); setAoiAnalysis(null); setShowAoiModal(false); setSample(null); setHoverSample(null);
+    setAoi([]); setAoiAnchor(null); setAoiStats(null); setAoiDetailed(null); setShowAoiModal(false);
+    setSample(null); setHoverSample(null);
     setUhiSurface(null); setIsotherms(null); setUhiSurfaceVisible(false);
     setProcessingLog([]); setStatus('Produto principal limpo.');
     const map = mapInstance.current;
@@ -1099,17 +1071,6 @@ export default function App() {
     setBusy(false);
   };
 
-  const getAoiWindow = () => {
-    if (!raster || aoi.length < 3 || !extent) return null;
-    let w = Infinity; let e = -Infinity; let s = Infinity; let n = -Infinity;
-    for (const pt of aoi) { w = Math.min(w, pt[0]); e = Math.max(e, pt[0]); s = Math.min(s, pt[1]); n = Math.max(n, pt[1]); }
-    const x0 = Math.max(0, Math.floor(((w - extent.west) / (extent.east - extent.west)) * raster.width));
-    const x1 = Math.min(raster.width, Math.ceil(((e - extent.west) / (extent.east - extent.west)) * raster.width));
-    const y0 = Math.max(0, Math.floor(((extent.north - n) / (extent.north - extent.south)) * raster.height));
-    const y1 = Math.min(raster.height, Math.ceil(((extent.north - s) / (extent.north - extent.south)) * raster.height));
-    return { x0, y0, width: Math.max(1, x1 - x0), height: Math.max(1, y1 - y0) };
-  };
-
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
     const w = Math.min(760, Math.max(360, ctx.canvas.width - x - 24)); const pad = 26;
     ctx.fillStyle = 'rgba(7,19,23,.96)'; ctx.fillRect(x, y, w, 180);
@@ -1133,76 +1094,6 @@ export default function App() {
     ctx.drawImage(opticalCanvas.current, 0, 0); ctx.globalAlpha = opacity; ctx.drawImage(lstCanvas.current, 0, 0); ctx.globalAlpha = 1;
     drawLegend(ctx, 16, c.height - 190);
     const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SR2D4-${displayMode}-${palette}.png`; a.click();
-  };
-
-  const exportAoiPng = () => {
-    const win = getAoiWindow(); if (!win || !lstCanvas.current || !opticalCanvas.current) return;
-    const c = document.createElement('canvas'); c.width = Math.max(420, win.width); c.height = win.height + 200;
-    const ctx = c.getContext('2d'); if (!ctx) return;
-    ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
-    ctx.drawImage(opticalCanvas.current, win.x0, win.y0, win.width, win.height, 0, 0, win.width, win.height);
-    ctx.globalAlpha = opacity; ctx.drawImage(lstCanvas.current, win.x0, win.y0, win.width, win.height, 0, 0, win.width, win.height); ctx.globalAlpha = 1;
-    drawLegend(ctx, 12, win.height + 10);
-    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = 'SR2D4-AOI.png'; a.click();
-  };
-
-  const exportAoiTiff = () => {
-    const win = getAoiWindow(); if (!win || !raster) return;
-    const cl = new Float32Array(win.width * win.height);
-    for (let y = 0; y < win.height; y += 1) cl.set(raster.data.subarray((win.y0 + y) * raster.width + win.x0, (win.y0 + y) * raster.width + win.x0 + win.width), y * win.width);
-    downloadFloat32Tiff(cl, win.width, win.height, `SR2D4-AOI-${displayMode}.tif`, [raster.origin[0] + win.x0 * raster.resolution[0], raster.origin[1] + win.y0 * raster.resolution[1], raster.origin[2] || 0], raster.resolution, raster.epsg, raster.isProjected);
-  };
-
-  const exportAoiGeoJson = () => {
-    if (aoi.length < 3 || !aoiAnalysis) return;
-    const gj = {
-      type: 'FeatureCollection',
-      features: [{
-        type: 'Feature',
-        properties: {
-          shape: aoiAnalysis.shape,
-          pixels: aoiAnalysis.count,
-          area_m2: Number(aoiAnalysis.areaM2.toFixed(1)),
-          area_ha: Number(aoiAnalysis.areaHa.toFixed(3)),
-          temp_min_c: Number(aoiAnalysis.min.toFixed(2)),
-          temp_mean_c: Number(aoiAnalysis.mean.toFixed(2)),
-          temp_median_c: Number(aoiAnalysis.median.toFixed(2)),
-          temp_max_c: Number(aoiAnalysis.max.toFixed(2)),
-          temp_std_c: Number(aoiAnalysis.stdDev.toFixed(2)),
-          utfvi: Number(aoiAnalysis.utfvi.toFixed(4)),
-          comfort_status: aoiAnalysis.comfortLabel,
-          ndvi_mean: Number(aoiAnalysis.ndviMean.toFixed(3)),
-          ndbi_mean: Number(aoiAnalysis.ndbiMean.toFixed(3)),
-        },
-        geometry: { type: 'Polygon', coordinates: [[...aoi, aoi[0]]] },
-      }],
-    };
-    const b = new Blob([JSON.stringify(gj, null, 2)], { type: 'application/geo+json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SR2D4-AOI-Diagnostico.geojson'; a.click(); URL.revokeObjectURL(a.href);
-  };
-
-  const exportAoiCsv = () => {
-    if (!aoiAnalysis) return;
-    const csv = [
-      'Indicador,Valor,Unidade',
-      `Geometria,${aoiAnalysis.shape},tipo`,
-      `Pixels Validos,${aoiAnalysis.count},px`,
-      `Area,${aoiAnalysis.areaM2.toFixed(1)},m2`,
-      `Area Hectares,${aoiAnalysis.areaHa.toFixed(3)},ha`,
-      `LST Minima,${aoiAnalysis.min.toFixed(2)},C`,
-      `LST Media,${aoiAnalysis.mean.toFixed(2)},C`,
-      `LST Mediana,${aoiAnalysis.median.toFixed(2)},C`,
-      `LST Maxima,${aoiAnalysis.max.toFixed(2)},C`,
-      `Desvio Padrao,${aoiAnalysis.stdDev.toFixed(2)},C`,
-      `UTFVI,${aoiAnalysis.utfvi.toFixed(4)},indice`,
-      `Conforto Termico,"${aoiAnalysis.comfortLabel}",classe`,
-      `NDVI Medio,${aoiAnalysis.ndviMean.toFixed(3)},indice`,
-      `NDBI Medio,${aoiAnalysis.ndbiMean.toFixed(3)},indice`,
-      `Cobertura Vegetal,${aoiAnalysis.vegPct.toFixed(1)},%`,
-      `Superficie Construida,${aoiAnalysis.builtPct.toFixed(1)},%`,
-    ].join('\n');
-    const b = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SR2D4-AOI-Metricas.csv'; a.click(); URL.revokeObjectURL(a.href);
   };
 
   const exportVectorIsotherms = (format: 'geojson' | 'kml') => {
@@ -1237,7 +1128,8 @@ export default function App() {
       lstCanvas.current = lst; opticalCanvas.current = opt;
       setRaster({ data: auto.result.lstDownscaled, width: auto.tiff.width, height: auto.tiff.height, bounds: auto.bounds, origin: auto.tiff.origin, resolution: auto.tiff.resolution, epsg: auto.tiff.epsg, isProjected: auto.tiff.isProjected, stats, ndvi: auto.indices.ndvi, ndbi: auto.indices.ndbi, fileName: `${selectedFile.name} · ${auto.landsat.itemId}`, bands: auto.tiff.rasters.length });
       setComparisonMode('main'); setSwipeActive(false);
-      setAoi([]); setAoiAnalysis(null); setLstUrl(lst.toDataURL('image/png')); setOpticalUrl(opt.toDataURL('image/png')); addLog(t.ready, 'success');
+      setAoi([]); setAoiAnchor(null); setAoiStats(null); setAoiDetailed(null);
+      setLstUrl(lst.toDataURL('image/png')); setOpticalUrl(opt.toDataURL('image/png')); addLog(t.ready, 'success');
     } catch (e) {
       const msg = e instanceof Error ? e.message : t.error; setError(msg); addLog(msg, 'error');
     } finally { setBusy(false); }
@@ -1312,7 +1204,7 @@ export default function App() {
     const lnk = document.createElement('a'); lnk.href = c.toDataURL('image/png'); lnk.download = `SR2D4-Comparacao-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`; lnk.click();
   };
 
-// Relatório Técnico Expandido com Mapas LST + UHI, Bairros/Ruas OSM e Botão PT/EN
+  // Relatório Técnico Expandido com Mapas LST + UHI, Bairros/Ruas OSM e Botão PT/EN
   const downloadReport = async () => {
     if (!raster || !lstCanvas.current || !opticalCanvas.current) return;
     setStatus('Lendo ruas e bairros da base OpenStreetMap e gerando relatório expandido…');
@@ -1338,8 +1230,6 @@ export default function App() {
     });
     setStatus('Relatório técnico expandido exportado.');
   };
-    setStatus('Relatório Executivo gerado com sucesso.');
-  };
 
   const goTo = (lng: number, lat: number) => { if (Number.isFinite(lng) && Number.isFinite(lat)) mapInstance.current?.flyTo({ center: [lng, lat], zoom: 13, essential: true }); };
   const locateMe = () => navigator.geolocation?.getCurrentPosition(({ coords }) => goTo(coords.longitude, coords.latitude), () => setSearchError('Permita o acesso ao GPS.'));
@@ -1353,4 +1243,488 @@ export default function App() {
   };
   const startCurtainDrag = (ev: React.PointerEvent<HTMLDivElement>) => {
     if (!swipeActive || !showingComparison) return; ev.preventDefault(); ev.stopPropagation();
-    curtainDragging.current = true; document.body
+    curtainDragging.current = true; document.body.classList.add('is-curtain-dragging'); ev.currentTarget.setPointerCapture?.(ev.pointerId);
+  };
+  const goToCoordinates = () => { const v = coordText.split(/[,;\s]+/).map(Number); if (v.length >= 2) goTo(v[0], v[1]); };
+  const zoomIn = () => mapInstance.current?.zoomIn(); const zoomOut = () => mapInstance.current?.zoomOut();
+  const togglePan = () => { if (drawAoi || identifyMode) return; const n = !panEnabled; setPanEnabled(n); if (n) mapInstance.current?.dragPan.enable(); else mapInstance.current?.dragPan.disable(); };
+  const toggleIdentify = () => { const n = !identifyMode; setIdentifyMode(n); setHoverSample(null); setPanEnabled(!n); };
+  const visibleBandCount = raster?.bands ?? bandCount;
+  const displayBandLabels = bandLabels.length === visibleBandCount ? bandLabels : Array.from({ length: visibleBandCount }, (_, i) => `Camada ${String(i + 1).padStart(2, '0')}`);
+  const options = Array.from({ length: visibleBandCount }, (_, i) => <option value={i} key={i}>{displayBandLabels[i]}</option>);
+  const updateBand = (idx: number, val: string) => setBands((p) => p.map((v, i) => (i === idx ? val : v)));
+
+  const selectAoiShape = (mode: AoiShapeMode) => {
+    setAoiShapeMode(mode);
+    setAoiAnchor(null);
+    setAoi([]);
+    setAoiStats(null);
+    setAoiDetailed(null);
+    setDrawAoi(true);
+    setIdentifyMode(false);
+    setPanEnabled(false);
+  };
+  const clearAoi = () => {
+    setAoi([]);
+    setAoiAnchor(null);
+    setAoiStats(null);
+    setAoiDetailed(null);
+    setShowAoiModal(false);
+    setDrawAoi(false);
+    setPanEnabled(true);
+  };
+  const analyzeAoi = () => {
+    if (!raster || aoi.length < 3) return;
+    const det = analyzeAoiDetailed(raster, aoi, aoiShapeMode, opticalCanvas.current, lstCanvas.current, opacity);
+    if (!det) {
+      setStatus('A AOI desenhada está fora dos limites da imagem térmica.');
+      return;
+    }
+    setAoiDetailed(det);
+    setAoiStats({ count: det.count, min: det.min, max: det.max, mean: det.mean });
+    setShowAoiModal(true);
+    setStatus(`AOI analisada · ${det.count.toLocaleString('pt-BR')} pixels (${det.areaHa.toFixed(2)} ha)`);
+  };
+  const finishAoi = () => {
+    if (aoi.length >= 3) {
+      setDrawAoi(false);
+      setAoiAnchor(null);
+      setPanEnabled(true);
+      analyzeAoi();
+    }
+  };
+  const toggleAoi = () => {
+    const n = !drawAoi;
+    setDrawAoi(n);
+    setIdentifyMode(false);
+    setAoiAnchor(null);
+    if (n) {
+      setAoi([]);
+      setAoiStats(null);
+      setAoiDetailed(null);
+    }
+    setPanEnabled(!n);
+  };
+
+  const closeTutorial = () => { setShowTutorial(false); sessionStorage.setItem('sr2d4-tutorial-seen', '1'); };
+  const activeInspect = hoverSample || sample;
+  const activeDiffInfo = activeInspect?.diffTemp !== undefined && differenceStats ? differenceClassLabel(activeInspect.diffTemp, differenceStats, lang) : null;
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand"><LogoMark /><div><span className="eyebrow">{t.eyebrow}</span><h1>{t.title}</h1></div></div>
+        <div className="top-actions">
+          <span className={`status-dot ${raster || differenceReady ? 'active' : ''}`} />
+          <span className="status-label">{status || (raster || differenceReady ? t.ready : t.noData)}</span>
+          <button className="icon-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title={t.theme}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
+          <button className="lang-button" onClick={() => setLang(lang === 'pt' ? 'en' : 'pt')}>{lang === 'pt' ? 'EN' : 'PT'}</button>
+        </div>
+      </header>
+      <div className="intro-strip">
+        <div><strong>{t.subtitle}</strong><span>{raster ? `${raster.fileName} · ${raster.width}×${raster.height} px · EPSG:${raster.epsg}` : 'Local-first analysis for SR2D4 multispectral products'}</span></div>
+        <a className="colab-button" href={COLAB_URL} target="_blank" rel="noreferrer">↗ {t.colab}</a>
+      </div>
+      <main className="workspace" style={{ '--rail-width': `${panelWidth}px` } as React.CSSProperties}>
+        <section className="map-stage" style={{ position: 'relative', overflow: 'hidden' }}>
+          <div ref={mapRef} className={`map-container ${identifyMode ? 'identify-active' : ''}`} />
+          {swipeActive && showingComparison && (
+            <div className="curtain-map" ref={curtainContainerRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 2, clipPath: `inset(0 0 0 ${swipePosition}%)` }} />
+          )}
+          {swipeActive && showingComparison && (
+            <>
+              <div style={{ position: 'absolute', top: '76px', left: '16px', zIndex: 6, background: 'rgba(7,19,23,0.92)', border: '2px solid #38bdf8', color: '#fff', padding: '8px 14px', borderRadius: '10px', fontWeight: 800, fontSize: '13px', pointerEvents: 'none' }}>
+                <span style={{ color: '#38bdf8', display: 'block', fontSize: '10px' }}>◀ LADO ESQUERDO (ANTES)</span>
+                DATA 1 · {comparisonPrimary?.dateLabel ?? 'ANTES'}
+              </div>
+              <div style={{ position: 'absolute', top: '76px', right: '58px', zIndex: 6, background: 'rgba(7,19,23,0.92)', border: '2px solid #ffb000', color: '#fff', padding: '8px 14px', borderRadius: '10px', fontWeight: 800, fontSize: '13px', textAlign: 'right', pointerEvents: 'none' }}>
+                <span style={{ color: '#ffb000', display: 'block', fontSize: '10px' }}>LADO DIREITO (DEPOIS) ▶</span>
+                DATA 2 · {comparisonSecondary?.dateLabel ?? 'DEPOIS'}
+              </div>
+              <div className="curtain-divider" style={{ position: 'absolute', top: 0, bottom: 0, left: `${swipePosition}%`, width: '4px', background: '#ffb000', cursor: 'ew-resize', zIndex: 7 }} onPointerDown={startCurtainDrag} role="slider" tabIndex={0}>
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: '#071317', border: '2px solid #ffb000', color: '#fff', padding: '6px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                  ◀ ANTES | DEPOIS ▶
+                </div>
+              </div>
+            </>
+          )}
+          {showSearch ? (
+            <div className="map-search">
+              <div className="search-line">
+                <Icon name="search" /><input value={search} placeholder={t.search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchPlace()} />
+                <button onClick={searchPlace} disabled={searching}>{searching ? '…' : t.go}</button>
+                <button className="search-close" onClick={() => { setShowSearch(false); setSearchResults([]); }}>×</button>
+              </div>
+              {searchResults.length > 0 && <div className="search-results">{searchResults.map((r) => <button key={`${r.lat}-${r.lon}`} onClick={() => { goTo(Number(r.lon), Number(r.lat)); setSearchResults([]); }}>{r.display_name}</button>)}</div>}
+              <div className="coord-line">
+                <Icon name="pin" /><input value={coordText} placeholder={t.coords} onChange={(e) => setCoordText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && goToCoordinates()} />
+                <button onClick={goToCoordinates}>{t.go}</button><button className="gps-button" onClick={locateMe} title={t.locate}><Icon name="gps" /></button>
+              </div>
+              {searchError && <small className="search-error">{searchError}</small>}
+            </div>
+          ) : (
+            <button className="search-open" onClick={() => setShowSearch(true)} title={t.search}><Icon name="search" /></button>
+          )}
+          {!raster && !differenceReady && <div className="map-empty"><div className="empty-orbit">◌</div><strong>{t.noData}</strong><span>{t.uploadHint}</span></div>}
+          {(raster || differenceReady) && (
+            <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '370px', zIndex: 5 }}>
+              <span>
+                {comparisonMode === 'difference' && showingComparison && !swipeActive
+                  ? `Δ LST (${comparisonPrimary?.dateLabel} → ${comparisonSecondary?.dateLabel}) · 1σ = ±${differenceStats?.thresholdSigma.toFixed(2)}°C`
+                  : swipeActive && showingComparison
+                    ? `CORTINA: ${comparisonPrimary?.dateLabel} ◀ | ▶ ${comparisonSecondary?.dateLabel}`
+                    : displayMode === 'uhi' ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})` : t.lst}
+              </span>
+              {comparisonMode === 'difference' && showingComparison && !swipeActive && differenceStats ? (
+                <>
+                  <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px' }}>
+                    <b style={{ color: '#48cae4' }}>↓ Diminuiu ({differenceStats.pctDecreased.toFixed(1)}%)</b>
+                    <b style={{ color: '#cbd5e1' }}>＝ Igual ({differenceStats.pctEqual.toFixed(1)}%)</b>
+                    <b style={{ color: '#ff9e00' }}>↑ Aumentou ({differenceStats.pctIncreased.toFixed(1)}%)</b>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="legend-gradient" style={{ background: legendGradient }} />
+                  <div>
+                    <b>{(raster?.stats.min ?? comparisonPrimary?.stats.min ?? 0).toFixed(1)}°C</b>
+                    <b>{(raster?.stats.mean ?? comparisonPrimary?.stats.mean ?? 0).toFixed(1)}°C</b>
+                    <b>{(raster?.stats.max ?? comparisonPrimary?.stats.max ?? 0).toFixed(1)}°C</b>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          <div className="map-tools">
+            <button onClick={zoomIn} title="Zoom in">＋</button><button onClick={zoomOut} title="Zoom out">−</button>
+            <button className={panEnabled ? 'active' : ''} onClick={togglePan} title="Pan">✋</button>
+            <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title="Identify">ⓘ</button>
+            <button className={drawAoi ? 'active' : ''} onClick={toggleAoi} title={t.draw}>⌗</button>
+            {drawAoi && aoi.length >= 3 && <button onClick={finishAoi} title="Finalizar AOI">✓</button>}
+            {!drawAoi && aoi.length >= 3 && <button onClick={analyzeAoi} title="Abrir Pop-up AOI">📊</button>}
+          </div>
+          <AoiToolbar
+            active={drawAoi}
+            shapeMode={aoiShapeMode}
+            vertexCount={aoi.length}
+            hasAnchor={Boolean(aoiAnchor)}
+            hasStats={Boolean(aoiDetailed)}
+            onSelectShape={selectAoiShape}
+            onFinishPolygon={finishAoi}
+            onOpenPopup={analyzeAoi}
+            onClear={clearAoi}
+          />
+        </section>
+        <div className="resize-handle" onPointerDown={() => { resizing.current = true; document.body.classList.add('is-resizing'); }} title={t.resize}><Icon name="resize" /></div>
+        <aside className="control-rail">
+          <div className="rail-scroll">
+            <div className="scroll-map-tools">
+              <button onClick={zoomIn}>＋</button><button onClick={zoomOut}>−</button>
+              <button className={panEnabled ? 'active' : ''} onClick={togglePan}>✋</button>
+              <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify}>ⓘ</button>
+              <button className={drawAoi ? 'active' : ''} onClick={toggleAoi}>⌗</button>
+            </div>
+            <section className="rail-card start-card">
+              <div className="card-kicker">00 / START HERE</div>
+              <div className="card-heading"><h3>{lang === 'pt' ? 'Primeiros passos' : 'Start here'}</h3><span className="chip">{tutorialStep + 1}/4</span></div>
+              <div className="start-actions">
+                <button onClick={() => { setTutorialStep(0); setShowTutorial(true); }}>▶ Tutorial</button>
+                <button onClick={() => setShowMethod(true)}>◈ {t.method}</button><button onClick={() => setShowHelp(true)}>？ {t.help}</button>
+                <button onClick={() => setShowLimits(true)}>△ {t.limitation}</button><button onClick={() => setShowMeta(true)} disabled={!raster}>⌁ {t.metadata}</button>
+              </div>
+            </section>
+            <section className="rail-card hero-card">
+              <div className="card-kicker">01 / INPUT</div><h2>{t.upload}</h2><p>{t.uploadHint}</p>
+              <label className="file-drop" style={{ cursor: 'pointer', position: 'relative', zIndex: 10 }}>
+                <input type="file" accept=".tif,.tiff,image/tiff,application/geotiff,application/octet-stream" style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', zIndex: 12 }} onChange={(e) => void handleFileChange(e.target.files?.[0] || null)} />
+                <span className="upload-icon">↑</span><strong>{file ? file.name : 'Escolher GeoTIFF'}</strong>
+                <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB · ${visibleBandCount} bandas` : 'TIFF / BigTIFF supported'}</small>
+              </label>
+              <div className="band-grid">
+                <h3>{t.bands}</h3>
+                <label>{t.red}<select value={bands[0]} onChange={(e) => updateBand(0, e.target.value)}>{options}</select></label>
+                <label>{t.nir}<select value={bands[1]} onChange={(e) => updateBand(1, e.target.value)}>{options}</select></label>
+                <label>{t.swir}<select value={bands[2]} onChange={(e) => updateBand(2, e.target.value)}>{options}</select></label>
+              </div>
+              <div className="processing-log">
+                <div className="processing-log-head"><b>Log de processamento</b><span>{busy ? 'em andamento' : processingLog.length ? 'concluído' : '—'}</span></div>
+                {processingLog.length ? <div className="processing-log-list">{processingLog.map((en, i) => <div className={`processing-log-entry ${en.level}`} key={`${en.time}-${i}`}><time>{en.time}</time><span>{en.message}</span></div>)}</div> : <p>Clique em Calcular mapa térmico para iniciar.</p>}
+              </div>
+              <button className="primary-button" onClick={() => void processFile()} disabled={!file || busy}>{busy ? t.processing : t.calculate}<span>→</span></button>
+              {(raster || file) && (
+                <div className="button-row" style={{ marginTop: '8px' }}>
+                  {differenceReady && comparisonMode !== 'main' && (
+                    <button type="button" onClick={() => { setSwipeActive(false); setComparisonMode('main'); }}>
+                      👁 Ver Mapa Principal
+                    </button>
+                  )}
+                  <button type="button" onClick={clearMainAnalysis}>
+                    ✕ Limpar principal
+                  </button>
+                </div>
+              )}
+              {error && <div className="error-box">{error}</div>}
+            </section>
+            {(raster || differenceReady || hoverSample || sample || identifyMode) && (
+              <section className="rail-card inspector-rail-card">
+                <div className="card-heading">
+                  <h3>ⓘ {t.sample}</h3>
+                  <span className="chip">{showingComparison && activeInspect?.diffTemp !== undefined ? 'Δ LST ±1σ' : displayMode === 'uhi' ? 'UHI 1m' : '°C'}</span>
+                </div>
+                <div className="inspector-split">
+                  <div>
+                    {showingComparison && activeInspect?.diffTemp !== undefined && differenceStats ? (
+                      <>
+                        <strong className="inspector-temperature" style={{ color: activeDiffInfo?.color }}>
+                          {activeInspect.diffTemp >= 0 ? `+${activeInspect.diffTemp.toFixed(2)}°C` : `${activeInspect.diffTemp.toFixed(2)}°C`}
+                        </strong>
+                        <span className="inspector-uhi-class" style={{ display: 'block', marginTop: '4px' }}><b style={{ color: activeDiffInfo?.color }}>{activeDiffInfo?.label}</b></span>
+                        <div className="inspector-coordinates" style={{ marginTop: '4px' }}>
+                          Antes: <b>{activeInspect.beforeTemp?.toFixed(1) ?? '—'}°C</b> → Depois: <b>{activeInspect.afterTemp?.toFixed(1) ?? '—'}°C</b><br />
+                          Desvio (1σ): ±{differenceStats.thresholdSigma.toFixed(2)}°C · Lat: {activeInspect.lat.toFixed(4)} · Lon: {activeInspect.lng.toFixed(4)}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <strong className="inspector-temperature">{activeInspect ? `${activeInspect.temp.toFixed(1)}°C` : `${raster?.stats.mean.toFixed(1) ?? comparisonPrimary?.stats.mean.toFixed(1) ?? '—'}°C`}</strong>
+                        {raster && (
+                          <span className="inspector-uhi-class">
+                            {activeInspect ? 'Nível local: ' : 'Média da cena · '}
+                            <b>{activeInspect ? uhiClassLabel(activeInspect.temp, raster.stats, uhiMethod, uhiPower, lang) : `${raster.stats.min.toFixed(1)}°C – ${raster.stats.max.toFixed(1)}°C`}</b>
+                          </span>
+                        )}
+                        {activeInspect && <div className="inspector-coordinates">Lat: {activeInspect.lat.toFixed(4)} · Lon: {activeInspect.lng.toFixed(4)}</div>}
+                      </>
+                    )}
+                  </div>
+                  <div className="side-legends">
+                    <div className="side-legend">
+                      <b>{showingComparison && comparisonMode === 'difference' && !swipeActive ? 'Escala ΔLST (±1σ)' : displayMode === 'uhi' ? 'Escala UHI' : `Paleta: ${palette}`}</b>
+                      <i className="legend-gradient" style={{ background: showingComparison && comparisonMode === 'difference' && !swipeActive ? DIFFERENCE_GRADIENT_CSS : legendGradient }} />
+                      <small>{showingComparison && comparisonMode === 'difference' && !swipeActive ? 'Diminuiu ← Igual → Aumentou' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}</small>
+                    </div>
+                  </div>
+                </div>
+                {raster && colorTempHistogram.length > 0 && (
+                  <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(0,0,0,0.22)', borderRadius: '8px', border: '1px solid rgba(121,226,220,0.14)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '11px' }}><b>{t.histogram}</b><span>σ = {raster.stats.stdDev.toFixed(2)}°C</span></div>
+                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${colorTempHistogram.length}, 1fr)`, alignItems: 'end', gap: '2px', height: '64px', paddingBottom: '4px' }}>
+                      {colorTempHistogram.map((b, idx) => <div key={idx} title={b.tempLabel} style={{ height: `${b.height}%`, background: b.color, borderRadius: '2px 2px 0 0' }} />)}
+                    </div>
+                    <div className="legend-gradient" style={{ background: legendGradient, height: '8px', borderRadius: '4px', margin: '2px 0 5px' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', opacity: 0.85 }}>
+                      <span>{raster.stats.min.toFixed(1)}°C</span><span>Q25: {raster.stats.q25.toFixed(1)}°</span><b>μ: {raster.stats.mean.toFixed(1)}°C</b><span>Q75: {raster.stats.q75.toFixed(1)}°</span><span>{raster.stats.max.toFixed(1)}°C</span>
+                    </div>
+                  </div>
+                )}
+                <div className="control-row" style={{ marginTop: '10px' }}>
+                  <span>Modo</span>
+                  <select value={displayMode} onChange={(e) => setDisplayMode(e.target.value as 'temperature' | 'uhi')}>
+                    <option value="temperature">Temperatura (°C)</option><option value="uhi">UHI / ilhas de calor (1m)</option>
+                  </select>
+                </div>
+                {displayMode === 'temperature' ? (
+                  <>
+                    <div className="control-row">
+                      <span>{t.palette}</span>
+                      <select value={palette} onChange={(e) => setPalette(e.target.value as PaletteType)}>
+                        <option value="ironbow">Ironbow (Perceptual HD)</option><option value="spectral">Spectral</option><option value="jet">Jet</option>
+                        <option value="viridis">Viridis</option><option value="magma">Magma</option><option value="coolwarm">Coolwarm</option>
+                        <option value="terrain">Terrain</option><option value="grayscale">Grayscale</option><option value="custom">Custom (Rápido)</option>
+                      </select>
+                    </div>
+                    {palette === 'custom' && (
+                      <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <small style={{ fontSize: '11px' }}>Paradas de cor (instantâneo):</small>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button type="button" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => setDraftCustomColors((p) => [...p].reverse())}>⇄ Inverter</button>
+                            <button type="button" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => setDraftCustomColors(DEFAULT_CUSTOM_COLORS)}>↺ Reset</button>
+                          </div>
+                        </div>
+                        <div className="custom-colors" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px' }}>
+                          {draftCustomColors.map((col, idx) => <input key={idx} type="color" value={col} onChange={(e) => { const v = e.target.value; setDraftCustomColors((cs) => cs.map((it, i) => (i === idx ? v : it))); }} style={{ width: '100%', height: '28px', cursor: 'pointer', border: 'none', borderRadius: '4px' }} />)}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="control-row">
+                      <span>Clustering UHI</span>
+                      <select value={uhiMethod} onChange={(e) => setUhiMethod(e.target.value as UhiClusterMethod)}>
+                        <option value="zscore">Z-Score (Desvio-Padrão)</option><option value="quantiles">Quantis Adaptativos (IQR)</option>
+                        <option value="natural">Quebras Naturais (Jenks-Otsu)</option><option value="kernel">Kernel Espacial (Gi* Hotspot)</option>
+                      </select>
+                    </div>
+                    <div className="control-row">
+                      <span>Potenciação (γ) <b>{uhiPower.toFixed(2)}x</b></span>
+                      <input type="range" min="0.60" max="2.20" step="0.05" value={uhiPower} onChange={(e) => setUhiPower(Number(e.target.value))} />
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
+            <section className="rail-card">
+              <div className="card-heading"><h3><Icon name="layers" /> {t.layers}</h3></div>
+              <LayerRow label={t.lst} visible={visibleLst} onToggle={() => setVisibleLst(!visibleLst)} color="thermal" />
+              <LayerRow label={t.optical} visible={visibleOptical} onToggle={() => setVisibleOptical(!visibleOptical)} color="optical" />
+              {raster && <LayerRow label="Clusterizar / Isotermas (vetor)" visible={uhiSurfaceVisible} onToggle={() => setUhiSurfaceVisible(!uhiSurfaceVisible)} color="thermal" />}
+              <div className="control-row"><span>{t.basemap}</span><select value={provider} onChange={(e) => setProvider(e.target.value as Provider)}><option value="osm">OpenStreetMap</option><option value="esri">Esri World Imagery</option></select></div>
+              <div className="control-row"><span>{t.opacity}</span><input type="range" min="0" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /></div>
+              <div className="control-row"><span>{t.contrast}</span><input type="range" min="-1" max="1" step="0.05" value={contrast} onChange={(e) => setContrast(Number(e.target.value))} /></div>
+            </section>
+            <section className="rail-card compare-card">
+              <div className="card-heading"><h3>{t.compare}</h3><span className="chip">{comparisonImages.length ? `${comparisonImages.length} LST` : '—'}</span></div>
+              <div className="control-row comparison-count">
+                <span>Quantidade de imagens</span>
+                <select value={comparisonCount} onChange={(e) => { const v = Number(e.target.value); setComparisonCount(v); setComparisonFiles((p) => Array.from({ length: v }, (_, i) => p[i] ?? null)); setComparisonImages([]); setDifferenceReady(false); }}>
+                  {[2, 3, 4, 5, 6].map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="comparison-file-list">
+                {comparisonFiles.map((sel, idx) => (
+                  <label className="comparison-file" key={idx} style={{ cursor: 'pointer', position: 'relative' }}>
+                    <span><b>{idx === 0 ? 'Imagem 1 (ANTES)' : idx === 1 ? 'Imagem 2 (DEPOIS)' : `Imagem ${idx + 1}`}</b><small>{sel ? `${imageDateLabel(sel.name, idx)} · ${sel.name}` : 'Selecionar GeoTIFF SR2D4/MS'}</small></span>
+                    <input type="file" accept=".tif,.tiff,image/tiff,application/geotiff,application/octet-stream" style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', zIndex: 12 }} onChange={(e) => { const sf = e.target.files?.[0] ?? null; setComparisonFiles((p) => p.map((it, i) => (i === idx ? sf : it))); setDifferenceReady(false); }} disabled={busy} />
+                  </label>
+                ))}
+              </div>
+              <div className="compare-actions">
+                <button onClick={() => void calculateComparisons()} disabled={busy || comparisonFiles.filter(Boolean).length < 2}>{busy ? 'Processando…' : 'Calcular Δ LST (Depois − Antes)'}</button>
+                <button onClick={() => { setSwipeActive(false); setComparisonMode('difference'); }} disabled={!differenceReady} className={!swipeActive && showingComparison && comparisonMode === 'difference' ? 'active' : ''}>Mapa Diferença</button>
+                <button onClick={() => { setComparisonMode('difference'); setSwipeActive(!swipeActive); }} disabled={!differenceReady} className={swipeActive && showingComparison ? 'active' : ''}>{swipeActive && showingComparison ? 'Cortina Fixa Ativa' : 'Cortina (Antes/Depois)'}</button>
+                <button onClick={() => void downloadComparisonPanel()} disabled={!differenceReady}>Exportar A / B / Δ</button>
+                {raster && differenceReady && (
+                  <button type="button" className={comparisonMode === 'main' ? 'active' : ''} onClick={() => { setSwipeActive(false); setComparisonMode(comparisonMode === 'main' ? 'difference' : 'main'); }}>
+                    {comparisonMode === 'main' ? '👁 Voltar para Comparação' : '👁 Ver Data Principal'}
+                  </button>
+                )}
+                {(differenceReady || comparisonFiles.some(Boolean)) && (
+                  <button type="button" onClick={clearComparisonAnalysis}>
+                    ✕ Limpar comparação
+                  </button>
+                )}
+              </div>
+              {swipeActive && showingComparison && (
+                <label className="swipe-control">
+                  <span>◀ ANTES ({comparisonPrimary?.dateLabel}) | DEPOIS ({comparisonSecondary?.dateLabel}) ▶ <b>{swipePosition.toFixed(0)}%</b></span>
+                  <input type="range" min="0" max="100" value={swipePosition} onChange={(e) => setSwipePosition(Number(e.target.value))} />
+                </label>
+              )}
+              {differenceReady && differenceStats && (
+                <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(0,0,0,0.26)', borderRadius: '8px', border: '1px solid rgba(121,226,220,0.18)' }}>
+                  <b style={{ fontSize: '11px', display: 'block', marginBottom: '6px' }}>Escala de Mudança Térmica (±1σ = ±{differenceStats.thresholdSigma.toFixed(2)}°C)</b>
+                  <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px', marginBottom: '8px' }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', textAlign: 'center', fontSize: '11px' }}>
+                    <div style={{ padding: '6px', background: 'rgba(0,150,199,0.18)', border: '1px solid #48cae4', borderRadius: '6px' }}>
+                      <b style={{ color: '#48cae4', display: 'block' }}>↓ DIMINUIU</b><span>&lt; -1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctDecreased.toFixed(1)}%</strong>
+                    </div>
+                    <div style={{ padding: '6px', background: 'rgba(148,163,184,0.14)', border: '1px solid #94a3b8', borderRadius: '6px' }}>
+                      <b style={{ color: '#cbd5e1', display: 'block' }}>＝ IGUAL</b><span>±1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctEqual.toFixed(1)}%</strong>
+                    </div>
+                    <div style={{ padding: '6px', background: 'rgba(247,127,0,0.18)', border: '1px solid #ff9e00', borderRadius: '6px' }}>
+                      <b style={{ color: '#ff9e00', display: 'block' }}>↑ AUMENTOU</b><span>&gt; +1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctIncreased.toFixed(1)}%</strong>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+            {raster && (
+              <>
+                <section className="rail-card">
+                  <div className="card-heading"><h3>{t.stats}</h3><span className="chip">°C</span></div>
+                  <div className="metric-grid">
+                    <Metric label={t.min} value={raster.stats.min.toFixed(1)} /><Metric label={t.mean} value={raster.stats.mean.toFixed(1)} />
+                    <Metric label={t.max} value={raster.stats.max.toFixed(1)} /><Metric label={t.std} value={raster.stats.stdDev.toFixed(2)} />
+                  </div>
+                </section>
+                <section className="rail-card">
+                  <div className="card-heading"><h3>{t.indices}</h3><span className="chip">MS</span></div>
+                  <div className="metric-grid index-grid"><Metric label={t.ndvi} value={meanOf(raster.ndvi).toFixed(3)} /><Metric label={t.ndbi} value={meanOf(raster.ndbi).toFixed(3)} /></div>
+                </section>
+                <section className="rail-card">
+                  <div className="card-heading"><h3>{t.aoi}</h3><span className="chip">{aoi.length ? `${aoi.length} pts` : aoiShapeMode}</span></div>
+                  <p className="microcopy">{aoiStats ? `Média AOI: ${aoiStats.mean.toFixed(2)}°C (${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C · ${aoiStats.count.toLocaleString('pt-BR')} px)` : t.aoiHelp}</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '8px' }}>
+                    {([
+                      ['rectangle', '▭ Retângulo'],
+                      ['square', '◻ Quadrado'],
+                      ['circle', '◯ Círculo'],
+                      ['polygon', '⬠ Polígono'],
+                    ] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={drawAoi && aoiShapeMode === mode ? 'active' : ''}
+                        onClick={() => selectAoiShape(mode)}
+                        style={{
+                          padding: '6px 4px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          border: drawAoi && aoiShapeMode === mode ? '1.5px solid #ffb000' : undefined,
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="button-row">
+                    <button onClick={drawAoi ? finishAoi : toggleAoi}>{drawAoi ? '✓ Concluir AOI' : t.draw}</button>
+                    <button disabled={aoi.length < 3} onClick={analyzeAoi}>📊 {t.clip}</button>
+                    <button disabled={aoi.length === 0} onClick={clearAoi}>✕ {t.clear}</button>
+                  </div>
+                </section>
+                <section className="rail-card">
+                  <div className="card-heading"><h3>{t.export}</h3></div>
+                  <div className="export-grid">
+                    <button onClick={() => setUhiSurfaceVisible(!uhiSurfaceVisible)}>{uhiSurfaceVisible ? 'Ocultar Isotermas' : 'Ver Isotermas (Meso)'}</button>
+                    <button onClick={() => exportVectorIsotherms('geojson')}>Isotermas GeoJSON</button>
+                    <button onClick={() => exportVectorIsotherms('kml')}>Isotermas KML</button>
+                    <button onClick={exportPng}>{t.png}</button>
+                    <button onClick={() => downloadFloat32Tiff(raster.data, raster.width, raster.height, 'LST-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected)}>{t.tiff}</button>
+                    <button onClick={() => downloadUhiTiff(raster.data, raster.width, raster.height, 'UHI-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected, raster.stats.mean, raster.stats.stdDev)}>{t.uhi}</button>
+                    <button disabled={!uhiSurface} onClick={() => uhiSurface && downloadUhiSurface(uhiSurface)}>Grade UHI GeoJSON</button>
+                    <button onClick={() => void downloadReport()}>{t.report}</button>
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
+        </aside>
+      </main>
+      <AoiAnalysisModal
+        open={showAoiModal}
+        stats={aoiDetailed}
+        raster={raster}
+        onClose={() => setShowAoiModal(false)}
+      />
+      {(showMethod || showHelp || showMeta || showLimits) && (
+        <div className="dialog-backdrop" onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); setShowLimits(false); }}>
+          <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
+            <button className="dialog-close" onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); setShowLimits(false); }}>×</button>
+            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
+            <h2>{showMethod ? t.method : showHelp ? t.help : showLimits ? t.limitation : t.metadata}</h2>
+            {showMethod && <p>{t.methodText}</p>}{showHelp && <p>{t.helpText}</p>}{showLimits && <p>{t.limitationText}</p>}
+            {showMeta && raster && <div className="meta-list"><span><b>File</b>{raster.fileName}</span><span><b>Dimensions</b>{raster.width} × {raster.height}</span><span><b>EPSG</b>{raster.epsg}</span></div>}
+          </div>
+        </div>
+      )}
+      {showTutorial && (
+        <div className="tutorial-backdrop">
+          <div className="tutorial-card">
+            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
+            <h2>{['Explore o mapa', 'Carregue suas bandas', 'Calcule a temperatura', 'Compare e exporte'][tutorialStep]}</h2>
+            <p>{[t.helpText, t.methodText, t.uhiText, t.limitationText][tutorialStep]}</p>
+            <div className="tutorial-actions">
+              <button onClick={closeTutorial}>Pular</button>
+              {tutorialStep < 3 ? <button className="primary-button" onClick={() => setTutorialStep((s) => s + 1)}>Próximo →</button> : <button className="primary-button" onClick={closeTutorial}>Começar →</button>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+// FIM DO ARQUIVO src/App.tsx
