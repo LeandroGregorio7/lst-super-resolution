@@ -84,7 +84,7 @@ const copy = {
     locate: 'Minha localização', go: 'Ir', compare: 'Comparar antes/depois', indices: 'Índices espectrais',
     ndvi: 'NDVI vegetação', ndbi: 'NDBI construído', report: 'Relatório rápido', resize: 'Arraste para redimensionar o painel',
     searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Leve, Forte e Extremo.',
-    aoiHelp: 'Ative Desenhar AOI, clique em pelo menos três pontos no mapa e finalize com ✓ ou duplo clique.',
+    aoiHelp: 'Clique em Desenhar AOI, marque os pontos no mapa (linhas aparecem na hora) e finalize com ✓.',
     limitation: 'Limitações da super-resolução',
     limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Use-a para investigação espacial e comparação.',
   },
@@ -106,7 +106,7 @@ const copy = {
     locate: 'My location', go: 'Go', compare: 'Compare before/after', indices: 'Spectral indices',
     ndvi: 'NDVI vegetation', ndbi: 'NDBI built-up', report: 'Quick report', resize: 'Drag to resize the panel',
     searchError: 'Place not found.', uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Mild, Strong and Extreme.',
-    aoiHelp: 'Activate Draw AOI, click at least three map points, then finish with ✓ or double-click.',
+    aoiHelp: 'Activate Draw AOI, click points on the map (lines render live), then finish with ✓.',
     limitation: 'Super-resolution limitations',
     limitationText: 'Detailed LST is an optical-guided estimate. Validate results with field data.',
   },
@@ -439,14 +439,14 @@ function thermalDifference(
   }
   return result;
 }
-function sampleDiffColor(val: number, sigma: number, maxScale: number): [number, number, number] {
-  const absV = Math.abs(val);
+function sampleDiffColor(anomVal: number, sigma: number, maxScale: number): [number, number, number] {
+  const absV = Math.abs(anomVal);
   if (absV <= sigma) {
-    const t = val / Math.max(0.1, sigma);
-    return [Math.round(68 + t * 8), Math.round(80 - Math.abs(t) * 4), Math.round(88 - t * 8)];
+    const t = anomVal / Math.max(0.1, sigma);
+    return [Math.round(70 + t * 10), Math.round(82 - Math.abs(t) * 4), Math.round(92 - t * 10)];
   }
-  const norm = Math.min(1, (absV - sigma) / Math.max(0.4, maxScale - sigma));
-  if (val < -sigma) {
+  const norm = Math.min(1, (absV - sigma) / Math.max(0.35, maxScale - sigma));
+  if (anomVal < -sigma) {
     return norm < 0.5
       ? [Math.round(72 * (1 - norm * 2)), Math.round(202 - 132 * norm), Math.round(228 - 48 * norm)]
       : [Math.round(3 * (norm - 0.5) * 2), Math.round(136 - 202 * (norm - 0.5)), Math.round(204 - 132 * (norm - 0.5))];
@@ -455,6 +455,11 @@ function sampleDiffColor(val: number, sigma: number, maxScale: number): [number,
     ? [Math.round(247 - 60 * (norm / 0.55)), Math.round(127 - 158 * (norm / 0.55)), Math.round(72 * (norm / 0.55))]
     : [Math.round(214 + 41 * ((norm - 0.55) / 0.45)), Math.round(40 + 194 * ((norm - 0.55) / 0.45)), Math.round(40 * (1 - (norm - 0.55) / 0.45))];
 }
+
+/**
+ * Renderiza ΔLST centrando na anomalia relativa ao deslocamento sazonal (val - mean)
+ * caso haja forte viés sazonal entre as datas, garantindo contraste Azul / Cinza (±1σ) / Vermelho-Ouro.
+ */
 function renderDifferenceToCanvas(
   data: Float32Array, baseTemp: Float32Array, width: number, height: number, canvas: HTMLCanvasElement,
 ): DifferenceStats | null {
@@ -462,7 +467,6 @@ function renderDifferenceToCanvas(
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   let min = Infinity; let max = -Infinity; let sum = 0; let count = 0;
-  const absSamples: number[] = [];
   const step = Math.max(1, Math.floor(data.length / 25000));
   for (let i = 0; i < data.length; i += 1) {
     const v = data[i];
@@ -470,19 +474,28 @@ function renderDifferenceToCanvas(
     if (v < min) min = v;
     if (v > max) max = v;
     sum += v; count += 1;
-    if (i % step === 0) absSamples.push(Math.abs(v));
   }
   if (!count) return null;
   const mean = sum / count;
   let sqSum = 0; let sqCount = 0;
+  const anomSamples: number[] = [];
   for (let i = 0; i < data.length; i += step) {
     const v = data[i];
-    if (Number.isFinite(v)) { sqSum += (v - mean) ** 2; sqCount += 1; }
+    if (Number.isFinite(v)) {
+      const d = v - mean;
+      sqSum += d * d;
+      sqCount += 1;
+      anomSamples.push(Math.abs(d));
+    }
   }
   const stdDev = sqCount > 1 ? Math.sqrt(sqSum / sqCount) : 1.0;
-  const thresholdSigma = Math.max(0.45, stdDev);
-  absSamples.sort((a, b) => a - b);
-  const maxScale = Math.max(thresholdSigma * 1.8, absSamples[Math.floor(absSamples.length * 0.985)] ?? thresholdSigma * 2.5);
+  const thresholdSigma = Math.max(0.35, stdDev);
+  // Se a mudança média absoluta for maior que 1.15 * sigma (datas de estações diferentes),
+  // centralizamos na média para não pintar 100% do mapa de uma única cor.
+  const centerOffset = Math.abs(mean) > 1.15 * thresholdSigma ? mean : 0;
+  anomSamples.sort((a, b) => a - b);
+  const maxScale = Math.max(thresholdSigma * 1.8, anomSamples[Math.floor(anomSamples.length * 0.985)] ?? thresholdSigma * 2.5);
+
   let decCount = 0; let eqCount = 0; let incCount = 0;
   const image = ctx.createImageData(width, height);
   const out = image.data;
@@ -491,9 +504,11 @@ function renderDifferenceToCanvas(
     for (let x = 0; x < width; x += 1) {
       const i = row + x; const value = data[i]; const px = i * 4;
       if (!Number.isFinite(value)) { out[px + 3] = 0; continue; }
-      if (value < -thresholdSigma) decCount += 1;
-      else if (value > thresholdSigma) incCount += 1;
+      const anom = value - centerOffset;
+      if (anom < -thresholdSigma) decCount += 1;
+      else if (anom > thresholdSigma) incCount += 1;
       else eqCount += 1;
+
       const xP = Math.max(0, x - 1); const xN = Math.min(width - 1, x + 1);
       const bC = Number.isFinite(baseTemp[i]) ? baseTemp[i] : 0;
       const bE = Number.isFinite(baseTemp[row + xN]) ? baseTemp[row + xN] : bC;
@@ -501,7 +516,7 @@ function renderDifferenceToCanvas(
       const bS = Number.isFinite(baseTemp[yN + x]) ? baseTemp[yN + x] : bC;
       const bN = Number.isFinite(baseTemp[yP + x]) ? baseTemp[yP + x] : bC;
       const relief = Math.max(-0.18, Math.min(0.18, (bE - bW) * 0.12 - (bS - bN) * 0.12 + (bC - 0.25 * (bE + bW + bS + bN)) * 0.22));
-      const [r, g, b] = sampleDiffColor(value, thresholdSigma, maxScale);
+      const [r, g, b] = sampleDiffColor(anom, thresholdSigma, maxScale);
       const m = 1 + relief;
       out[px] = Math.max(0, Math.min(255, Math.round(r * m)));
       out[px + 1] = Math.max(0, Math.min(255, Math.round(g * m)));
@@ -515,12 +530,15 @@ function renderDifferenceToCanvas(
     pctDecreased: (decCount / count) * 100, pctEqual: (eqCount / count) * 100, pctIncreased: (incCount / count) * 100,
   };
 }
-function differenceClassLabel(diff: number, sigma: number, lang: Lang): { label: string; color: string } {
+function differenceClassLabel(diff: number, stats: DifferenceStats, lang: Lang): { label: string; color: string } {
   if (!Number.isFinite(diff)) return { label: '—', color: '#9ab0b5' };
-  if (diff < -2 * sigma) return { label: lang === 'pt' ? '↓ DIMINUIU FORTE (< -2σ)' : '↓ STRONG COOLING (< -2σ)', color: '#38bdf8' };
-  if (diff < -sigma) return { label: lang === 'pt' ? '↓ DIMINUIU (abaixo de -1σ)' : '↓ DECREASED (< -1σ)', color: '#48cae4' };
-  if (diff > 2 * sigma) return { label: lang === 'pt' ? '↑ AUMENTOU FORTE (> +2σ)' : '↑ STRONG WARMING (> +2σ)', color: '#ffea00' };
-  if (diff > sigma) return { label: lang === 'pt' ? '↑ AUMENTOU (acima de +1σ)' : '↑ INCREASED (> +1σ)', color: '#ff7b29' };
+  const sigma = stats.thresholdSigma;
+  const center = Math.abs(stats.mean) > 1.15 * sigma ? stats.mean : 0;
+  const anom = diff - center;
+  if (anom < -2 * sigma) return { label: lang === 'pt' ? '↓ DIMINUIU FORTE (< -2σ)' : '↓ STRONG COOLING (< -2σ)', color: '#38bdf8' };
+  if (anom < -sigma) return { label: lang === 'pt' ? '↓ DIMINUIU (abaixo de -1σ)' : '↓ DECREASED (< -1σ)', color: '#48cae4' };
+  if (anom > 2 * sigma) return { label: lang === 'pt' ? '↑ AUMENTOU FORTE (> +2σ)' : '↑ STRONG WARMING (> +2σ)', color: '#ffea00' };
+  if (anom > sigma) return { label: lang === 'pt' ? '↑ AUMENTOU (acima de +1σ)' : '↑ INCREASED (> +1σ)', color: '#ff7b29' };
   return { label: lang === 'pt' ? '＝ PERMANECEU IGUAL (dentro de ±1σ)' : '＝ REMAINED EQUAL (within ±1σ)', color: '#a3b8c2' };
 }
 function uhiClassLabel(value: number, stats: RasterStats, method: UhiClusterMethod, power: number, lang: Lang) {
@@ -589,7 +607,7 @@ export default function App() {
   const [comparisonCount, setComparisonCount] = useState(2);
   const [comparisonFiles, setComparisonFiles] = useState<(File | null)[]>([null, null]);
   const [comparisonImages, setComparisonImages] = useState<ComparisonImage[]>([]);
-  const [comparisonMode, setComparisonMode] = useState<'difference' | 'secondary'>('difference');
+  const [comparisonMode, setComparisonMode] = useState<'difference' | 'secondary' | 'main'>('difference');
   const [differenceReady, setDifferenceReady] = useState(false);
   const [swipeActive, setSwipeActive] = useState(false);
   const [swipePosition, setSwipePosition] = useState(50);
@@ -612,6 +630,7 @@ export default function App() {
   const extent = useMemo(() => (raster ? boundsExtent(raster.bounds) : null), [raster]);
   const comparisonPrimary = comparisonImages[0] ?? null;
   const comparisonSecondary = comparisonImages[1] ?? null;
+  const showingComparison = differenceReady && comparisonMode !== 'main';
 
   useEffect(() => {
     const timer = window.setTimeout(() => setCustomColors(draftCustomColors), 140);
@@ -629,7 +648,8 @@ export default function App() {
   const mapClickMode = useRef({
     drawAoi: false, raster: null as RasterState | null, extent: null as ReturnType<typeof boundsExtent> | null,
     identifyMode: false, comparisonPrimary: null as ComparisonImage | null,
-    comparisonSecondary: null as ComparisonImage | null, differenceData: null as Float32Array | null, differenceReady: false,
+    comparisonSecondary: null as ComparisonImage | null, differenceData: null as Float32Array | null,
+    showingComparison: false,
   });
 
   const uhiGradient = 'linear-gradient(90deg, #103e8a, #187a8c, #3aae6c, #bade76, #f8d668, #f47c30, #d42026, #fff4b8)';
@@ -640,9 +660,9 @@ export default function App() {
   useEffect(() => {
     mapClickMode.current = {
       drawAoi, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary,
-      differenceData: differenceRender?.data ?? null, differenceReady,
+      differenceData: differenceRender?.data ?? null, showingComparison,
     };
-  }, [drawAoi, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary, differenceRender, differenceReady]);
+  }, [drawAoi, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary, differenceRender, showingComparison]);
 
   useEffect(() => {
     const onMove = (ev: PointerEvent) => {
@@ -674,7 +694,7 @@ export default function App() {
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     const inspectAt = (event: maplibregl.MapMouseEvent, commit: boolean) => {
       const m = mapClickMode.current;
-      if (m.differenceReady && m.comparisonPrimary && m.comparisonSecondary && m.differenceData) {
+      if (m.showingComparison && m.comparisonPrimary && m.comparisonSecondary && m.differenceData) {
         const pE = boundsExtent(m.comparisonPrimary.bounds); const sE = boundsExtent(m.comparisonSecondary.bounds);
         const px = Math.floor(((event.lngLat.lng - pE.west) / (pE.east - pE.west)) * m.comparisonPrimary.width);
         const py = Math.floor(((pE.north - event.lngLat.lat) / (pE.north - pE.south)) * m.comparisonPrimary.height);
@@ -739,7 +759,7 @@ export default function App() {
       if (!map.getLayer('lst-layer')) map.addLayer({ id: 'lst-layer', type: 'raster', source: 'lst-raster', paint: { 'raster-opacity': opacity, 'raster-contrast': contrast } });
       if (!map.getLayer('optical-layer')) map.addLayer({ id: 'optical-layer', type: 'raster', source: 'optical-raster', paint: { 'raster-opacity': 1 } });
     }
-    if (comparisonPrimary && comparisonSecondary && differenceReady) {
+    if (comparisonPrimary && comparisonSecondary && showingComparison) {
       addOrUpdate('comparison-primary-raster', comparisonPrimary.lstUrl, comparisonPrimary.bounds);
       addOrUpdate('comparison-lst-raster', comparisonSecondary.lstUrl, comparisonSecondary.bounds);
       if (!map.getLayer('comparison-primary-layer')) map.addLayer({ id: 'comparison-primary-layer', type: 'raster', source: 'comparison-primary-raster', paint: { 'raster-opacity': 1 } });
@@ -753,15 +773,15 @@ export default function App() {
       for (const id of ['comparison-primary-layer', 'comparison-lst-layer', 'comparison-difference-layer']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
     }
     if (map.getLayer('lst-layer')) {
-      map.setLayoutProperty('lst-layer', 'visibility', visibleLst && !swipeActive && !(comparisonMode === 'difference' && differenceReady) ? 'visible' : 'none');
+      map.setLayoutProperty('lst-layer', 'visibility', visibleLst && !showingComparison ? 'visible' : 'none');
       map.setPaintProperty('lst-layer', 'raster-opacity', opacity); map.setPaintProperty('lst-layer', 'raster-contrast', contrast);
     }
-    if (map.getLayer('optical-layer')) map.setLayoutProperty('optical-layer', 'visibility', visibleOptical && !swipeActive && !(comparisonMode === 'difference' && differenceReady) ? 'visible' : 'none');
-  }, [comparisonMode, comparisonPrimary, comparisonSecondary, contrast, differenceReady, differenceRender, lstUrl, opacity, opticalUrl, raster, swipeActive, visibleLst, visibleOptical]);
+    if (map.getLayer('optical-layer')) map.setLayoutProperty('optical-layer', 'visibility', visibleOptical && !showingComparison ? 'visible' : 'none');
+  }, [comparisonMode, comparisonPrimary, comparisonSecondary, contrast, differenceRender, lstUrl, opacity, opticalUrl, raster, showingComparison, swipeActive, visibleLst, visibleOptical]);
 
   useEffect(() => {
     const container = curtainContainerRef.current; const main = mapInstance.current;
-    if (!container || !main || !swipeActive || !comparisonSecondary || !differenceReady) {
+    if (!container || !main || !swipeActive || !comparisonSecondary || !showingComparison) {
       curtainMapRef.current?.remove(); curtainMapRef.current = null; return;
     }
     const curtainMap = new maplibregl.Map({
@@ -778,7 +798,7 @@ export default function App() {
     });
     main.on('move', syncCam); curtainMapRef.current = curtainMap;
     return () => { main.off('move', syncCam); curtainMap.remove(); curtainMapRef.current = null; };
-  }, [comparisonSecondary, differenceReady, swipeActive]);
+  }, [comparisonSecondary, showingComparison, swipeActive]);
 
   useEffect(() => { const s = mapInstance.current?.getSource('basemap') as any; if (s?.setTiles) s.setTiles([TILE_URLS[provider]]); }, [provider]);
   useEffect(() => {
@@ -807,17 +827,73 @@ export default function App() {
     }
   }, [comparisonPrimary, extent, raster]);
 
+  // Renderização instantânea da AOI desde o 1º clique (pontos, linha no 2º e polígono no 3º)
   useEffect(() => {
-    const map = mapInstance.current; if (!map || !map.isStyleLoaded()) return;
-    const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
-    const coords = aoi.length >= 3 ? [...aoi, aoi[0]] : aoi.length ? [...aoi, aoi[0]] : [];
-    const data = { type: 'FeatureCollection' as const, features: coords.length ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: [coords] } }] : [] };
-    if (src) src.setData(data);
-    else {
-      map.addSource('aoi-source', { type: 'geojson', data });
-      map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.15 } });
-      map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
-    }
+    const map = mapInstance.current;
+    if (!map) return;
+    const updateAoi = () => {
+      if (!map.isStyleLoaded()) return;
+      const features: any[] = aoi.map((pt, idx) => ({
+        type: 'Feature',
+        properties: { idx: idx + 1 },
+        geometry: { type: 'Point', coordinates: pt },
+      }));
+      if (aoi.length >= 2) {
+        features.push({
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: aoi.length >= 3 ? [...aoi, aoi[0]] : aoi,
+          },
+        });
+      }
+      if (aoi.length >= 3) {
+        features.push({
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[...aoi, aoi[0]]],
+          },
+        });
+      }
+      const data = { type: 'FeatureCollection' as const, features };
+      const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
+      if (src) {
+        src.setData(data as any);
+      } else {
+        map.addSource('aoi-source', { type: 'geojson', data: data as any });
+        map.addLayer({
+          id: 'aoi-fill',
+          type: 'fill',
+          source: 'aoi-source',
+          filter: ['==', '$type', 'Polygon'],
+          paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.2 },
+        });
+        map.addLayer({
+          id: 'aoi-line',
+          type: 'line',
+          source: 'aoi-source',
+          filter: ['==', '$type', 'LineString'],
+          paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] },
+        });
+        map.addLayer({
+          id: 'aoi-points',
+          type: 'circle',
+          source: 'aoi-source',
+          filter: ['==', '$type', 'Point'],
+          paint: {
+            'circle-radius': 5.5,
+            'circle-color': '#ffb000',
+            'circle-stroke-color': '#071317',
+            'circle-stroke-width': 2,
+          },
+        });
+      }
+    };
+    if (map.isStyleLoaded()) updateAoi();
+    else map.once('load', updateAoi);
   }, [aoi]);
 
   useEffect(() => {
@@ -867,6 +943,40 @@ export default function App() {
     } catch { setError('Não foi possível ler este GeoTIFF.'); setStatus(''); }
   };
 
+  // Funções de Limpeza para alternar livremente entre análises
+  const clearMainAnalysis = () => {
+    setRaster(null);
+    setFile(null);
+    setLstUrl(null);
+    setOpticalUrl(null);
+    setAoi([]);
+    setAoiStats(null);
+    setSample(null);
+    setHoverSample(null);
+    setUhiSurface(null);
+    setIsotherms(null);
+    setUhiSurfaceVisible(false);
+    setProcessingLog([]);
+    setStatus('Produto principal limpo.');
+    const map = mapInstance.current;
+    if (map) {
+      for (const id of ['lst-layer', 'optical-layer', 'uhi-surface-line', 'uhi-surface-casing']) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+      }
+    }
+  };
+
+  const clearComparisonAnalysis = () => {
+    setComparisonImages([]);
+    setComparisonFiles(Array.from({ length: comparisonCount }, () => null));
+    setDifferenceReady(false);
+    setSwipeActive(false);
+    setComparisonMode('main');
+    setSample(null);
+    setHoverSample(null);
+    setStatus(raster ? 'Comparação limpa · Exibindo mapa principal.' : 'Comparação limpa.');
+  };
+
   const calculateComparisons = async () => {
     const selected = comparisonFiles.filter((it): it is File => Boolean(it));
     if (selected.length < 2) { setError('Selecione pelo menos duas imagens.'); return; }
@@ -912,6 +1022,7 @@ export default function App() {
     ctx.fillStyle = grad; ctx.fillRect(x + pad, y + 66, w - pad * 2, 36);
     ctx.fillStyle = '#fff'; ctx.font = '600 19px Arial';
     ctx.fillText(`${raster?.stats.min.toFixed(1) ?? '—'} °C`, x + pad, y + 138);
+    ctx.textAlign = 'center'; ctx.fillText(`Média: ${raster?.stats.mean.toFixed(1) ?? '—'} °C`, x + w / 2, y + 138);
     ctx.textAlign = 'right'; ctx.fillText(`${raster?.stats.max.toFixed(1) ?? '—'} °C`, x + w - pad, y + 138); ctx.textAlign = 'left';
   };
 
@@ -973,6 +1084,8 @@ export default function App() {
       if (!stats) throw new Error('empty raster');
       lstCanvas.current = lst; opticalCanvas.current = opt;
       setRaster({ data: auto.result.lstDownscaled, width: auto.tiff.width, height: auto.tiff.height, bounds: auto.bounds, origin: auto.tiff.origin, resolution: auto.tiff.resolution, epsg: auto.tiff.epsg, isProjected: auto.tiff.isProjected, stats, ndvi: auto.indices.ndvi, ndbi: auto.indices.ndbi, fileName: `${selectedFile.name} · ${auto.landsat.itemId}`, bands: auto.tiff.rasters.length });
+      setComparisonMode('main');
+      setSwipeActive(false);
       setAoi([]); setLstUrl(lst.toDataURL('image/png')); setOpticalUrl(opt.toDataURL('image/png')); addLog(t.ready, 'success');
     } catch (e) {
       const msg = e instanceof Error ? e.message : t.error; setError(msg); addLog(msg, 'error');
@@ -995,24 +1108,165 @@ export default function App() {
     });
   }, [displayMode, draftCustomColors, palette, raster]);
 
+  // Exportação A / B / Δ com as 3 legendas completas na parte inferior (sem cortar nada!)
   const downloadComparisonPanel = async () => {
-    if (!comparisonPrimary || !comparisonSecondary || !differenceRender) return;
+    if (!comparisonPrimary || !comparisonSecondary || !differenceRender || !differenceStats) return;
     const load = (u: string) => new Promise<HTMLImageElement>((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = u; });
     const [a, b, d] = await Promise.all([load(comparisonPrimary.lstUrl), load(comparisonSecondary.lstUrl), load(differenceRender.url)]);
-    const w = 720; const iH = Math.round((w * a.height) / a.width); const c = document.createElement('canvas'); c.width = w * 3; c.height = iH + 140;
-    const ctx = c.getContext('2d'); if (!ctx) return;
-    ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
-    [{ im: a, lbl: `ANTES · ${comparisonPrimary.dateLabel}` }, { im: b, lbl: `DEPOIS · ${comparisonSecondary.dateLabel}` }, { im: d, lbl: `Δ LST (±1σ = ±${differenceStats?.thresholdSigma.toFixed(2) ?? '1.0'}°C)` }].forEach((p, idx) => {
-      const x = idx * w; ctx.fillStyle = '#fff'; ctx.font = '700 22px Arial'; ctx.fillText(p.lbl, x + 20, 34);
-      ctx.drawImage(p.im, x + 12, 48, w - 24, iH - 12);
+    const w = 740;
+    const iH = Math.round((w * a.height) / a.width);
+    const legH = 168;
+    const c = document.createElement('canvas');
+    c.width = w * 3;
+    c.height = iH + legH + 64;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#071317';
+    ctx.fillRect(0, 0, c.width, c.height);
+
+    const panels = [
+      { im: a, lbl: `ANTES · ${comparisonPrimary.dateLabel} (LST °C)`, st: comparisonPrimary.stats },
+      { im: b, lbl: `DEPOIS · ${comparisonSecondary.dateLabel} (LST °C)`, st: comparisonSecondary.stats },
+      { im: d, lbl: `DIFERENÇA ΔLST (DEPOIS − ANTES) · ±1σ = ±${differenceStats.thresholdSigma.toFixed(2)}°C`, st: null },
+    ];
+
+    panels.forEach((p, idx) => {
+      const x = idx * w;
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 22px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(p.lbl, x + w / 2, 36);
+      ctx.textAlign = 'left';
+      ctx.drawImage(p.im, x + 14, 52, w - 28, iH - 16);
+      ctx.strokeStyle = 'rgba(121,226,220,0.45)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 14, 52, w - 28, iH - 16);
+
+      const ly = iH + 52;
+      const lw = w - 28;
+      const lx = x + 14;
+      ctx.fillStyle = '#0d1f26';
+      ctx.fillRect(lx, ly, lw, legH - 14);
+      ctx.strokeStyle = 'rgba(121,226,220,0.5)';
+      ctx.strokeRect(lx, ly, lw, legH - 14);
+
+      if (p.st) {
+        ctx.fillStyle = '#79e2dc';
+        ctx.font = '700 17px Arial';
+        ctx.fillText(`ESCALA TÉRMICA (${palette.toUpperCase()})`, lx + 18, ly + 28);
+        const grad = ctx.createLinearGradient(lx + 18, ly + 42, lx + lw - 18, ly + 42);
+        for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
+        ctx.fillStyle = grad;
+        ctx.fillRect(lx + 18, ly + 42, lw - 36, 26);
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.strokeRect(lx + 18, ly + 42, lw - 36, 26);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 17px Arial';
+        ctx.fillText(`Mín: ${p.st.min.toFixed(1)} °C`, lx + 18, ly + 96);
+        ctx.textAlign = 'center';
+        ctx.fillText(`Média: ${p.st.mean.toFixed(1)} °C (σ=${p.st.stdDev.toFixed(2)}°C)`, lx + lw / 2, ly + 96);
+        ctx.textAlign = 'right';
+        ctx.fillText(`Máx: ${p.st.max.toFixed(1)} °C`, lx + lw - 18, ly + 96);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#9ab0b5';
+        ctx.font = '14px Arial';
+        ctx.fillText(`Quartis: Q25 = ${p.st.q25.toFixed(1)}°C · Mediana = ${p.st.q50.toFixed(1)}°C · Q75 = ${p.st.q75.toFixed(1)}°C`, lx + 18, ly + 128);
+      } else {
+        const sig = differenceStats.thresholdSigma;
+        ctx.fillStyle = '#ffb000';
+        ctx.font = '700 17px Arial';
+        ctx.fillText(`CLASSIFICAÇÃO POR DESVIO-PADRÃO (±1σ = ±${sig.toFixed(2)} °C · ΔMédio = ${differenceStats.mean >= 0 ? '+' : ''}${differenceStats.mean.toFixed(2)} °C)`, lx + 18, ly + 28);
+        const grad = ctx.createLinearGradient(lx + 18, ly + 42, lx + lw - 18, ly + 42);
+        grad.addColorStop(0, '#023e8a');
+        grad.addColorStop(0.24, '#0096c7');
+        grad.addColorStop(0.36, '#48cae4');
+        grad.addColorStop(0.37, '#45525a');
+        grad.addColorStop(0.63, '#526069');
+        grad.addColorStop(0.64, '#f77f00');
+        grad.addColorStop(0.84, '#d62828');
+        grad.addColorStop(1, '#ffea00');
+        ctx.fillStyle = grad;
+        ctx.fillRect(lx + 18, ly + 42, lw - 36, 26);
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.strokeRect(lx + 18, ly + 42, lw - 36, 26);
+
+        ctx.font = '700 16px Arial';
+        ctx.fillStyle = '#48cae4';
+        ctx.fillText(`↓ Diminuiu (< -1σ): ${differenceStats.pctDecreased.toFixed(1)}%`, lx + 18, ly + 96);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(`＝ Igual (±1σ): ${differenceStats.pctEqual.toFixed(1)}%`, lx + lw / 2, ly + 96);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#ff9e00';
+        ctx.fillText(`↑ Aumentou (> +1σ): ${differenceStats.pctIncreased.toFixed(1)}%`, lx + lw - 18, ly + 96);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#9ab0b5';
+        ctx.font = '14px Arial';
+        ctx.fillText(`Amplitude ΔLST: ${differenceStats.min.toFixed(1)}°C a +${differenceStats.max.toFixed(1)}°C · Destaque estatístico acima de ±1σ.`, lx + 18, ly + 128);
+      }
     });
-    const lnk = document.createElement('a'); lnk.href = c.toDataURL('image/png'); lnk.download = 'SR2D4-Comparacao-DeltaLST.png'; lnk.click();
+
+    const lnk = document.createElement('a');
+    lnk.href = c.toDataURL('image/png');
+    lnk.download = `SR2D4-Comparacao-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`;
+    lnk.click();
   };
 
+  // Relatório Técnico HTML Completo e Enriquecido
   const downloadReport = () => {
-    if (!raster || !lstCanvas.current) return;
-    const html = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Relatório SR2D4</title><body style="font:15px Arial;max-width:960px;margin:0 auto;padding:30px"><h1>SR2D4 / LST Explorer</h1><p>${raster.fileName}</p><img style="width:100%;border-radius:8px" src="${lstCanvas.current.toDataURL('image/png')}"/><p>Mín: <b>${raster.stats.min.toFixed(1)}°C</b> · Média: <b>${raster.stats.mean.toFixed(1)}°C</b> · Máx: <b>${raster.stats.max.toFixed(1)}°C</b> · Desvio: <b>${raster.stats.stdDev.toFixed(2)}°C</b></p></body></html>`;
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' })); a.download = 'SR2D4-Relatorio.html'; a.click(); URL.revokeObjectURL(a.href);
+    if (!raster || !lstCanvas.current || !opticalCanvas.current) return;
+    let vegetation = 0; let built = 0; let water = 0; let valid = 0;
+    let uhiCool = 0; let uhiMit = 0; let uhiNeut = 0; let uhiMod = 0; let uhiStr = 0; let uhiExt = 0;
+
+    for (let i = 0; i < raster.data.length; i += 1) {
+      const val = raster.data[i];
+      const ndvi = raster.ndvi[i];
+      const ndbi = raster.ndbi[i];
+      if (!Number.isFinite(val)) continue;
+      valid += 1;
+      if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
+        if (ndvi > 0.3) vegetation += 1;
+        else if (ndvi < 0 && ndbi < 0) water += 1;
+        else if (ndbi > 0.1) built += 1;
+      }
+      const z = computeClusteredZ(val, val, raster.stats, uhiMethod, uhiPower);
+      if (z < -0.95) uhiCool += 1;
+      else if (z < -0.30) uhiMit += 1;
+      else if (z < 0.25) uhiNeut += 1;
+      else if (z < 0.85) uhiMod += 1;
+      else if (z < 1.40) uhiStr += 1;
+      else uhiExt += 1;
+    }
+
+    const pct = (v: number) => (valid ? ((v / valid) * 100).toFixed(1) : '0.0');
+    const compImg = document.createElement('canvas');
+    compImg.width = lstCanvas.current.width;
+    compImg.height = lstCanvas.current.height;
+    const iCtx = compImg.getContext('2d');
+    if (iCtx) {
+      iCtx.drawImage(opticalCanvas.current, 0, 0);
+      iCtx.globalAlpha = opacity;
+      iCtx.drawImage(lstCanvas.current, 0, 0);
+      iCtx.globalAlpha = 1;
+    }
+    const uhiLevel = raster.stats.mean + 1.5 * raster.stats.stdDev;
+
+    const aoiSection = aoiStats
+      ? `<h2>Análise de Área de Interesse (AOI)</h2><div class="grid"><div class="metric">Pixels na AOI<b>${aoiStats.count.toLocaleString('pt-BR')}</b></div><div class="metric">Mínima AOI<b>${aoiStats.min.toFixed(1)} °C</b></div><div class="metric">Média AOI<b>${aoiStats.mean.toFixed(2)} °C</b></div><div class="metric">Máxima AOI<b>${aoiStats.max.toFixed(1)} °C</b></div></div>`
+      : '';
+
+    const diffSection = differenceReady && differenceStats && comparisonPrimary && comparisonSecondary
+      ? `<h2>Comparação Multitemporal ΔLST (${comparisonPrimary.dateLabel} → ${comparisonSecondary.dateLabel})</h2><div class="grid"><div class="metric">Limiar Desvio (±1σ)<b>±${differenceStats.thresholdSigma.toFixed(2)} °C</b></div><div class="metric">↓ Diminuiu (&lt; -1σ)<b>${differenceStats.pctDecreased.toFixed(1)}%</b></div><div class="metric">＝ Permaneceu Igual (±1σ)<b>${differenceStats.pctEqual.toFixed(1)}%</b></div><div class="metric">↑ Aumentou (&gt; +1σ)<b>${differenceStats.pctIncreased.toFixed(1)}%</b></div></div>`
+      : '';
+
+    const report = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório Técnico SR2D4 / LST Explorer</title><style>body{font:15px/1.55 system-ui,-apple-system,Arial,sans-serif;color:#17343a;max-width:1080px;margin:0 auto;padding:36px;background:#f8fbfa}h1{color:#b96800;margin-bottom:4px}h2{border-bottom:2px solid #d7e4e2;padding-bottom:7px;margin-top:28px;color:#0f2930}.hero{width:100%;border-radius:10px;border:1px solid #cbdcd9;margin:12px 0}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:12px 0}.metric{padding:14px;background:#edf5f2;border-radius:8px;border:1px solid #d5e5e0}.metric b{display:block;font-size:22px;color:#b96800;margin-top:4px}.bar-row{margin:10px 0}.bar-track{background:#e2ece9;border-radius:6px;overflow:hidden;height:22px}.bar{height:22px;background:#2b8c68;border-radius:6px}table{width:100%;border-collapse:collapse;margin:14px 0;background:#fff}th,td{border:1px solid #d5e5e0;padding:10px 12px;text-align:left}th{background:#edf5f2;color:#0f2930}.note{padding:14px 18px;background:#fff4d4;border-left:4px solid #ffb000;border-radius:6px;margin:18px 0}</style></head><body><h1>SR2D4 / LST Explorer</h1><p><b>Relatório Técnico de Termografia Urbana de Alta Definição (1 m) e Ilhas de Calor (UHI)</b></p><p>Arquivo: <b>${raster.fileName}</b> · EPSG:${raster.epsg} · Dimensões: ${raster.width.toLocaleString('pt-BR')} × ${raster.height.toLocaleString('pt-BR')} px (${valid.toLocaleString('pt-BR')} pixels válidos)</p><img class="hero" src="${compImg.toDataURL('image/png')}" alt="Mapa composto LST e imagem óptica"><h2>1. Resumo Estatístico e Quantis Térmicos</h2><div class="grid"><div class="metric">Mínima<b>${raster.stats.min.toFixed(1)} °C</b></div><div class="metric">Média (μ)<b>${raster.stats.mean.toFixed(2)} °C</b></div><div class="metric">Máxima<b>${raster.stats.max.toFixed(1)} °C</b></div><div class="metric">Desvio-Padrão (σ)<b>${raster.stats.stdDev.toFixed(2)} °C</b></div></div><div class="grid"><div class="metric">Quartil 25% (Q25)<b>${raster.stats.q25.toFixed(1)} °C</b></div><div class="metric">Mediana (Q50)<b>${raster.stats.q50.toFixed(1)} °C</b></div><div class="metric">Quartil 75% (Q75)<b>${raster.stats.q75.toFixed(1)} °C</b></div><div class="metric">Limiar Hotspot (μ+1,5σ)<b>${uhiLevel.toFixed(1)} °C</b></div></div><h2>2. Estratificação de Ilhas de Calor Urbanas (UHI 1m · Método: ${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})</h2><table><thead><tr><th>Classe UHI</th><th>Regime Térmico</th><th>Participação na Cena</th></tr></thead><tbody><tr><td><b>Nível 1 · Ilha de Frescor</b></td><td>Corpos hídricos e mata fechada (&lt; -0,95σ)</td><td><b>${pct(uhiCool)}%</b></td></tr><tr><td><b>Nível 2 · Zona Amenizada</b></td><td>Arborização urbana e parques (-0,95σ a -0,30σ)</td><td><b>${pct(uhiMit)}%</b></td></tr><tr><td><b>Nível 3 · Zona Neutra</b></td><td>Equilíbrio radiométrico (-0,30σ a +0,25σ)</td><td><b>${pct(uhiNeut)}%</b></td></tr><tr><td><b>Nível 4 · UHI Moderada</b></td><td>Malha residencial e viária (+0,25σ a +0,85σ)</td><td><b>${pct(uhiMod)}%</b></td></tr><tr><td><b>Nível 5 · UHI Forte</b></td><td>Adensamento construtivo intenso (+0,85σ a +1,40σ)</td><td><b>${pct(uhiStr)}%</b></td></tr><tr><td><b>Nível 6 · UHI Extrema (Hotspot)</b></td><td>Grandes coberturas metálicas/impermeáveis (&gt; +1,40σ)</td><td><b>${pct(uhiExt)}%</b></td></tr></tbody></table><h2>3. Perfil Espectral de Superfície (SR2D4 Red/NIR/SWIR)</h2><p>Médias da cena: <b>NDVI = ${meanOf(raster.ndvi).toFixed(3)}</b> · <b>NDBI = ${meanOf(raster.ndbi).toFixed(3)}</b></p><div class="bar-row"><span>Vegetação vigorosa (NDVI &gt; 0,30): <b>${pct(vegetation)}%</b></span><div class="bar-track"><div class="bar" style="width:${pct(vegetation)}%;background:#2b8c68"></div></div></div><div class="bar-row"><span>Superfícies construídas/impermeáveis (NDBI &gt; 0,10): <b>${pct(built)}%</b></span><div class="bar-track"><div class="bar" style="width:${pct(built)}%;background:#e86825"></div></div></div><div class="bar-row"><span>Água ou superfícies sombreadas (NDVI &lt; 0 e NDBI &lt; 0): <b>${pct(water)}%</b></span><div class="bar-track"><div class="bar" style="width:${pct(water)}%;background:#185a9d"></div></div></div>${aoiSection}${diffSection}<h2>4. Diretrizes Técnicas para Gestão Territorial e Ambiental</h2><ul><li>Priorizar intervenções de arborização urbana e telhados frios nos setores classificados como <b>UHI Forte</b> e <b>Hotspot Extremo</b> (temperaturas acima de <b>${uhiLevel.toFixed(1)} °C</b>).</li><li>Preservar os corredores de frescor identificados nos Níveis 1 e 2, que atuam como sumidouros térmicos na microescala.</li><li>Utilizar as exportações vetoriais (<b>Isotermas GeoJSON / KML</b>) para cruzamento com o cadastro multifinalitário e planos diretores no QGIS.</li></ul><div class="note"><b>Nota Metodológica:</b> A super-resolução térmica 1m preserva a energia radiométrica observada pelo sensor Landsat 8/9 Collection 2 Level-2 (Banda ST_B10) combinada à morfologia de 1 metro das bandas ópticas SR2D4 (Red, NIR e SWIR).</div><p><small>Gerado em ${new Date().toLocaleString('pt-BR')} pelo SR2D4 / LST Explorer.</small></p></body></html>`;
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([report], { type: 'text/html' }));
+    a.download = 'SR2D4-LST-relatorio.html';
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
 
   const goTo = (lng: number, lat: number) => { if (Number.isFinite(lng) && Number.isFinite(lat)) mapInstance.current?.flyTo({ center: [lng, lat], zoom: 13, essential: true }); };
@@ -1026,7 +1280,7 @@ export default function App() {
     } catch { setSearchError(t.searchError); } finally { setSearching(false); }
   };
   const startCurtainDrag = (ev: React.PointerEvent<HTMLDivElement>) => {
-    if (!swipeActive || !differenceReady) return; ev.preventDefault(); ev.stopPropagation();
+    if (!swipeActive || !showingComparison) return; ev.preventDefault(); ev.stopPropagation();
     curtainDragging.current = true; document.body.classList.add('is-curtain-dragging'); ev.currentTarget.setPointerCapture?.(ev.pointerId);
   };
   const goToCoordinates = () => { const v = coordText.split(/[,;\s]+/).map(Number); if (v.length >= 2) goTo(v[0], v[1]); };
@@ -1037,9 +1291,9 @@ export default function App() {
   const displayBandLabels = bandLabels.length === visibleBandCount ? bandLabels : Array.from({ length: visibleBandCount }, (_, i) => `Camada ${String(i + 1).padStart(2, '0')}`);
   const options = Array.from({ length: visibleBandCount }, (_, i) => <option value={i} key={i}>{displayBandLabels[i]}</option>);
   const updateBand = (idx: number, val: string) => setBands((p) => p.map((v, i) => (i === idx ? val : v)));
-  const clearAoi = () => { setAoi([]); setDrawAoi(false); setPanEnabled(true); };
+  const clearAoi = () => { setAoi([]); setAoiStats(null); setDrawAoi(false); setPanEnabled(true); };
   const finishAoi = () => { if (aoi.length >= 3) { setDrawAoi(false); setPanEnabled(true); } };
-  const toggleAoi = () => { const n = !drawAoi; setDrawAoi(n); setIdentifyMode(false); setAoi(n ? [] : aoi); setAoiStats(null); setPanEnabled(!n); };
+  const toggleAoi = () => { const n = !drawAoi; setDrawAoi(n); setIdentifyMode(false); if (n) { setAoi([]); setAoiStats(null); } setPanEnabled(!n); };
   const analyzeAoi = () => {
     if (!raster || aoi.length < 3 || !extent) return; const vals: number[] = [];
     raster.data.forEach((v, idx) => {
@@ -1051,10 +1305,11 @@ export default function App() {
     let min = Infinity; let max = -Infinity; let sum = 0;
     for (const v of vals) { if (v < min) min = v; if (v > max) max = v; sum += v; }
     setAoiStats({ count: vals.length, min, max, mean: sum / vals.length });
+    setStatus(`AOI analisada · ${vals.length.toLocaleString('pt-BR')} pixels`);
   };
   const closeTutorial = () => { setShowTutorial(false); sessionStorage.setItem('sr2d4-tutorial-seen', '1'); };
   const activeInspect = hoverSample || sample;
-  const activeDiffInfo = activeInspect?.diffTemp !== undefined && differenceStats ? differenceClassLabel(activeInspect.diffTemp, differenceStats.thresholdSigma, lang) : null;
+  const activeDiffInfo = activeInspect?.diffTemp !== undefined && differenceStats ? differenceClassLabel(activeInspect.diffTemp, differenceStats, lang) : null;
 
   return (
     <div className="app-shell">
@@ -1074,10 +1329,10 @@ export default function App() {
       <main className="workspace" style={{ '--rail-width': `${panelWidth}px` } as React.CSSProperties}>
         <section className="map-stage" style={{ position: 'relative', overflow: 'hidden' }}>
           <div ref={mapRef} className={`map-container ${identifyMode ? 'identify-active' : ''}`} />
-          {swipeActive && differenceReady && (
+          {swipeActive && showingComparison && (
             <div className="curtain-map" ref={curtainContainerRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 2, clipPath: `inset(0 0 0 ${swipePosition}%)` }} />
           )}
-          {swipeActive && differenceReady && (
+          {swipeActive && showingComparison && (
             <>
               <div style={{ position: 'absolute', top: '76px', left: '16px', zIndex: 6, background: 'rgba(7,19,23,0.92)', border: '2px solid #38bdf8', color: '#fff', padding: '8px 14px', borderRadius: '10px', fontWeight: 800, fontSize: '13px', pointerEvents: 'none' }}>
                 <span style={{ color: '#38bdf8', display: 'block', fontSize: '10px' }}>◀ LADO ESQUERDO (ANTES)</span>
@@ -1115,19 +1370,19 @@ export default function App() {
           {(raster || differenceReady) && (
             <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '370px', zIndex: 5 }}>
               <span>
-                {comparisonMode === 'difference' && differenceReady && !swipeActive
+                {comparisonMode === 'difference' && showingComparison && !swipeActive
                   ? `Δ LST (${comparisonPrimary?.dateLabel} → ${comparisonSecondary?.dateLabel}) · 1σ = ±${differenceStats?.thresholdSigma.toFixed(2)}°C`
-                  : swipeActive && differenceReady
+                  : swipeActive && showingComparison
                     ? `CORTINA: ${comparisonPrimary?.dateLabel} ◀ | ▶ ${comparisonSecondary?.dateLabel}`
                     : displayMode === 'uhi' ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})` : t.lst}
               </span>
-              {comparisonMode === 'difference' && differenceReady && !swipeActive && differenceStats ? (
+              {comparisonMode === 'difference' && showingComparison && !swipeActive && differenceStats ? (
                 <>
                   <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px' }} />
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px' }}>
-                    <b style={{ color: '#48cae4' }}>↓ Diminuiu (&lt; -{differenceStats.thresholdSigma.toFixed(1)}°C)</b>
-                    <b style={{ color: '#cbd5e1' }}>＝ Igual (±1σ)</b>
-                    <b style={{ color: '#ff9e00' }}>↑ Aumentou (&gt; +{differenceStats.thresholdSigma.toFixed(1)}°C)</b>
+                    <b style={{ color: '#48cae4' }}>↓ Diminuiu ({differenceStats.pctDecreased.toFixed(1)}%)</b>
+                    <b style={{ color: '#cbd5e1' }}>＝ Igual ({differenceStats.pctEqual.toFixed(1)}%)</b>
+                    <b style={{ color: '#ff9e00' }}>↑ Aumentou ({differenceStats.pctIncreased.toFixed(1)}%)</b>
                   </div>
                 </>
               ) : (
@@ -1147,8 +1402,8 @@ export default function App() {
             <button className={panEnabled ? 'active' : ''} onClick={togglePan} title="Pan">✋</button>
             <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title="Identify">ⓘ</button>
             <button className={drawAoi ? 'active' : ''} onClick={toggleAoi} title={t.draw}>⌗</button>
-            {drawAoi && aoi.length >= 3 && <button onClick={finishAoi}>✓</button>}
-            {!drawAoi && aoi.length >= 3 && <button onClick={analyzeAoi}>✓</button>}
+            {drawAoi && aoi.length >= 3 && <button onClick={finishAoi} title="Finalizar AOI">✓</button>}
+            {!drawAoi && aoi.length >= 3 && <button onClick={analyzeAoi} title="Analisar AOI">✓</button>}
           </div>
         </section>
         <div className="resize-handle" onPointerDown={() => { resizing.current = true; document.body.classList.add('is-resizing'); }} title={t.resize}><Icon name="resize" /></div>
@@ -1187,17 +1442,29 @@ export default function App() {
                 {processingLog.length ? <div className="processing-log-list">{processingLog.map((en, i) => <div className={`processing-log-entry ${en.level}`} key={`${en.time}-${i}`}><time>{en.time}</time><span>{en.message}</span></div>)}</div> : <p>Clique em Calcular mapa térmico para iniciar.</p>}
               </div>
               <button className="primary-button" onClick={() => void processFile()} disabled={!file || busy}>{busy ? t.processing : t.calculate}<span>→</span></button>
+              {(raster || file) && (
+                <div className="button-row" style={{ marginTop: '8px' }}>
+                  {differenceReady && comparisonMode !== 'main' && (
+                    <button type="button" onClick={() => { setSwipeActive(false); setComparisonMode('main'); }}>
+                      👁 Ver Mapa Principal
+                    </button>
+                  )}
+                  <button type="button" onClick={clearMainAnalysis}>
+                    ✕ Limpar principal
+                  </button>
+                </div>
+              )}
               {error && <div className="error-box">{error}</div>}
             </section>
             {(raster || differenceReady || hoverSample || sample || identifyMode) && (
               <section className="rail-card inspector-rail-card">
                 <div className="card-heading">
                   <h3>ⓘ {t.sample}</h3>
-                  <span className="chip">{differenceReady && activeInspect?.diffTemp !== undefined ? 'Δ LST ±1σ' : displayMode === 'uhi' ? 'UHI 1m' : '°C'}</span>
+                  <span className="chip">{showingComparison && activeInspect?.diffTemp !== undefined ? 'Δ LST ±1σ' : displayMode === 'uhi' ? 'UHI 1m' : '°C'}</span>
                 </div>
                 <div className="inspector-split">
                   <div>
-                    {differenceReady && activeInspect?.diffTemp !== undefined && differenceStats ? (
+                    {showingComparison && activeInspect?.diffTemp !== undefined && differenceStats ? (
                       <>
                         <strong className="inspector-temperature" style={{ color: activeDiffInfo?.color }}>
                           {activeInspect.diffTemp >= 0 ? `+${activeInspect.diffTemp.toFixed(2)}°C` : `${activeInspect.diffTemp.toFixed(2)}°C`}
@@ -1223,9 +1490,9 @@ export default function App() {
                   </div>
                   <div className="side-legends">
                     <div className="side-legend">
-                      <b>{differenceReady && comparisonMode === 'difference' && !swipeActive ? 'Escala ΔLST (±1σ)' : displayMode === 'uhi' ? 'Escala UHI' : `Paleta: ${palette}`}</b>
-                      <i className="legend-gradient" style={{ background: differenceReady && comparisonMode === 'difference' && !swipeActive ? DIFFERENCE_GRADIENT_CSS : legendGradient }} />
-                      <small>{differenceReady && comparisonMode === 'difference' && !swipeActive ? 'Diminuiu ← Igual → Aumentou' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}</small>
+                      <b>{showingComparison && comparisonMode === 'difference' && !swipeActive ? 'Escala ΔLST (±1σ)' : displayMode === 'uhi' ? 'Escala UHI' : `Paleta: ${palette}`}</b>
+                      <i className="legend-gradient" style={{ background: showingComparison && comparisonMode === 'difference' && !swipeActive ? DIFFERENCE_GRADIENT_CSS : legendGradient }} />
+                      <small>{showingComparison && comparisonMode === 'difference' && !swipeActive ? 'Diminuiu ← Igual → Aumentou' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}</small>
                     </div>
                   </div>
                 </div>
@@ -1316,11 +1583,28 @@ export default function App() {
               </div>
               <div className="compare-actions">
                 <button onClick={() => void calculateComparisons()} disabled={busy || comparisonFiles.filter(Boolean).length < 2}>{busy ? 'Processando…' : 'Calcular Δ LST (Depois − Antes)'}</button>
-                <button onClick={() => { setSwipeActive(false); setComparisonMode('difference'); }} disabled={!differenceReady} className={!swipeActive && differenceReady ? 'active' : ''}>Mapa Diferença</button>
-                <button onClick={() => setSwipeActive(!swipeActive)} disabled={!differenceReady} className={swipeActive ? 'active' : ''}>{swipeActive ? 'Cortina Fixa Ativa' : 'Cortina (Antes/Depois)'}</button>
+                <button onClick={() => { setSwipeActive(false); setComparisonMode('difference'); }} disabled={!differenceReady} className={!swipeActive && showingComparison && comparisonMode === 'difference' ? 'active' : ''}>Mapa Diferença</button>
+                <button onClick={() => { setComparisonMode('difference'); setSwipeActive(!swipeActive); }} disabled={!differenceReady} className={swipeActive && showingComparison ? 'active' : ''}>{swipeActive && showingComparison ? 'Cortina Fixa Ativa' : 'Cortina (Antes/Depois)'}</button>
                 <button onClick={() => void downloadComparisonPanel()} disabled={!differenceReady}>Exportar A / B / Δ</button>
+                {raster && differenceReady && (
+                  <button
+                    type="button"
+                    className={comparisonMode === 'main' ? 'active' : ''}
+                    onClick={() => {
+                      setSwipeActive(false);
+                      setComparisonMode(comparisonMode === 'main' ? 'difference' : 'main');
+                    }}
+                  >
+                    {comparisonMode === 'main' ? '👁 Voltar para Comparação' : '👁 Ver Data Principal'}
+                  </button>
+                )}
+                {(differenceReady || comparisonFiles.some(Boolean)) && (
+                  <button type="button" onClick={clearComparisonAnalysis}>
+                    ✕ Limpar comparação
+                  </button>
+                )}
               </div>
-              {swipeActive && differenceReady && (
+              {swipeActive && showingComparison && (
                 <label className="swipe-control">
                   <span>◀ ANTES ({comparisonPrimary?.dateLabel}) | DEPOIS ({comparisonSecondary?.dateLabel}) ▶ <b>{swipePosition.toFixed(0)}%</b></span>
                   <input type="range" min="0" max="100" value={swipePosition} onChange={(e) => setSwipePosition(Number(e.target.value))} />
@@ -1332,13 +1616,13 @@ export default function App() {
                   <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px', marginBottom: '8px' }} />
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', textAlign: 'center', fontSize: '11px' }}>
                     <div style={{ padding: '6px', background: 'rgba(0,150,199,0.18)', border: '1px solid #48cae4', borderRadius: '6px' }}>
-                      <b style={{ color: '#48cae4', display: 'block' }}>↓ DIMINUIU</b><span>&lt; -{differenceStats.thresholdSigma.toFixed(2)}°C</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctDecreased.toFixed(1)}%</strong>
+                      <b style={{ color: '#48cae4', display: 'block' }}>↓ DIMINUIU</b><span>&lt; -1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctDecreased.toFixed(1)}%</strong>
                     </div>
                     <div style={{ padding: '6px', background: 'rgba(148,163,184,0.14)', border: '1px solid #94a3b8', borderRadius: '6px' }}>
-                      <b style={{ color: '#cbd5e1', display: 'block' }}>＝ IGUAL</b><span>±{differenceStats.thresholdSigma.toFixed(2)}°C</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctEqual.toFixed(1)}%</strong>
+                      <b style={{ color: '#cbd5e1', display: 'block' }}>＝ IGUAL</b><span>±1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctEqual.toFixed(1)}%</strong>
                     </div>
                     <div style={{ padding: '6px', background: 'rgba(247,127,0,0.18)', border: '1px solid #ff9e00', borderRadius: '6px' }}>
-                      <b style={{ color: '#ff9e00', display: 'block' }}>↑ AUMENTOU</b><span>&gt; +{differenceStats.thresholdSigma.toFixed(2)}°C</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctIncreased.toFixed(1)}%</strong>
+                      <b style={{ color: '#ff9e00', display: 'block' }}>↑ AUMENTOU</b><span>&gt; +1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctIncreased.toFixed(1)}%</strong>
                     </div>
                   </div>
                 </div>
@@ -1358,10 +1642,11 @@ export default function App() {
                   <div className="metric-grid index-grid"><Metric label={t.ndvi} value={meanOf(raster.ndvi).toFixed(3)} /><Metric label={t.ndbi} value={meanOf(raster.ndbi).toFixed(3)} /></div>
                 </section>
                 <section className="rail-card">
-                  <div className="card-heading"><h3>{t.aoi}</h3></div>
-                  <p className="microcopy">{aoiStats ? `Média AOI: ${aoiStats.mean.toFixed(2)}°C (${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C)` : t.aoiHelp}</p>
+                  <div className="card-heading"><h3>{t.aoi}</h3><span className="chip">{aoi.length ? `${aoi.length} pts` : '—'}</span></div>
+                  <p className="microcopy">{aoiStats ? `Média AOI: ${aoiStats.mean.toFixed(2)}°C (${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C · ${aoiStats.count.toLocaleString('pt-BR')} px)` : t.aoiHelp}</p>
                   <div className="button-row">
-                    <button onClick={drawAoi ? finishAoi : aoi.length >= 3 ? clearAoi : toggleAoi}>{drawAoi ? 'Finalizar AOI' : aoi.length >= 3 ? t.clear : t.draw}</button>
+                    <button onClick={drawAoi ? finishAoi : toggleAoi}>{drawAoi ? '✓ Finalizar AOI' : t.draw}</button>
+                    <button disabled={aoi.length === 0} onClick={clearAoi}>✕ {t.clear}</button>
                     <button disabled={aoi.length < 3} onClick={analyzeAoi}>{t.clip}</button>
                     <button disabled={aoi.length < 3} onClick={exportAoiPng}>AOI PNG</button>
                     <button disabled={aoi.length < 3} onClick={exportAoiTiff}>AOI GeoTIFF</button>
