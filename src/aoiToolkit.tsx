@@ -1,4 +1,3 @@
-import React from 'react';
 import { downloadFloat32Tiff } from './exportTiff';
 import { boundsExtent, type RasterBounds } from './rasterGeo';
 
