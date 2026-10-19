@@ -104,9 +104,19 @@ const UHI_STOPS: [number, number, number, number][] = [
 const DIFFERENCE_GRADIENT_CSS =
   'linear-gradient(90deg, #023e8a 0%, #0096c7 22%, #48cae4 36%, #45525a 37%, #526069 63%, #f77f00 64%, #d62828 84%, #ffea00 100%)';
 
+const AOI_LAYER_IDS = ['aoi-fill', 'aoi-line-casing', 'aoi-line', 'aoi-pts'] as const;
+
+function bringAoiToFront(map: MapLibreMap) {
+  for (const id of AOI_LAYER_IDS) {
+    if (map.getLayer(id)) {
+      try { map.moveLayer(id); } catch { /* ignore */ }
+    }
+  }
+}
+
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.0', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.1', title: 'SR2D4 / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
     colab: 'Abrir Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
     bands: 'Bandas ópticas do SR2D4', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
@@ -128,7 +138,7 @@ const copy = {
     limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Use-a para investigação espacial e comparação.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.0', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.1', title: 'SR2D4 / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
     colab: 'Open Colab', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
     bands: 'SR2D4 optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
@@ -895,6 +905,7 @@ export default function App() {
   const [aoiStats, setAoiStats] = useState<{ count: number; min: number; max: number; mean: number } | null>(null);
   const [aoiShapeMode, setAoiShapeMode] = useState<AoiShapeMode>('rectangle');
   const [aoiAnchor, setAoiAnchor] = useState<[number, number] | null>(null);
+  const [aoiCursorPt, setAoiCursorPt] = useState<[number, number] | null>(null);
   const [aoiDetailed, setAoiDetailed] = useState<AoiDetailedStats | null>(null);
   const [showAoiModal, setShowAoiModal] = useState(false);
   const [search, setSearch] = useState('');
@@ -1036,13 +1047,16 @@ export default function App() {
         const pt: [number, number] = [ev.lngLat.lng, ev.lngLat.lat];
         if (m.aoiShapeMode === 'polygon') {
           setAoi((p) => [...p, pt]);
+          setAoiCursorPt(pt);
         } else if (!m.aoiAnchor) {
           setAoiAnchor(pt);
+          setAoiCursorPt(pt);
           setAoi([pt]);
         } else {
           const poly = buildShapeVertices(m.aoiShapeMode, m.aoiAnchor, pt);
           setAoi(poly);
           setAoiAnchor(null);
+          setAoiCursorPt(null);
           setDrawAoi(false);
           setPanEnabled(true);
           map.dragPan.enable(); map.scrollZoom.enable(); map.doubleClickZoom.enable();
@@ -1067,7 +1081,7 @@ export default function App() {
       setAoi((p) => {
         const cl = p.length > 1 && Math.abs(p[p.length - 1][0] - ev.lngLat.lng) < 1e-7 && Math.abs(p[p.length - 1][1] - ev.lngLat.lat) < 1e-7 ? p.slice(0, -1) : p;
         if (cl.length >= 3) {
-          setDrawAoi(false); setPanEnabled(true);
+          setDrawAoi(false); setAoiCursorPt(null); setPanEnabled(true);
           map.dragPan.enable(); map.doubleClickZoom.enable(); map.scrollZoom.enable(); map.touchZoomRotate.enable();
           if (m.raster) {
             const det = analyzeAoiDetailed(m.raster, cl, m.aoiShapeMode, opticalCanvas.current, lstCanvas.current, 0.94);
@@ -1085,16 +1099,20 @@ export default function App() {
     let hf = 0;
     map.on('mousemove', (ev) => {
       const m = mapClickMode.current;
-      if (m.drawAoi && m.aoiShapeMode !== 'polygon' && m.aoiAnchor) {
+      if (m.drawAoi) {
         if (!hf) {
           hf = requestAnimationFrame(() => {
-            setAoi(buildShapeVertices(m.aoiShapeMode, m.aoiAnchor!, [ev.lngLat.lng, ev.lngLat.lat]));
+            const cur: [number, number] = [ev.lngLat.lng, ev.lngLat.lat];
+            setAoiCursorPt(cur);
+            if (m.aoiShapeMode !== 'polygon' && m.aoiAnchor) {
+              setAoi(buildShapeVertices(m.aoiShapeMode, m.aoiAnchor, cur));
+            }
             hf = 0;
           });
         }
         return;
       }
-      if (!m.drawAoi && m.identifyMode && !hf) {
+      if (m.identifyMode && !hf) {
         hf = requestAnimationFrame(() => { inspectAt(ev, false); hf = 0; });
       }
     });
@@ -1112,9 +1130,10 @@ export default function App() {
       if (ex) ex.updateImage({ url, coordinates }); else map.addSource(id, { type: 'image', url, coordinates });
     };
     if (raster && lstUrl && opticalUrl) {
-      addOrUpdate('lst-raster', lstUrl, raster.bounds); addOrUpdate('optical-raster', opticalUrl, raster.bounds);
-      if (!map.getLayer('lst-layer')) map.addLayer({ id: 'lst-layer', type: 'raster', source: 'lst-raster', paint: { 'raster-opacity': opacity, 'raster-contrast': contrast } });
+      addOrUpdate('optical-raster', opticalUrl, raster.bounds);
+      addOrUpdate('lst-raster', lstUrl, raster.bounds);
       if (!map.getLayer('optical-layer')) map.addLayer({ id: 'optical-layer', type: 'raster', source: 'optical-raster', paint: { 'raster-opacity': 1 } });
+      if (!map.getLayer('lst-layer')) map.addLayer({ id: 'lst-layer', type: 'raster', source: 'lst-raster', paint: { 'raster-opacity': opacity, 'raster-contrast': contrast } });
     }
     if (comparisonPrimary && comparisonSecondary && showingComparison) {
       addOrUpdate('comparison-primary-raster', comparisonPrimary.lstUrl, comparisonPrimary.bounds);
@@ -1134,6 +1153,9 @@ export default function App() {
       map.setPaintProperty('lst-layer', 'raster-opacity', opacity); map.setPaintProperty('lst-layer', 'raster-contrast', contrast);
     }
     if (map.getLayer('optical-layer')) map.setLayoutProperty('optical-layer', 'visibility', visibleOptical && !showingComparison ? 'visible' : 'none');
+
+    // Garante que o desenho da AOI fica sempre ACIMA da imagem térmica e da óptica
+    bringAoiToFront(map);
   }, [comparisonMode, comparisonPrimary, comparisonSecondary, contrast, differenceRender, lstUrl, opacity, opticalUrl, raster, showingComparison, swipeActive, visibleLst, visibleOptical]);
 
   useEffect(() => {
@@ -1184,25 +1206,97 @@ export default function App() {
     }
   }, [comparisonPrimary, extent, raster]);
 
+  // Renderização ao vivo de Pontos, Linhas e Área com Transparência acima da imagem termal
   useEffect(() => {
     const map = mapInstance.current; if (!map) return;
     const updateAoiLayer = () => {
       if (!map.isStyleLoaded()) return;
-      const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
-      const pts = aoi.slice(0, 16).map((pt) => ({ type: 'Feature' as const, properties: {}, geometry: { type: 'Point' as const, coordinates: pt } }));
-      const line = aoi.length >= 2 ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: aoi.length >= 3 ? [...aoi, aoi[0]] : aoi } }] : [];
-      const poly = aoi.length >= 3 ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: [[...aoi, aoi[0]]] } }] : [];
-      const data = { type: 'FeatureCollection' as const, features: [...poly, ...line, ...pts] };
-      if (src) src.setData(data as any);
-      else {
-        map.addSource('aoi-source', { type: 'geojson', data: data as any });
-        map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', filter: ['==', '$type', 'Polygon'], paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.22 } });
-        map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
-        map.addLayer({ id: 'aoi-pts', type: 'circle', source: 'aoi-source', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 5.5, 'circle-color': '#ffb000', 'circle-stroke-color': '#071317', 'circle-stroke-width': 2 } });
+
+      // Em modo polígono, inclui o cursor atual como vértice elástico para mostrar a linha/área ao vivo
+      const activeVertices: [number, number][] =
+        drawAoi && aoiShapeMode === 'polygon' && aoi.length >= 1 && aoiCursorPt
+          ? [...aoi, aoiCursorPt]
+          : aoi;
+
+      // Vértices de referência visíveis (para círculo mostra centro + 8 pontos cardeais; para demais formas todos os vértices)
+      const displayPoints: [number, number][] = [];
+      if (aoiAnchor) displayPoints.push(aoiAnchor);
+      if (aoiShapeMode === 'circle' && activeVertices.length >= 8) {
+        for (let i = 0; i < activeVertices.length; i += 8) displayPoints.push(activeVertices[i]);
+      } else {
+        for (const pt of activeVertices) displayPoints.push(pt);
       }
+
+      const features: any[] = [];
+      if (activeVertices.length >= 3) {
+        features.push({
+          type: 'Feature',
+          properties: { kind: 'poly' },
+          geometry: { type: 'Polygon', coordinates: [[...activeVertices, activeVertices[0]]] },
+        });
+      }
+      if (activeVertices.length >= 2) {
+        features.push({
+          type: 'Feature',
+          properties: { kind: 'line' },
+          geometry: {
+            type: 'LineString',
+            coordinates: activeVertices.length >= 3 ? [...activeVertices, activeVertices[0]] : activeVertices,
+          },
+        });
+      }
+      for (const pt of displayPoints) {
+        features.push({
+          type: 'Feature',
+          properties: { kind: 'point' },
+          geometry: { type: 'Point', coordinates: pt },
+        });
+      }
+
+      const data = { type: 'FeatureCollection' as const, features };
+      const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
+      if (src) {
+        src.setData(data as any);
+      } else {
+        map.addSource('aoi-source', { type: 'geojson', data: data as any });
+        map.addLayer({
+          id: 'aoi-fill',
+          type: 'fill',
+          source: 'aoi-source',
+          filter: ['==', ['get', 'kind'], 'poly'],
+          paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.28 },
+        });
+        map.addLayer({
+          id: 'aoi-line-casing',
+          type: 'line',
+          source: 'aoi-source',
+          filter: ['==', ['get', 'kind'], 'line'],
+          paint: { 'line-color': '#071317', 'line-width': 5, 'line-opacity': 0.9 },
+        });
+        map.addLayer({
+          id: 'aoi-line',
+          type: 'line',
+          source: 'aoi-source',
+          filter: ['==', ['get', 'kind'], 'line'],
+          paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] },
+        });
+        map.addLayer({
+          id: 'aoi-pts',
+          type: 'circle',
+          source: 'aoi-source',
+          filter: ['==', ['get', 'kind'], 'point'],
+          paint: {
+            'circle-radius': 6,
+            'circle-color': '#ffb000',
+            'circle-stroke-color': '#071317',
+            'circle-stroke-width': 2.5,
+          },
+        });
+      }
+      bringAoiToFront(map);
     };
     if (map.isStyleLoaded()) updateAoiLayer(); else map.once('load', updateAoiLayer);
-  }, [aoi]);
+  }, [aoi, aoiAnchor, aoiCursorPt, aoiShapeMode, drawAoi]);
 
   useEffect(() => {
     if (raster) {
@@ -1233,6 +1327,7 @@ export default function App() {
       const vis = uhiSurfaceVisible ? 'visible' : 'none';
       if (map.getLayer('uhi-surface-casing')) map.setLayoutProperty('uhi-surface-casing', 'visibility', vis);
       if (map.getLayer('uhi-surface-line')) map.setLayoutProperty('uhi-surface-line', 'visibility', vis);
+      bringAoiToFront(map);
     };
     if (map.isStyleLoaded()) syncIso(); else map.once('load', syncIso);
     return () => { map.off('load', syncIso); };
@@ -1253,7 +1348,7 @@ export default function App() {
 
   const clearMainAnalysis = () => {
     setRaster(null); setFile(null); setLstUrl(null); setOpticalUrl(null);
-    setAoi([]); setAoiAnchor(null); setAoiStats(null); setAoiDetailed(null); setShowAoiModal(false);
+    setAoi([]); setAoiAnchor(null); setAoiCursorPt(null); setAoiStats(null); setAoiDetailed(null); setShowAoiModal(false);
     setSample(null); setHoverSample(null);
     setUhiSurface(null); setIsotherms(null); setUhiSurfaceVisible(false);
     setProcessingLog([]); setStatus('Produto principal limpo.');
@@ -1348,7 +1443,7 @@ export default function App() {
       lstCanvas.current = lst; opticalCanvas.current = opt;
       setRaster({ data: auto.result.lstDownscaled, width: auto.tiff.width, height: auto.tiff.height, bounds: auto.bounds, origin: auto.tiff.origin, resolution: auto.tiff.resolution, epsg: auto.tiff.epsg, isProjected: auto.tiff.isProjected, stats, ndvi: auto.indices.ndvi, ndbi: auto.indices.ndbi, fileName: `${selectedFile.name} · ${auto.landsat.itemId}`, bands: auto.tiff.rasters.length });
       setComparisonMode('main'); setSwipeActive(false);
-      setAoi([]); setAoiAnchor(null); setAoiStats(null); setAoiDetailed(null);
+      setAoi([]); setAoiAnchor(null); setAoiCursorPt(null); setAoiStats(null); setAoiDetailed(null);
       setLstUrl(lst.toDataURL('image/png')); setOpticalUrl(opt.toDataURL('image/png')); addLog(t.ready, 'success');
     } catch (e) {
       const msg = e instanceof Error ? e.message : t.error; setError(msg); addLog(msg, 'error');
@@ -1744,7 +1839,7 @@ code{background:#edf2f6;padding:2px 5px;border-radius:4px;font-size:11px}
   </section>
 
   <footer class="footer">
-    <div><strong>SR2D4 / LST Explorer · v3.0</strong><p data-pt="Relatório gerado a partir do raster numérico Float32Array. Nenhuma estatística foi inventada." data-en="Report generated from the Float32Array numerical raster. No statistics were fabricated.">Relatório gerado a partir do raster numérico Float32Array. Nenhuma estatística foi inventada.</p></div>
+    <div><strong>SR2D4 / LST Explorer · v3.1</strong><p data-pt="Relatório gerado a partir do raster numérico Float32Array. Nenhuma estatística foi inventada." data-en="Report generated from the Float32Array numerical raster. No statistics were fabricated.">Relatório gerado a partir do raster numérico Float32Array. Nenhuma estatística foi inventada.</p></div>
     <div>EPSG:${raster.epsg} · ${issueDate}</div>
   </footer>
 </div>
@@ -1885,6 +1980,7 @@ function toggleReportLang() {
   const selectAoiShape = (mode: AoiShapeMode) => {
     setAoiShapeMode(mode);
     setAoiAnchor(null);
+    setAoiCursorPt(null);
     setAoi([]);
     setAoiStats(null);
     setAoiDetailed(null);
@@ -1894,7 +1990,7 @@ function toggleReportLang() {
     setStatus(`Modo AOI (${mode}): clique no mapa para desenhar.`);
   };
   const clearAoi = () => {
-    setAoi([]); setAoiAnchor(null); setAoiStats(null); setAoiDetailed(null);
+    setAoi([]); setAoiAnchor(null); setAoiCursorPt(null); setAoiStats(null); setAoiDetailed(null);
     setShowAoiModal(false); setDrawAoi(false); setPanEnabled(true);
   };
   const analyzeAoi = () => {
@@ -1914,13 +2010,13 @@ function toggleReportLang() {
   };
   const finishAoi = () => {
     if (aoi.length >= 3) {
-      setDrawAoi(false); setAoiAnchor(null); setPanEnabled(true);
+      setDrawAoi(false); setAoiAnchor(null); setAoiCursorPt(null); setPanEnabled(true);
       analyzeAoi();
     }
   };
   const toggleAoi = () => {
     const n = !drawAoi;
-    setDrawAoi(n); setIdentifyMode(false); setAoiAnchor(null);
+    setDrawAoi(n); setIdentifyMode(false); setAoiAnchor(null); setAoiCursorPt(null);
     if (n) { setAoi([]); setAoiStats(null); setAoiDetailed(null); }
     setPanEnabled(!n);
   };
@@ -2406,4 +2502,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.0
+// FIM DO ARQUIVO src/App.tsx v3.1
