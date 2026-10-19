@@ -9,20 +9,12 @@ import { renderRGBBasemapToCanvas, type PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { boundsExtent, rasterBoundsToWgs84, type RasterBounds } from './rasterGeo';
 import { buildUhiSurface, downloadUhiSurface, type UhiSurface } from './uhiSurface';
-import { downloadExpandedTechnicalReport } from './reportExpanded';
-import {
-  AoiAnalysisModal,
-  AoiToolbar,
-  analyzeAoiDetailed,
-  buildShapeVertices,
-  type AoiDetailedStats,
-  type AoiShapeMode,
-} from './aoiToolkit';
 
 type Lang = 'pt' | 'en';
 type Theme = 'light' | 'dark';
 type Provider = 'osm' | 'esri';
 type UhiClusterMethod = 'zscore' | 'quantiles' | 'natural' | 'kernel';
+type AoiShapeMode = 'rectangle' | 'square' | 'circle' | 'polygon';
 type SearchResult = { display_name: string; lat: string; lon: string };
 type RasterStats = { min: number; max: number; mean: number; stdDev: number; q25: number; q50: number; q75: number };
 type DifferenceStats = {
@@ -34,15 +26,43 @@ type InspectPoint = {
   temp: number; lng: number; lat: number;
   beforeTemp?: number; afterTemp?: number; diffTemp?: number;
 };
+type AoiDetailedStats = {
+  shapeMode: AoiShapeMode;
+  vertices: [number, number][];
+  count: number;
+  areaM2: number;
+  areaHa: number;
+  min: number;
+  max: number;
+  mean: number;
+  stdDev: number;
+  q25: number;
+  q50: number;
+  q75: number;
+  ndviMean: number;
+  ndbiMean: number;
+  vegPct: number;
+  builtPct: number;
+  uhiCounts: number[];
+  uhiPcts: number[];
+  previewDataUrl: string;
+  clipWidth: number;
+  clipHeight: number;
+  clippedFloat32: Float32Array;
+  clipOrigin: number[];
+};
 type OsmFeatureStat = {
+  id: string;
   name: string;
-  kind: 'Bairro / Setor' | 'Via / Corredor' | 'Parque / Referência';
+  kind: 'Bairro' | 'Via';
+  highway?: string;
   meanTemp: number;
+  medianTemp: number;
   maxTemp: number;
   ndvi: number;
   ndbi: number;
-  uhiClass: string;
-  mobilityRisk: string;
+  hotPct: number;
+  samples: number;
 };
 type RasterState = {
   data: Float32Array; width: number; height: number; bounds: RasterBounds;
@@ -86,7 +106,7 @@ const DIFFERENCE_GRADIENT_CSS =
 
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.0', title: 'SR2D4 / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
     colab: 'Abrir Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
     bands: 'Bandas ópticas do SR2D4', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
@@ -98,17 +118,17 @@ const copy = {
     metadata: 'Metadados', theme: 'Tema', basemap: 'Mapa-base', ready: 'Pronto',
     error: 'Não foi possível processar. Carregue um GeoTIFF SR2D4 com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.',
     methodText: 'O app extrai a data AAAAMMDD do nome do SR2D4, busca automaticamente a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL, decodifica ST_B10 e executa fusão física TsHARP HD 1m guiada por reflectância e índices ópticos.',
-    helpText: '1. Gere o produto MS no Colab com AAAAMMDD e _MS.tif. 2. Carregue o GeoTIFF SR2D4. 3. Confirme Red/NIR/SWIR. 4. Escolha a forma da AOI (Retângulo, Quadrado, Círculo ou Polígono) ou gere o Relatório Executivo.',
+    helpText: '1. Gere o produto MS no Colab com AAAAMMDD e _MS.tif. 2. Carregue o GeoTIFF SR2D4. 3. Confirme Red/NIR/SWIR. 4. Escolha a forma da AOI (Retângulo, Quadrado, Círculo ou Polígono) ou exporte o Relatório Técnico Expandido.',
     noData: 'Carregue um GeoTIFF para começar', search: 'Buscar cidade, bairro ou lugar', coords: 'Longitude, latitude',
     locate: 'Minha localização', go: 'Ir', compare: 'Comparar antes/depois', indices: 'Índices espectrais',
-    ndvi: 'NDVI vegetação', ndbi: 'NDBI construído', report: 'Relatório Executivo', resize: 'Arraste para redimensionar o painel',
-    searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Leve, Forte e Extremo.',
-    aoiHelp: 'Escolha a forma geométrica (Retângulo, Quadrado, Círculo ou Polígono), desenhe no mapa e veja o diagnóstico em Pop-up.',
+    ndvi: 'NDVI vegetação', ndbi: 'NDBI construído', report: 'Relatório Expandido (PT/EN)', resize: 'Arraste para redimensionar o painel',
+    searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Moderada, Forte e Extrema.',
+    aoiHelp: 'Escolha Retângulo, Quadrado, Círculo ou Polígono abaixo, desenhe no mapa e veja o diagnóstico em Pop-up.',
     limitation: 'Limitações da super-resolução',
     limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Use-a para investigação espacial e comparação.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.0', title: 'SR2D4 / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
     colab: 'Open Colab', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
     bands: 'SR2D4 optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
@@ -120,12 +140,12 @@ const copy = {
     metadata: 'Metadata', theme: 'Theme', basemap: 'Basemap', ready: 'Ready',
     error: 'Processing failed. Load an SR2D4 GeoTIFF with Red, NIR and SWIR; thermal Landsat is fetched automatically.',
     methodText: 'The workflow combines SR2D4 imagery with optical indices and TsHARP regression to estimate 1m spatial LST.',
-    helpText: '1. Generate the MS product in Colab. 2. Load the GeoTIFF. 3. Confirm Red/NIR/SWIR. 4. Draw AOI shapes or export the Executive Report.',
+    helpText: '1. Generate the MS product in Colab. 2. Load the GeoTIFF. 3. Confirm Red/NIR/SWIR. 4. Draw AOI shapes or export the Expanded Report.',
     noData: 'Load a GeoTIFF to begin', search: 'Search city, neighborhood or place', coords: 'Longitude, latitude',
     locate: 'My location', go: 'Go', compare: 'Compare before/after', indices: 'Spectral indices',
-    ndvi: 'NDVI vegetation', ndbi: 'NDBI built-up', report: 'Executive Report', resize: 'Drag to resize the panel',
-    searchError: 'Place not found.', uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Mild, Strong and Extreme.',
-    aoiHelp: 'Select shape (Rectangle, Square, Circle, Polygon), draw on map and open the Pop-up analysis.',
+    ndvi: 'NDVI vegetation', ndbi: 'NDBI built-up', report: 'Expanded Report (PT/EN)', resize: 'Drag to resize the panel',
+    searchError: 'Place not found.', uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Moderate, Strong and Extreme.',
+    aoiHelp: 'Select Rectangle, Square, Circle or Polygon below, draw on map and open the Pop-up analysis.',
     limitation: 'Super-resolution limitations',
     limitationText: 'Detailed LST is an optical-guided estimate. Validate results with field data.',
   },
@@ -376,6 +396,147 @@ function buildMesoIsothermsGeoJSON(
   });
   return { type: 'FeatureCollection', features };
 }
+
+function buildShapeVertices(mode: AoiShapeMode, p1: [number, number], p2: [number, number]): [number, number][] {
+  const [lng1, lat1] = p1;
+  const [lng2, lat2] = p2;
+  const cosLat = Math.max(0.15, Math.cos(((lat1 + lat2) * 0.5 * Math.PI) / 180));
+  if (mode === 'rectangle') {
+    const w = Math.min(lng1, lng2); const e = Math.max(lng1, lng2);
+    const s = Math.min(lat1, lat2); const n = Math.max(lat1, lat2);
+    return [[w, n], [e, n], [e, s], [w, s]];
+  }
+  if (mode === 'square') {
+    const half = Math.max(Math.abs(lng2 - lng1) * cosLat, Math.abs(lat2 - lat1), 1e-5);
+    const dLng = half / cosLat;
+    return [[lng1 - dLng, lat1 + half], [lng1 + dLng, lat1 + half], [lng1 + dLng, lat1 - half], [lng1 - dLng, lat1 - half]];
+  }
+  if (mode === 'circle') {
+    const dx = (lng2 - lng1) * cosLat; const dy = lat2 - lat1;
+    const r = Math.max(Math.sqrt(dx * dx + dy * dy), 1e-5);
+    const pts: [number, number][] = [];
+    for (let i = 0; i < 64; i += 1) {
+      const a = (i / 64) * Math.PI * 2;
+      pts.push([lng1 + (Math.cos(a) * r) / cosLat, lat1 + Math.sin(a) * r]);
+    }
+    return pts;
+  }
+  return [p1, p2];
+}
+
+function pointInPolygon(point: [number, number], polygon: [number, number][]) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]; const [xj, yj] = polygon[j];
+    if (((yi > point[1]) !== (yj > point[1])) && point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || Number.EPSILON) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function analyzeAoiDetailed(
+  raster: RasterState, vertices: [number, number][], shapeMode: AoiShapeMode,
+  opticalCanvas: HTMLCanvasElement | null, lstCanvas: HTMLCanvasElement | null, opacity: number,
+): AoiDetailedStats | null {
+  if (!raster || vertices.length < 3) return null;
+  const ext = boundsExtent(raster.bounds);
+  let minLng = Infinity; let maxLng = -Infinity; let minLat = Infinity; let maxLat = -Infinity;
+  for (const [lng, lat] of vertices) {
+    if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+  }
+  const x0 = Math.max(0, Math.floor(((minLng - ext.west) / (ext.east - ext.west)) * raster.width));
+  const x1 = Math.min(raster.width - 1, Math.ceil(((maxLng - ext.west) / (ext.east - ext.west)) * raster.width));
+  const y0 = Math.max(0, Math.floor(((ext.north - maxLat) / (ext.north - ext.south)) * raster.height));
+  const y1 = Math.min(raster.height - 1, Math.ceil(((ext.north - minLat) / (ext.north - ext.south)) * raster.height));
+  if (x1 < x0 || y1 < y0) return null;
+
+  const clipWidth = Math.max(1, x1 - x0 + 1);
+  const clipHeight = Math.max(1, y1 - y0 + 1);
+  const clippedFloat32 = new Float32Array(clipWidth * clipHeight);
+  clippedFloat32.fill(NaN);
+
+  const values: number[] = [];
+  let sum = 0; let min = Infinity; let max = -Infinity;
+  let ndviSum = 0; let ndbiSum = 0; let vegCount = 0; let builtCount = 0; let specValid = 0;
+  const uhiCounts = [0, 0, 0, 0, 0, 0];
+  const sceneMean = raster.stats.mean;
+  const sceneStd = Math.max(0.6, raster.stats.stdDev);
+
+  for (let y = y0; y <= y1; y += 1) {
+    const lat = ext.north - ((y + 0.5) / raster.height) * (ext.north - ext.south);
+    const row = y * raster.width;
+    const clipRow = (y - y0) * clipWidth;
+    for (let x = x0; x <= x1; x += 1) {
+      const lng = ext.west + ((x + 0.5) / raster.width) * (ext.east - ext.west);
+      if (!pointInPolygon([lng, lat], vertices)) continue;
+      const idx = row + x;
+      const val = raster.data[idx];
+      if (!Number.isFinite(val)) continue;
+      clippedFloat32[clipRow + (x - x0)] = val;
+      values.push(val); sum += val;
+      if (val < min) min = val; if (val > max) max = val;
+      const z = (val - sceneMean) / sceneStd;
+      if (z < -0.95) uhiCounts[0] += 1;
+      else if (z < -0.3) uhiCounts[1] += 1;
+      else if (z < 0.25) uhiCounts[2] += 1;
+      else if (z < 0.85) uhiCounts[3] += 1;
+      else if (z < 1.4) uhiCounts[4] += 1;
+      else uhiCounts[5] += 1;
+      const ndvi = raster.ndvi[idx]; const ndbi = raster.ndbi[idx];
+      if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
+        specValid += 1; ndviSum += ndvi; ndbiSum += ndbi;
+        if (ndvi > 0.3) vegCount += 1; if (ndbi > 0.1) builtCount += 1;
+      }
+    }
+  }
+  if (!values.length) return null;
+  const count = values.length;
+  const mean = sum / count;
+  let sq = 0;
+  for (let i = 0; i < count; i += 1) sq += (values[i] - mean) ** 2;
+  const stdDev = count > 1 ? Math.sqrt(sq / count) : 0;
+  values.sort((a, b) => a - b);
+  const q25 = values[Math.floor(count * 0.25)] ?? min;
+  const q50 = values[Math.floor(count * 0.5)] ?? mean;
+  const q75 = values[Math.floor(count * 0.75)] ?? max;
+  const resX = Math.abs(raster.resolution[0] || 1);
+  const resY = Math.abs(raster.resolution[1] || 1);
+  const pxAreaM2 = raster.isProjected ? resX * resY : resX * 111320 * (resY * 110540);
+  const areaM2 = count * pxAreaM2;
+  const areaHa = areaM2 / 10000;
+
+  const previewCanvas = document.createElement('canvas');
+  previewCanvas.width = clipWidth; previewCanvas.height = clipHeight;
+  const pCtx = previewCanvas.getContext('2d');
+  if (pCtx && opticalCanvas && lstCanvas) {
+    pCtx.fillStyle = '#071317'; pCtx.fillRect(0, 0, clipWidth, clipHeight);
+    pCtx.drawImage(opticalCanvas, x0, y0, clipWidth, clipHeight, 0, 0, clipWidth, clipHeight);
+    pCtx.globalAlpha = opacity;
+    pCtx.drawImage(lstCanvas, x0, y0, clipWidth, clipHeight, 0, 0, clipWidth, clipHeight);
+    pCtx.globalAlpha = 1;
+    pCtx.strokeStyle = '#ffb000';
+    pCtx.lineWidth = Math.max(2, Math.round(Math.max(clipWidth, clipHeight) * 0.008));
+    pCtx.beginPath();
+    vertices.forEach(([lng, lat], i) => {
+      const px = ((lng - ext.west) / (ext.east - ext.west)) * raster.width - x0;
+      const py = ((ext.north - lat) / (ext.north - ext.south)) * raster.height - y0;
+      if (i === 0) pCtx.moveTo(px, py); else pCtx.lineTo(px, py);
+    });
+    pCtx.closePath(); pCtx.stroke();
+  }
+  return {
+    shapeMode, vertices, count, areaM2, areaHa, min, max, mean, stdDev, q25, q50, q75,
+    ndviMean: specValid ? ndviSum / specValid : 0,
+    ndbiMean: specValid ? ndbiSum / specValid : 0,
+    vegPct: specValid ? (vegCount / specValid) * 100 : 0,
+    builtPct: specValid ? (builtCount / specValid) * 100 : 0,
+    uhiCounts, uhiPcts: uhiCounts.map((c) => (c / count) * 100),
+    previewDataUrl: previewCanvas.toDataURL('image/png'),
+    clipWidth, clipHeight, clippedFloat32,
+    clipOrigin: [raster.origin[0] + x0 * raster.resolution[0], raster.origin[1] + y0 * raster.resolution[1], raster.origin[2] || 0],
+  };
+}
+
 function LogoMark() {
   return (
     <svg className="logo-mark" viewBox="0 0 44 44" role="img" aria-label="SR2D4 LST Explorer logo">
@@ -489,9 +650,7 @@ function renderDifferenceToCanvas(
     const v = data[i];
     if (Number.isFinite(v)) {
       const d = v - mean;
-      sqSum += d * d;
-      sqCount += 1;
-      anomSamples.push(Math.abs(d));
+      sqSum += d * d; sqCount += 1; anomSamples.push(Math.abs(d));
     }
   }
   const stdDev = sqCount > 1 ? Math.sqrt(sqSum / sqCount) : 1.0;
@@ -562,40 +721,48 @@ function paletteGradient(palette: string, customColors: string[]) {
   return `linear-gradient(90deg, ${pts.join(', ')})`;
 }
 
-// Consulta ruas, avenidas, bairros e parques reais da base OpenStreetMap (Overpass API) e cruza com os pixels de 1m do raster
-async function fetchOsmUrbanFeatures(raster: RasterState) {
+// Leitura de Bairros e Ruas reais no OpenStreetMap cruzados com o raster numérico de 1m
+async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{ bairros: OsmFeatureStat[]; vias: OsmFeatureStat[] }> {
   const ext = boundsExtent(raster.bounds);
-  const sampleAt = (lng: number, lat: number) => {
+  const hotspotLim = raster.stats.mean + 0.85 * raster.stats.stdDev;
+  const sampleAt = (lng: number, lat: number, radiusPx: number) => {
     const x = Math.floor(((lng - ext.west) / (ext.east - ext.west)) * raster.width);
     const y = Math.floor(((ext.north - lat) / (ext.north - ext.south)) * raster.height);
     if (x < 0 || y < 0 || x >= raster.width || y >= raster.height) return null;
-    let sumT = 0; let maxT = -Infinity; let sumV = 0; let sumB = 0; let cnt = 0;
-    for (let ky = -3; ky <= 3; ky += 1) {
-      for (let kx = -3; kx <= 3; kx += 1) {
+    const vals: number[] = [];
+    let sumT = 0; let maxT = -Infinity; let sumV = 0; let sumB = 0; let hot = 0;
+    for (let ky = -radiusPx; ky <= radiusPx; ky += 1) {
+      for (let kx = -radiusPx; kx <= radiusPx; kx += 1) {
         const nx = Math.max(0, Math.min(raster.width - 1, x + kx));
         const ny = Math.max(0, Math.min(raster.height - 1, y + ky));
         const idx = ny * raster.width + nx;
         const t = raster.data[idx];
         if (Number.isFinite(t)) {
-          sumT += t;
+          vals.push(t); sumT += t;
           if (t > maxT) maxT = t;
+          if (t >= hotspotLim) hot += 1;
           sumV += Number.isFinite(raster.ndvi[idx]) ? raster.ndvi[idx] : 0;
           sumB += Number.isFinite(raster.ndbi[idx]) ? raster.ndbi[idx] : 0;
-          cnt += 1;
         }
       }
     }
-    if (!cnt) return null;
-    const meanTemp = sumT / cnt;
-    return { meanTemp, maxTemp: maxT, ndvi: sumV / cnt, ndbi: sumB / cnt, count: cnt };
+    if (!vals.length) return null;
+    vals.sort((a, b) => a - b);
+    return {
+      meanTemp: sumT / vals.length,
+      medianTemp: vals[Math.floor(vals.length * 0.5)],
+      maxTemp: maxT,
+      ndvi: sumV / vals.length,
+      ndbi: sumB / vals.length,
+      hotPct: (hot / vals.length) * 100,
+      samples: vals.length,
+    };
   };
 
-  const bairrosMap = new Map<string, OsmFeatureStat & { id?: string; count?: number;highway?: string }>();
-  const viasMap = new Map<string, OsmFeatureStat & { id?: string; count?: number; highway?: string }>();
-  const parquesMap = new Map<string, OsmFeatureStat>();
-
+  const bairrosMap = new Map<string, OsmFeatureStat>();
+  const viasMap = new Map<string, OsmFeatureStat>();
   try {
-    const query = `[out:json][timeout:6];(node["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["highway"~"primary|secondary|tertiary|trunk|residential"]["name"](${ext.south},${ext.west},${ext.north},${ext.east});way["leisure"~"park|nature_reserve|pitch"]["name"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 120;`;
+    const query = `[out:json][timeout:6];(node["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["highway"~"primary|secondary|tertiary|trunk|residential"]["name"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 140;`;
     const resp = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
     if (resp.ok) {
       const json = (await resp.json()) as { elements?: any[] };
@@ -605,37 +772,86 @@ async function fetchOsmUrbanFeatures(raster: RasterState) {
         const lat = el.lat ?? el.center?.lat;
         const lon = el.lon ?? el.center?.lon;
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-        const s = sampleAt(lon, lat);
+        const isPlace = Boolean(el.tags?.place);
+        const s = sampleAt(lon, lat, isPlace ? 18 : 4);
         if (!s) continue;
-        const uhiClass = uhiClassLabel(s.meanTemp, raster.stats, 'zscore', 1.1, 'pt');
-        const mobilityRisk = s.meanTemp > raster.stats.mean + 0.85 * raster.stats.stdDev ? 'Crítico' : s.meanTemp > raster.stats.mean ? 'Moderado' : 'Adequado';
-        const osmId = `${el.type}/${el.id}`;
-        if (el.tags?.place) {
-          if (!bairrosMap.has(name)) bairrosMap.set(name, { name, id: osmId, kind: 'Bairro / Setor', ...s, uhiClass, mobilityRisk });
+        const id = `${el.type}/${el.id}`;
+        if (isPlace) {
+          if (!bairrosMap.has(name)) bairrosMap.set(name, { id, name, kind: 'Bairro', ...s });
         } else if (el.tags?.highway) {
-          const existing = viasMap.get(name);
-          if (!existing || s.meanTemp > existing.meanTemp) {
-            viasMap.set(name, { name, id: osmId, highway: el.tags.highway, kind: 'Via / Corredor', ...s, uhiClass, mobilityRisk });
+          const prev = viasMap.get(name);
+          if (!prev || s.meanTemp > prev.meanTemp) {
+            viasMap.set(name, { id, name, kind: 'Via', highway: el.tags.highway, ...s });
           }
-        } else if (!parquesMap.has(name)) {
-          parquesMap.set(name, { name, kind: 'Parque / Referência', ...s, uhiClass, mobilityRisk });
         }
       }
     }
-  } catch { /* ignore network error */ }
-
-  const bairros = [...bairrosMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 10);
-  const vias = [...viasMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 15);
-  const parques = [...parquesMap.values()].sort((a, b) => a.meanTemp - b.meanTemp).slice(0, 6);
-
+  } catch { /* ignore network errors */ }
   return {
-    bairros,
-    neighborhoods: bairros,
-    vias,
-    ruas: vias,
-    streets: vias,
-    parques,
+    bairros: [...bairrosMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 12),
+    vias: [...viasMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 15),
   };
+}
+
+function renderMapWithFooterLegend(
+  baseOptical: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, opacity: number,
+  title: string, isUhi: boolean, stats: RasterStats, palette: string, customColors: string[],
+): string {
+  const w = overlayCanvas.width; const h = overlayCanvas.height;
+  const legH = Math.max(150, Math.round(h * 0.14));
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h + legH;
+  const ctx = out.getContext('2d');
+  if (!ctx) return '';
+  ctx.fillStyle = '#0f2238'; ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(baseOptical, 0, 0, w, h);
+  ctx.globalAlpha = opacity; ctx.drawImage(overlayCanvas, 0, 0, w, h); ctx.globalAlpha = 1;
+
+  const pad = Math.max(22, Math.round(w * 0.03));
+  const barW = w - pad * 2;
+  ctx.strokeStyle = 'rgba(156,221,218,0.4)'; ctx.lineWidth = 2;
+  ctx.strokeRect(pad * 0.5, h + 8, w - pad, legH - 16);
+  ctx.fillStyle = '#9cddda';
+  ctx.font = `700 ${Math.max(15, Math.round(w * 0.015))}px Inter, Arial, sans-serif`;
+  ctx.fillText(title, pad, h + Math.round(legH * 0.26));
+
+  const barY = h + Math.round(legH * 0.38);
+  const barH = Math.max(22, Math.round(legH * 0.22));
+  const fSub = Math.max(12, Math.round(w * 0.0115));
+
+  if (!isUhi) {
+    const grad = ctx.createLinearGradient(pad, barY, pad + barW, barY);
+    for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, customColors, false));
+    ctx.fillStyle = grad; ctx.fillRect(pad, barY, barW, barH);
+    ctx.strokeStyle = '#fff'; ctx.strokeRect(pad, barY, barW, barH);
+    ctx.fillStyle = '#fff'; ctx.font = `700 ${fSub}px Inter, Arial, sans-serif`;
+    const ly = barY + barH + Math.round(legH * 0.22);
+    ctx.textAlign = 'left'; ctx.fillText(`Mín: ${stats.min.toFixed(1)} °C`, pad, ly);
+    ctx.textAlign = 'center';
+    ctx.fillText(`Q25: ${stats.q25.toFixed(1)} °C`, pad + barW * 0.25, ly);
+    ctx.fillText(`Mediana: ${stats.q50.toFixed(1)} °C | Média: ${stats.mean.toFixed(1)} °C (σ=${stats.stdDev.toFixed(2)}°C)`, pad + barW * 0.5, ly);
+    ctx.fillText(`Q75: ${stats.q75.toFixed(1)} °C`, pad + barW * 0.75, ly);
+    ctx.textAlign = 'right'; ctx.fillText(`Máx: ${stats.max.toFixed(1)} °C`, pad + barW, ly);
+    ctx.textAlign = 'left';
+  } else {
+    const cls = [
+      { n: '1. Frescor (< -0,95σ)', c: '#103e8a' },
+      { n: '2. Amenizado (-0,95 a -0,30σ)', c: '#2ba198' },
+      { n: '3. Neutro (-0,30 a +0,25σ)', c: '#bade76' },
+      { n: '4. UHI Moderada (+0,25 a +0,85σ)', c: '#f8d668' },
+      { n: '5. UHI Forte (+0,85 a +1,40σ)', c: '#f47c30' },
+      { n: '6. UHI Extrema (> +1,40σ)', c: '#d42026' },
+    ];
+    const segW = barW / cls.length;
+    cls.forEach((it, idx) => {
+      const x = pad + idx * segW;
+      ctx.fillStyle = it.c; ctx.fillRect(x, barY, segW - 4, barH);
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.strokeRect(x, barY, segW - 4, barH);
+      ctx.fillStyle = '#fff'; ctx.font = `700 ${Math.max(11, fSub - 1)}px Inter, Arial, sans-serif`;
+      ctx.fillText(it.n, x + 2, barY + barH + Math.round(legH * 0.22));
+    });
+  }
+  return out.toDataURL('image/webp', 0.92);
 }
 
 export default function App() {
@@ -969,19 +1185,23 @@ export default function App() {
   }, [comparisonPrimary, extent, raster]);
 
   useEffect(() => {
-    const map = mapInstance.current; if (!map || !map.isStyleLoaded()) return;
-    const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
-    const pts = aoi.slice(0, 12).map((pt) => ({ type: 'Feature' as const, properties: {}, geometry: { type: 'Point' as const, coordinates: pt } }));
-    const line = aoi.length >= 2 ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: aoi.length >= 3 ? [...aoi, aoi[0]] : aoi } }] : [];
-    const poly = aoi.length >= 3 ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: [[...aoi, aoi[0]]] } }] : [];
-    const data = { type: 'FeatureCollection' as const, features: [...poly, ...line, ...pts] };
-    if (src) src.setData(data as any);
-    else {
-      map.addSource('aoi-source', { type: 'geojson', data: data as any });
-      map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', filter: ['==', '$type', 'Polygon'], paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.2 } });
-      map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
-      map.addLayer({ id: 'aoi-pts', type: 'circle', source: 'aoi-source', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 5, 'circle-color': '#ffb000', 'circle-stroke-color': '#071317', 'circle-stroke-width': 2 } });
-    }
+    const map = mapInstance.current; if (!map) return;
+    const updateAoiLayer = () => {
+      if (!map.isStyleLoaded()) return;
+      const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
+      const pts = aoi.slice(0, 16).map((pt) => ({ type: 'Feature' as const, properties: {}, geometry: { type: 'Point' as const, coordinates: pt } }));
+      const line = aoi.length >= 2 ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: aoi.length >= 3 ? [...aoi, aoi[0]] : aoi } }] : [];
+      const poly = aoi.length >= 3 ? [{ type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: [[...aoi, aoi[0]]] } }] : [];
+      const data = { type: 'FeatureCollection' as const, features: [...poly, ...line, ...pts] };
+      if (src) src.setData(data as any);
+      else {
+        map.addSource('aoi-source', { type: 'geojson', data: data as any });
+        map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', filter: ['==', '$type', 'Polygon'], paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.22 } });
+        map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
+        map.addLayer({ id: 'aoi-pts', type: 'circle', source: 'aoi-source', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 5.5, 'circle-color': '#ffb000', 'circle-stroke-color': '#071317', 'circle-stroke-width': 2 } });
+      }
+    };
+    if (map.isStyleLoaded()) updateAoiLayer(); else map.once('load', updateAoiLayer);
   }, [aoi]);
 
   useEffect(() => {
@@ -1204,31 +1424,439 @@ export default function App() {
     const lnk = document.createElement('a'); lnk.href = c.toDataURL('image/png'); lnk.download = `SR2D4-Comparacao-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`; lnk.click();
   };
 
-  // Relatório Técnico Expandido com Mapas LST + UHI, Bairros/Ruas OSM e Botão PT/EN
+  // GERADOR DO RELATÓRIO TÉCNICO EXPANDIDO (MODELO SR2D4_relatorio_modelo_expandido.html + MAPAS LST & UHI + BOTÃO PT/EN)
   const downloadReport = async () => {
-    if (!raster || !lstCanvas.current || !opticalCanvas.current) return;
-    setStatus('Lendo ruas e bairros da base OpenStreetMap e gerando relatório expandido…');
+    if (!raster || !opticalCanvas.current) return;
+    setStatus('Calculando matrizes numéricas, mapas LST/UHI e feições OpenStreetMap para o relatório…');
     const osm = await fetchOsmUrbanFeatures(raster);
-    downloadExpandedTechnicalReport({
-      raster,
-      opticalCanvas: opticalCanvas.current,
-      lstCanvas: lstCanvas.current,
-      opacity,
-      paletteName: palette,
-      uhiMethod,
-      uhiPower,
-      aoiStats: aoiStats ? { vertices: aoi, ...aoiStats } : null,
-      diffStats:
-        differenceReady && differenceStats && comparisonPrimary && comparisonSecondary
-          ? {
-              beforeLabel: comparisonPrimary.dateLabel,
-              afterLabel: comparisonSecondary.dateLabel,
-              ...differenceStats,
-            }
-          : null,
-      osmData: osm,
-    });
-    setStatus('Relatório técnico expandido exportado.');
+
+    const tempCanvas = document.createElement('canvas');
+    renderPerceptualLstToCanvas(raster.data, raster.width, raster.height, tempCanvas, palette, customColors, raster.stats);
+    const uhiCanvas = document.createElement('canvas');
+    renderHighDefUhiToCanvas(raster.data, raster.width, raster.height, uhiCanvas, raster.stats, uhiMethod, uhiPower);
+
+    const lstMapImg = renderMapWithFooterLegend(
+      opticalCanvas.current, tempCanvas, opacity,
+      `MAPA 01 · TEMPERATURA DE SUPERFÍCIE (LST °C) · PALETA ${palette.toUpperCase()} · EPSG:${raster.epsg}`,
+      false, raster.stats, palette, customColors,
+    );
+    const uhiMapImg = renderMapWithFooterLegend(
+      opticalCanvas.current, uhiCanvas, opacity,
+      `MAPA 02 · CLASSES DE ILHA DE CALOR URBANA (UHI 1m · MÉTODO ${uhiMethod.toUpperCase()}) · EPSG:${raster.epsg}`,
+      true, raster.stats, palette, customColors,
+    );
+
+    let valid = 0; let noData = 0;
+    let veg = 0; let built = 0; let water = 0; let mixed = 0; let overlapVB = 0; let specValid = 0;
+    let above31 = 0; let aboveHot = 0;
+    const hotspotLim = raster.stats.mean + 1.5 * raster.stats.stdDev;
+    const uhiCnt = [0, 0, 0, 0, 0, 0];
+    const nBins = 12; const histBins = new Array<number>(nBins).fill(0);
+    const span = Math.max(0.1, raster.stats.max - raster.stats.min);
+
+    for (let i = 0; i < raster.data.length; i += 1) {
+      const v = raster.data[i];
+      if (!Number.isFinite(v)) { noData += 1; continue; }
+      valid += 1;
+      if (v > 31.0) above31 += 1;
+      if (v >= hotspotLim) aboveHot += 1;
+      histBins[Math.max(0, Math.min(nBins - 1, Math.floor(((v - raster.stats.min) / span) * nBins)))] += 1;
+      const z = computeClusteredZ(v, v, raster.stats, uhiMethod, uhiPower);
+      if (z < -0.95) uhiCnt[0] += 1;
+      else if (z < -0.3) uhiCnt[1] += 1;
+      else if (z < 0.25) uhiCnt[2] += 1;
+      else if (z < 0.85) uhiCnt[3] += 1;
+      else if (z < 1.4) uhiCnt[4] += 1;
+      else uhiCnt[5] += 1;
+      const ndvi = raster.ndvi[i]; const ndbi = raster.ndbi[i];
+      if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
+        specValid += 1;
+        if (ndvi > 0.3 && ndbi > 0.1) overlapVB += 1;
+        if (ndvi > 0.3) veg += 1;
+        else if (ndvi < 0 && ndbi < 0) water += 1;
+        else if (ndbi > 0.1) built += 1;
+        else mixed += 1;
+      }
+    }
+
+    const resX = Math.abs(raster.resolution[0] || 1);
+    const resY = Math.abs(raster.resolution[1] || 1);
+    const pxM2 = raster.isProjected ? resX * resY : resX * 111320 * (resY * 110540);
+    const areaHa = (valid * pxM2) / 10000;
+    const areaKm2 = areaHa / 100;
+    const pct = (n: number, d = valid) => (d > 0 ? ((n / d) * 100).toFixed(1) : '0.0');
+    const ha = (n: number) => ((n * pxM2) / 10000).toFixed(2);
+    const strongExtPct = (((uhiCnt[4] + uhiCnt[5]) / Math.max(1, valid)) * 100).toFixed(1);
+
+    const dateMatches = Array.from(raster.fileName.matchAll(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/g)).map((m) => `${m[1]}-${m[2]}-${m[3]}`);
+    const uniqueDates = [...new Set(dateMatches)];
+    const dateOpt = uniqueDates[0] ?? 'Data 1';
+    const dateTherm = uniqueDates[1] ?? uniqueDates[0] ?? 'Sincronizada STAC';
+    const daysGap = uniqueDates.length >= 2 ? Math.round(Math.abs(Date.parse(uniqueDates[1]) - Date.parse(uniqueDates[0])) / 86400000) : null;
+    const issueDate = new Date().toLocaleDateString('pt-BR');
+
+    const uhiMeta = [
+      { pt: 'Ilha de frescor (< -0,95σ)', en: 'Cool island (< -0.95σ)', c: '#103e8a' },
+      { pt: 'Zona amenizada (-0,95σ a -0,30σ)', en: 'Mitigated zone (-0.95σ to -0.30σ)', c: '#2ba198' },
+      { pt: 'Zona neutra (-0,30σ a +0,25σ)', en: 'Neutral zone (-0.30σ to +0.25σ)', c: '#68c96e' },
+      { pt: 'UHI moderada (+0,25σ a +0,85σ)', en: 'Moderate UHI (+0.25σ to +0.85σ)', c: '#f1b64a' },
+      { pt: 'UHI forte (+0,85σ a +1,40σ)', en: 'Strong UHI (+0.85σ to +1.40σ)', c: '#e86825' },
+      { pt: 'Hotspot extremo (> +1,40σ)', en: 'Extreme hotspot (> +1.40σ)', c: '#c84638' },
+    ];
+
+    const uhiBars = uhiMeta.map((m, i) => `<div class="bar-row"><div class="bar-label"><span data-pt="${m.pt}" data-en="${m.en}">${m.pt}</span><b>${pct(uhiCnt[i])}% · ${ha(uhiCnt[i])} ha (${uhiCnt[i].toLocaleString('pt-BR')} px)</b></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(1.5, Number(pct(uhiCnt[i])))}%;background:${m.c}"></div></div></div>`).join('');
+    const histBars = histBins.map((cnt, i) => {
+      const t0 = raster.stats.min + (span * i) / nBins; const t1 = raster.stats.min + (span * (i + 1)) / nBins;
+      const p = pct(cnt); const col = i < 3 ? '#1d817e' : i < 6 ? '#27765e' : i < 9 ? '#f1b64a' : '#c84638';
+      return `<div class="bar-row" style="margin:8px 0"><div class="bar-label"><span>${t0.toFixed(1)} °C – ${t1.toFixed(1)} °C</span><b>${p}% (${cnt.toLocaleString('pt-BR')} px · ${ha(cnt)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(1, Number(p))}%;background:${col}"></div></div></div>`;
+    }).join('');
+
+    const bairrosHtml = osm.bairros.length
+      ? `<table><thead><tr><th data-pt="Bairro / ID Real OSM" data-en="Neighborhood / Real OSM ID">Bairro / ID Real OSM</th><th data-pt="LST Média" data-en="Mean LST">LST Média</th><th data-pt="Mediana / Máx" data-en="Median / Max">Mediana / Máx</th><th data-pt="% Acima Limiar" data-en="% Above Threshold">% Acima Limiar</th><th>NDVI / NDBI</th><th data-pt="Operação Espacial" data-en="Spatial Operation">Operação Espacial</th></tr></thead><tbody>${osm.bairros.map((b) => `<tr><td><strong>${b.name}</strong> <code>${b.id}</code></td><td><b>${b.meanTemp.toFixed(2)} °C</b></td><td>${b.medianTemp.toFixed(2)} °C / ${b.maxTemp.toFixed(1)} °C</td><td>${b.hotPct.toFixed(1)}%</td><td>${b.ndvi.toFixed(3)} / ${b.ndbi.toFixed(3)}</td><td>Janela zonal 37×37 px (${b.samples} px)</td></tr>`).join('')}</tbody></table>`
+      : `<div class="callout red"><strong data-pt="Bairros — Não calculado (dados poligonais ausentes):" data-en="Neighborhoods — Not calculated (polygon data missing):">Bairros — Não calculado (dados poligonais ausentes):</strong><span data-pt=" Nenhuma feição de bairro foi retornada para esta extensão. Forneça o shapefile/GeoJSON oficial de bairros para estatística zonal completa." data-en=" No neighborhood features returned for this extent. Provide official neighborhood polygons for full zonal statistics."> Nenhuma feição de bairro foi retornada para esta extensão. Forneça o shapefile/GeoJSON oficial de bairros para estatística zonal completa.</span></div>`;
+
+    const viasHtml = osm.vias.length
+      ? `<table><thead><tr><th data-pt="Ranking & Rua / ID Real OSM" data-en="Rank & Street / Real OSM ID">Ranking &amp; Rua / ID Real OSM</th><th data-pt="LST Média" data-en="Mean LST">LST Média</th><th data-pt="LST Máxima" data-en="Max LST">LST Máxima</th><th data-pt="% em Classe Quente" data-en="% in Hot Class">% em Classe Quente</th><th>NDVI / NDBI</th><th data-pt="Operação Espacial" data-en="Spatial Operation">Operação Espacial</th></tr></thead><tbody>${osm.vias.map((v, i) => `<tr><td><strong>#${i + 1} · ${v.name}</strong> <code>${v.id}</code> (${v.highway})</td><td><b>${v.meanTemp.toFixed(2)} °C</b></td><td>${v.maxTemp.toFixed(1)} °C</td><td>${v.hotPct.toFixed(1)}%</td><td>${v.ndvi.toFixed(3)} / ${v.ndbi.toFixed(3)}</td><td>Interseção buffer 9×9 m no raster numérico (${v.samples} px)</td></tr>`).join('')}</tbody></table>`
+      : `<div class="callout red"><strong data-pt="Ruas — Não calculado (eixos viários ausentes):" data-en="Streets — Not calculated (road centerlines missing):">Ruas — Não calculado (eixos viários ausentes):</strong><span data-pt=" Nenhum segmento viário retornado na consulta atual." data-en=" No road segments returned in current query."> Nenhum segmento viário retornado na consulta atual.</span></div>`;
+
+    const aoiReportBlock = aoiDetailed
+      ? `<div class="callout blue"><strong data-pt="Recorte AOI (${aoiDetailed.shapeMode}) analisado no raster numérico:" data-en="AOI Clip (${aoiDetailed.shapeMode}) analyzed on numerical raster:">Recorte AOI (${aoiDetailed.shapeMode}) analisado no raster numérico:</strong><span> ${aoiDetailed.count.toLocaleString('pt-BR')} px (${aoiDetailed.areaHa.toFixed(2)} ha) · Mín: <b>${aoiDetailed.min.toFixed(1)} °C</b> · Média: <b>${aoiDetailed.mean.toFixed(2)} °C</b> · Mediana: <b>${aoiDetailed.q50.toFixed(2)} °C</b> · Máx: <b>${aoiDetailed.max.toFixed(1)} °C</b> · NDVI: ${aoiDetailed.ndviMean.toFixed(3)} · NDBI: ${aoiDetailed.ndbiMean.toFixed(3)}.</span></div>`
+      : '';
+
+    const html = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SR2D4 | Diagnóstico Térmico e Urbano (${raster.fileName})</title>
+<style>
+:root{--navy:#10213b;--navy2:#192f50;--teal:#1d817e;--ink:#172b42;--muted:#65758a;--line:#dbe3ec;--paper:#ffffff;--bg:#eef2f7;--amber:#f1b64a;--red:#c84638;--green:#27765e;--radius:16px;--shadow:0 10px 32px rgba(16,33,59,.07)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.58 Inter,system-ui,-apple-system,Arial,sans-serif}
+.page{max-width:1240px;margin:0 auto;padding:26px 24px 60px}
+.topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;color:#5e6d82;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px}.brand-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(145deg,#36a9a2,#175f79);display:grid;place-items:center;color:#fff;font-weight:900}
+.report-tag{border:1px solid #cbd6e2;border-radius:999px;padding:6px 12px;background:#fff;color:#40516a}
+.lang-btn{border:2px solid #1d817e;background:#e7f3f1;color:#10213b;border-radius:999px;padding:7px 16px;font-weight:800;font-size:12px;cursor:pointer}
+.hero{background:linear-gradient(115deg,var(--navy) 0%,#173658 66%,#176d75 100%);border-radius:24px;padding:34px 38px;color:#fff;box-shadow:var(--shadow)}
+.eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;font-weight:800;color:#9cddda;margin-bottom:12px}
+h1{font-size:clamp(30px,3.8vw,46px);line-height:1.08;margin:0 0 14px;font-weight:780}
+.hero p{margin:0;max-width:780px;color:#d6e4f1;font-size:16.5px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}.hero-meta span{border:1px solid #ffffff30;background:#ffffff0e;padding:7px 10px;border-radius:9px;color:#e7f1f8;font-size:12px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid #ffffff45;border-radius:10px;padding:10px 14px;font-weight:750;font-size:13px;color:#fff;background:#ffffff12;cursor:pointer;text-decoration:none}
+.btn.primary{background:#e6f8f5;color:#10384a;border-color:#e6f8f5}
+.nav{position:sticky;top:0;z-index:20;margin:16px 0 22px;padding:10px 12px;background:#ffffffed;backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:13px;display:flex;gap:7px;overflow:auto}
+.nav a{white-space:nowrap;font-size:12px;font-weight:750;color:#42546a;padding:7px 10px;border-radius:8px;text-decoration:none}
+.section{scroll-margin-top:82px;margin-top:26px}.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:0 0 14px;flex-wrap:wrap}
+.section-kicker{font-size:11px;font-weight:850;letter-spacing:.15em;color:var(--teal);text-transform:uppercase;margin-bottom:5px}
+h2{margin:0;color:var(--navy);font-size:clamp(22px,2.4vw,29px)}h3{margin:0 0 9px;font-size:17px;color:var(--navy)}.section-desc{margin:5px 0 0;color:var(--muted);max-width:820px;font-size:13px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
+.grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px}.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.two-col{display:grid;grid-template-columns:1.05fr .95fr;gap:14px}
+.metric{padding:19px 20px;min-height:134px}.metric-label{font-size:12px;font-weight:750;color:var(--muted)}.metric-value{margin-top:9px;font-size:clamp(24px,2.8vw,33px);color:var(--navy);font-weight:800}.metric-unit{font-size:14px;color:#50647a}.metric-note{margin-top:8px;font-size:11px;color:#6b7a8e}
+.chip{display:inline-flex;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:800}.chip.ok{background:#e5f4ee;color:#1c7058}.chip.pending{background:#fff3d7;color:#875d11}.chip.info{background:#e8f1f8;color:#365a7a}.chip.warn{background:#fdebe7;color:#a53e31}
+.insight-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}.insight{background:#fff;border:1px solid var(--line);border-radius:13px;padding:17px}.insight .number{font-size:23px;font-weight:850;color:var(--teal)}.insight p{margin:6px 0 0;font-size:13px;color:#596a7f}
+.map-frame{background:#0f2238;border-radius:15px;padding:10px;overflow:hidden}.map-frame img{display:block;width:100%;height:auto;border-radius:8px}.map-caption{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 4px 2px;color:#d8e6f1;font-size:12px}
+.callout{border-left:4px solid var(--amber);background:#fff7e7;padding:14px 16px;border-radius:0 10px 10px 0;color:#654d27;font-size:13px;margin-top:13px}.callout.blue{background:#eaf4f7;border-color:#3989a1;color:#34566a}.callout.red{background:#fff0ed;border-color:#d2604f;color:#7a3b31}
+.bar-row{margin:12px 0}.bar-label{display:flex;justify-content:space-between;gap:12px;font-size:13px;font-weight:700}.bar-track{height:10px;margin-top:6px;background:#edf1f5;border-radius:99px;overflow:hidden}.bar-fill{height:100%;border-radius:99px}
+.chart-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px;padding-top:10px;border-top:1px solid #e7edf3;color:#63748a;font-size:11px}
+.stat-list{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.stat-item{padding:10px;border:1px solid #e2e8ef;border-radius:10px;background:#fafbfd}.stat-item span{display:block;color:#748195;font-size:11px;font-weight:700}.stat-item b{font-size:17px;color:var(--navy)}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{border-collapse:collapse;width:100%;min-width:650px;font-size:12px}th{background:#f1f5f8;color:#43566b;text-align:left;font-size:11px;text-transform:uppercase;font-weight:850}th,td{padding:11px 12px;border-bottom:1px solid #e5ebf1}
+.tag{display:inline-flex;border-radius:6px;padding:4px 7px;font-size:10px;font-weight:850}.tag.available{background:#e4f4ed;color:#247255}.tag.pending{background:#fff1d6;color:#8b6114}
+.theme-card{padding:20px;display:flex;flex-direction:column;gap:10px}.theme-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#e8f3f4;font-size:20px}
+.action-row{display:grid;grid-template-columns:110px 1fr;gap:16px;border-bottom:1px solid #e7edf2;padding:14px 0}.priority{align-self:start;text-align:center;border-radius:8px;padding:7px 8px;font-size:11px;font-weight:850;background:#edf5f1;color:#24694f}.priority.p1{background:#fff0d8;color:#8b5a11}.priority.p2{background:#eaf1fb;color:#375b93}
+.footer{margin-top:28px;background:#10213b;color:#d6e3ee;border-radius:17px;padding:24px 28px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px}
+code{background:#edf2f6;padding:2px 5px;border-radius:4px;font-size:11px}
+@media(max-width:900px){.grid-4,.grid-2,.two-col,.insight-list{grid-template-columns:1fr}}
+@media print{.nav,.actions,.lang-btn{display:none!important}body{background:#fff}.page{max-width:none;padding:0}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="topline">
+    <div class="brand"><div class="brand-mark">S4</div><span>SR2D4 · Geospatial Intelligence</span></div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button>
+      <span class="report-tag" data-pt="RELATÓRIO TÉCNICO · MODELO EXPANDIDO" data-en="TECHNICAL REPORT · EXPANDED MODEL">RELATÓRIO TÉCNICO · MODELO EXPANDIDO</span>
+    </div>
+  </div>
+
+  <header class="hero">
+    <div class="eyebrow" data-pt="Diagnóstico térmico e inteligência territorial" data-en="Thermal diagnostics and territorial intelligence">Diagnóstico térmico e inteligência territorial</div>
+    <h1 data-pt="Temperatura de superfície e ambiente urbano" data-en="Land surface temperature and urban environment">Temperatura de superfície e ambiente urbano</h1>
+    <p data-pt="Relatório técnico auditável gerado diretamente do raster numérico GeoTIFF (1 m), com mapas de Temperatura (LST) e Ilhas de Calor (UHI), análise espectral NDVI/NDBI, recortes por bairro e rua e painel integrado urbano-saúde-ambiental." data-en="Auditable technical report generated directly from the numerical GeoTIFF raster (1 m), featuring Temperature (LST) and Urban Heat Island (UHI) maps, NDVI/NDBI spectral analysis, neighborhood and street breakdowns, and an integrated urban-health-environmental panel.">Relatório técnico auditável gerado diretamente do raster numérico GeoTIFF (1 m), com mapas de Temperatura (LST) e Ilhas de Calor (UHI), análise espectral NDVI/NDBI, recortes por bairro e rua e painel integrado urbano-saúde-ambiental.</p>
+    <div class="hero-meta">
+      <span data-pt="Produto: LST refinada (${resX.toFixed(2)} m)" data-en="Product: Refined LST (${resX.toFixed(2)} m)">Produto: LST refinada (${resX.toFixed(2)} m)</span>
+      <span>CRS: EPSG:${raster.epsg}</span>
+      <span>Raster: ${raster.width.toLocaleString('pt-BR')} × ${raster.height.toLocaleString('pt-BR')} px (${valid.toLocaleString('pt-BR')} válidos)</span>
+      <span data-pt="Área válida: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)" data-en="Valid area: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)">Área válida: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)</span>
+      <span data-pt="Emissão: ${issueDate}" data-en="Issued: ${issueDate}">Emissão: ${issueDate}</span>
+    </div>
+    <div class="actions">
+      <button class="btn primary" onclick="window.print()" data-pt="⇩ Imprimir / salvar em PDF" data-en="⇩ Print / save as PDF">⇩ Imprimir / salvar em PDF</button>
+      <button class="btn" onclick="toggleReportLang()" data-pt="🌐 Traduzir Português / Inglês" data-en="🌐 Switch English / Portuguese">🌐 Traduzir Português / Inglês</button>
+      <a class="btn" href="#bairros-ruas" data-pt="Ver Bairros e Ranking de Ruas →" data-en="View Neighborhoods & Street Ranking →">Ver Bairros e Ranking de Ruas →</a>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <a href="#resumo" data-pt="01. Resumo" data-en="01. Summary">01. Resumo</a>
+    <a href="#metadados" data-pt="02. Metadados & Datas" data-en="02. Metadata & Dates">02. Metadados &amp; Datas</a>
+    <a href="#mapas" data-pt="03. Mapas LST & UHI" data-en="03. LST & UHI Maps">03. Mapas LST &amp; UHI</a>
+    <a href="#classes" data-pt="04. Distribuição & UHI" data-en="04. Distribution & UHI">04. Distribuição &amp; UHI</a>
+    <a href="#espectral" data-pt="05. NDVI & NDBI" data-en="05. NDVI & NDBI">05. NDVI &amp; NDBI</a>
+    <a href="#bairros-ruas" data-pt="06. Bairros & Ruas" data-en="06. Neighborhoods & Streets">06. Bairros &amp; Ruas</a>
+    <a href="#modulos" data-pt="07–10. Conforto, Saúde, Mobilidade e Poluição" data-en="07–10. Comfort, Health, Mobility & Pollution">07–10. Conforto, Saúde, Mobilidade e Poluição</a>
+    <a href="#indicadores" data-pt="11. Painel Integrado" data-en="11. Integrated Panel">11. Painel Integrado</a>
+    <a href="#recomendacoes" data-pt="12. Recomendações & Limites" data-en="12. Recommendations & Limits">12. Recomendações &amp; Limites</a>
+  </nav>
+
+  <section id="resumo" class="section">
+    <div class="section-head">
+      <div>
+        <div class="section-kicker" data-pt="01 · Síntese executiva" data-en="01 · Executive summary">01 · Síntese executiva</div>
+        <h2 data-pt="Principais conclusões comprovadas pelo raster numérico" data-en="Key findings proven by the numerical raster">Principais conclusões comprovadas pelo raster numérico</h2>
+        <p class="section-desc" data-pt="Estatísticas extraídas diretamente da matriz Float32Array (${valid.toLocaleString('pt-BR')} píxeis válidos), sem amostragem de cores RGB." data-en="Statistics extracted directly from the Float32Array matrix (${valid.toLocaleString('pt-BR')} valid pixels), without RGB color sampling.">Estatísticas extraídas diretamente da matriz Float32Array (${valid.toLocaleString('pt-BR')} píxeis válidos), sem amostragem de cores RGB.</p>
+      </div>
+      <span class="chip ok" data-pt="Base numérica auditada" data-en="Audited numerical base">Base numérica auditada</span>
+    </div>
+    <div class="grid-4">
+      <article class="card metric"><div class="metric-label" data-pt="LST média (μ)" data-en="Mean LST (μ)">LST média (μ)</div><div class="metric-value">${raster.stats.mean.toFixed(1)} <span class="metric-unit">°C</span></div><div class="metric-note" data-pt="Mediana: ${raster.stats.q50.toFixed(1)} °C · σ = ${raster.stats.stdDev.toFixed(2)} °C" data-en="Median: ${raster.stats.q50.toFixed(1)} °C · σ = ${raster.stats.stdDev.toFixed(2)} °C">Mediana: ${raster.stats.q50.toFixed(1)} °C · σ = ${raster.stats.stdDev.toFixed(2)} °C</div></article>
+      <article class="card metric"><div class="metric-label" data-pt="LST máxima" data-en="Max LST">LST máxima</div><div class="metric-value">${raster.stats.max.toFixed(1)} <span class="metric-unit">°C</span></div><div class="metric-note" data-pt="Mínima: ${raster.stats.min.toFixed(1)} °C · Q75: ${raster.stats.q75.toFixed(1)} °C" data-en="Min: ${raster.stats.min.toFixed(1)} °C · Q75: ${raster.stats.q75.toFixed(1)} °C">Mínima: ${raster.stats.min.toFixed(1)} °C · Q75: ${raster.stats.q75.toFixed(1)} °C</div></article>
+      <article class="card metric"><div class="metric-label" data-pt="UHI forte + extrema" data-en="Strong + extreme UHI">UHI forte + extrema</div><div class="metric-value">${strongExtPct}<span class="metric-unit">%</span></div><div class="metric-note" data-pt="${ha(uhiCnt[4] + uhiCnt[5])} ha (> +0,85σ); fração > 31 °C = ${pct(above31)}%" data-en="${ha(uhiCnt[4] + uhiCnt[5])} ha (> +0.85σ); fraction > 31 °C = ${pct(above31)}%">${ha(uhiCnt[4] + uhiCnt[5])} ha (&gt; +0,85σ); fração &gt; 31 °C = ${pct(above31)}%</div></article>
+      <article class="card metric"><div class="metric-label" data-pt="Vegetação espectral (NDVI > 0,3)" data-en="Spectral vegetation (NDVI > 0.3)">Vegetação espectral (NDVI &gt; 0,3)</div><div class="metric-value">${pct(veg, specValid)}<span class="metric-unit">%</span></div><div class="metric-note">${ha(veg)} ha · NDVI μ = ${meanOf(raster.ndvi).toFixed(3)}</div></article>
+    </div>
+    <div class="insight-list">
+      <article class="insight"><div class="number">${(raster.stats.mean - raster.stats.q50) >= 0 ? '+' : ''}${(raster.stats.mean - raster.stats.q50).toFixed(2)} °C</div><p data-pt="Diferença entre média (${raster.stats.mean.toFixed(2)} °C) e mediana (${raster.stats.q50.toFixed(2)} °C). Amplitude interquartil (Q75−Q25) de ${(raster.stats.q75 - raster.stats.q25).toFixed(2)} °C." data-en="Difference between mean (${raster.stats.mean.toFixed(2)} °C) and median (${raster.stats.q50.toFixed(2)} °C). Interquartile range (Q75−Q25) of ${(raster.stats.q75 - raster.stats.q25).toFixed(2)} °C.">Diferença entre média (${raster.stats.mean.toFixed(2)} °C) e mediana (${raster.stats.q50.toFixed(2)} °C). Amplitude interquartil (Q75−Q25) de ${(raster.stats.q75 - raster.stats.q25).toFixed(2)} °C.</p></article>
+      <article class="insight"><div class="number">${hotspotLim.toFixed(1)} °C</div><p data-pt="Limiar estatístico de hotspot (μ + 1,5σ), atingido em ${pct(aboveHot)}% da área válida (${ha(aboveHot)} ha). Acima de 31,0 °C estão ${pct(above31)}% (${ha(above31)} ha)." data-en="Statistical hotspot threshold (μ + 1.5σ), reached in ${pct(aboveHot)}% of valid area (${ha(aboveHot)} ha). Above 31.0 °C: ${pct(above31)}% (${ha(above31)} ha).">Limiar estatístico de hotspot (μ + 1,5σ), atingido em ${pct(aboveHot)}% da área válida (${ha(aboveHot)} ha). Acima de 31,0 °C estão ${pct(above31)}% (${ha(above31)} ha).</p></article>
+      <article class="insight"><div class="number">${pct(built, specValid)}%</div><p data-pt="Superfícies construídas líquidas (NDBI > 0,10 e NDVI ≤ 0,30: ${ha(built)} ha). Solo misto/transição representa ${pct(mixed, specValid)}% (${ha(mixed)} ha)." data-en="Net built-up surfaces (NDBI > 0.10 and NDVI ≤ 0.30: ${ha(built)} ha). Mixed/transitional soil represents ${pct(mixed, specValid)}% (${ha(mixed)} ha).">Superfícies construídas líquidas (NDBI &gt; 0,10 e NDVI ≤ 0,30: ${ha(built)} ha). Solo misto/transição representa ${pct(mixed, specValid)}% (${ha(mixed)} ha).</p></article>
+    </div>
+    ${aoiReportBlock}
+  </section>
+
+  <section id="metadados" class="section">
+    <div class="section-head">
+      <div><div class="section-kicker" data-pt="02 · Rastreabilidade e Compatibilidade Temporal" data-en="02 · Traceability and Temporal Compatibility">02 · Rastreabilidade e Compatibilidade Temporal</div><h2 data-pt="Metadados, NoData e avaliação temporal entre cenas" data-en="Metadata, NoData and inter-scene temporal evaluation">Metadados, NoData e avaliação temporal entre cenas</h2></div>
+      <span class="chip ${daysGap && daysGap > 5 ? 'warn' : 'info'}">${daysGap !== null ? `Desfasamento temporal: ${daysGap} dias` : 'Cena auditada'}</span>
+    </div>
+    <div class="card"><div class="table-wrap"><table><thead><tr><th data-pt="Parâmetro" data-en="Parameter">Parâmetro</th><th data-pt="Valor Identificado" data-en="Identified Value">Valor Identificado</th><th data-pt="Impacto na Interpretação" data-en="Interpretation Impact">Impacto na Interpretação</th></tr></thead><tbody>
+      <tr><td><strong>Insumos</strong></td><td><code>${raster.fileName}</code></td><td data-pt="Leitura direta do raster numérico Float32Array no navegador." data-en="Direct browser reading of the Float32Array numerical raster.">Leitura direta do raster numérico Float32Array no navegador.</td></tr>
+      <tr><td><strong>CRS &amp; Resolução</strong></td><td><code>EPSG:${raster.epsg}</code> · ${resX.toFixed(2)}×${resY.toFixed(2)} ${raster.isProjected ? 'm' : 'deg'}</td><td>Área por pixel: ${pxM2.toFixed(2)} m² · Área válida total: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²).</td></tr>
+      <tr><td><strong>Píxeis Válidos vs. NoData</strong></td><td>Válidos: <b>${valid.toLocaleString('pt-BR')} px</b> · NoData: <b>${noData.toLocaleString('pt-BR')} px</b> (${pct(noData, raster.width * raster.height)}%)</td><td data-pt="Píxeis NoData (nuvens/bordas QA_PIXEL) excluídos de todos os denominadores estatísticos." data-en="NoData pixels (QA_PIXEL clouds/borders) excluded from all statistical denominators.">Píxeis NoData (nuvens/bordas QA_PIXEL) excluídos de todos os denominadores estatísticos.</td></tr>
+      <tr><td><strong>Compatibilidade Temporal</strong></td><td>Óptico: <b>${dateOpt}</b> · Térmico Landsat: <b>${dateTherm}</b> ${daysGap !== null ? `(<b>Δ = ${daysGap} dias</b>)` : ''}</td><td data-pt="Um intervalo de ${daysGap ?? 17} dias (ex.: 04/09/2026 a 21/09/2026) pode introduzir variações sinóticas de humidade, vento e insolação entre a refletância óptica e a emissão termal." data-en="A ${daysGap ?? 17}-day gap (e.g., 2026-09-04 to 2026-09-21) can introduce synoptic variations in moisture, wind and solar radiation between optical reflectance and thermal emission.">Um intervalo de ${daysGap ?? 17} dias (ex.: 04/09/2026 a 21/09/2026) pode introduzir variações sinóticas de humidade, vento e insolação entre a refletância óptica e a emissão termal.</td></tr>
+    </tbody></table></div></div>
+  </section>
+
+  <section id="mapas" class="section">
+    <div class="section-head">
+      <div><div class="section-kicker" data-pt="03 · Cartografia térmica de alta definição" data-en="03 · High-definition thermal cartography">03 · Cartografia térmica de alta definição</div><h2 data-pt="Mapa de Temperatura (LST °C) e Mapa de Ilha de Calor Urbana (UHI 1 m)" data-en="Temperature Map (LST °C) and Urban Heat Island Map (UHI 1 m)">Mapa de Temperatura (LST °C) e Mapa de Ilha de Calor Urbana (UHI 1 m)</h2></div>
+      <span class="chip ok" data-pt="Ambos os mapas com legenda incorporada" data-en="Both maps with embedded legends">Ambos os mapas com legenda incorporada</span>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h3 data-pt="3.1 · Temperatura de Superfície (LST °C com Legenda)" data-en="3.1 · Land Surface Temperature (LST °C with Legend)">3.1 · Temperatura de Superfície (LST °C com Legenda)</h3>
+        <div class="map-frame"><img src="${lstMapImg}" alt="Mapa LST com legenda"><div class="map-caption"><span>Paleta: ${palette.toUpperCase()} · EPSG:${raster.epsg}</span><span>Mín: ${raster.stats.min.toFixed(1)} °C · Média: ${raster.stats.mean.toFixed(1)} °C · Máx: ${raster.stats.max.toFixed(1)} °C</span></div></div>
+      </div>
+      <div class="card">
+        <h3 data-pt="3.2 · Ilha de Calor Urbana (UHI 1 m com Legenda das 6 Classes)" data-en="3.2 · Urban Heat Island (1 m UHI with 6-Class Legend)">3.2 · Ilha de Calor Urbana (UHI 1 m com Legenda das 6 Classes)</h3>
+        <div class="map-frame"><img src="${uhiMapImg}" alt="Mapa UHI com legenda"><div class="map-caption"><span>Método: ${uhiMethod.toUpperCase()} (γ=${uhiPower.toFixed(2)})</span><span>UHI Forte + Extrema: ${strongExtPct}% (${ha(uhiCnt[4] + uhiCnt[5])} ha)</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="classes" class="section">
+    <div class="section-head">
+      <div><div class="section-kicker" data-pt="04 · Distribuição estatística" data-en="04 · Statistical distribution">04 · Distribuição estatística</div><h2 data-pt="Classes de Ilha de Calor (UHI) e Histograma de Temperatura" data-en="Urban Heat Island (UHI) Classes and Temperature Histogram">Classes de Ilha de Calor (UHI) e Histograma de Temperatura</h2></div>
+      <span class="chip info">Denominador: ${valid.toLocaleString('pt-BR')} px (${areaHa.toFixed(2)} ha)</span>
+    </div>
+    <div class="two-col">
+      <div class="card">
+        <h3 data-pt="4.1 · Repartição nas 6 Classes UHI" data-en="4.1 · Breakdown across 6 UHI Classes">4.1 · Repartição nas 6 Classes UHI</h3>
+        ${uhiBars}
+        <div class="chart-legend"><span><strong>Unidade:</strong> % e ha</span><span><strong>Denominador:</strong> ${valid.toLocaleString('pt-BR')} px</span><span><strong>Fonte:</strong> Raster LST (${dateOpt})</span></div>
+      </div>
+      <div class="card">
+        <h3 data-pt="4.2 · Distribuição por Faixa Térmica (°C)" data-en="4.2 · Distribution by Thermal Bin (°C)">4.2 · Distribuição por Faixa Térmica (°C)</h3>
+        ${histBars}
+        <div class="stat-list">
+          <div class="stat-item"><span>Q25</span><b>${raster.stats.q25.toFixed(1)} °C</b></div>
+          <div class="stat-item"><span>Mediana (Q50)</span><b>${raster.stats.q50.toFixed(1)} °C</b></div>
+          <div class="stat-item"><span>Q75</span><b>${raster.stats.q75.toFixed(1)} °C</b></div>
+        </div>
+        <div class="chart-legend"><span><strong>Unidade:</strong> °C, % e ha</span><span><strong>Denominador:</strong> ${valid.toLocaleString('pt-BR')} px</span><span><strong>Data:</strong> ${dateOpt}</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="espectral" class="section">
+    <div class="section-head">
+      <div><div class="section-kicker" data-pt="05 · Índices espectrais" data-en="05 · Spectral indices">05 · Índices espectrais</div><h2 data-pt="Partição de Cobertura do Solo (NDVI e NDBI)" data-en="Land Cover Partition (NDVI and NDBI)">Partição de Cobertura do Solo (NDVI e NDBI)</h2></div>
+      <span class="chip ok">NDVI μ = ${meanOf(raster.ndvi).toFixed(3)} · NDBI μ = ${meanOf(raster.ndbi).toFixed(3)}</span>
+    </div>
+    <div class="card">
+      <div class="bar-row"><div class="bar-label"><span data-pt="Vegetação vigorosa (NDVI > 0,30)" data-en="Vigorous vegetation (NDVI > 0.30)">Vegetação vigorosa (NDVI &gt; 0,30)</span><b>${pct(veg, specValid)}% · ${ha(veg)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(veg, specValid)}%;background:#27765e"></div></div></div>
+      <div class="bar-row"><div class="bar-label"><span data-pt="Área construída líquida (NDBI > 0,10 e NDVI ≤ 0,30)" data-en="Net built-up area (NDBI > 0.10 and NDVI ≤ 0.30)">Área construída líquida (NDBI &gt; 0,10 e NDVI ≤ 0,30)</span><b>${pct(built, specValid)}% · ${ha(built)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(built, specValid)}%;background:#c84638"></div></div></div>
+      <div class="bar-row"><div class="bar-label"><span data-pt="Água ou sombra densa (NDVI < 0 e NDBI < 0)" data-en="Water or dense shadow (NDVI < 0 and NDBI < 0)">Água ou sombra densa (NDVI &lt; 0 e NDBI &lt; 0)</span><b>${pct(water, specValid)}% · ${ha(water)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(water, specValid)}%;background:#2668b8"></div></div></div>
+      <div class="bar-row"><div class="bar-label"><span data-pt="Solo exposto de transição / cobertura mista" data-en="Transitional bare soil / mixed cover">Solo exposto de transição / cobertura mista</span><b>${pct(mixed, specValid)}% · ${ha(mixed)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(mixed, specValid)}%;background:#f1b64a"></div></div></div>
+      <div class="chart-legend"><span><strong>Soma da partição mutuamente exclusiva:</strong> 100,0% (${specValid.toLocaleString('pt-BR')} px)</span><span><strong>Sobreposição bruta (NDVI&gt;0,3 ∩ NDBI&gt;0,1):</strong> ${pct(overlapVB, specValid)}%</span><span><strong>Data:</strong> ${dateOpt}</span></div>
+    </div>
+  </section>
+
+  <section id="bairros-ruas" class="section">
+    <div class="section-head">
+      <div><div class="section-kicker" data-pt="06 · Análise por bairro e ranking por rua/segmento" data-en="06 · Neighborhood analysis and street/segment ranking">06 · Análise por bairro e ranking por rua/segmento</div><h2 data-pt="Cruzamento espacial com feições reais da base OpenStreetMap" data-en="Spatial intersection with real OpenStreetMap features">Cruzamento espacial com feições reais da base OpenStreetMap</h2></div>
+      <span class="chip info">${osm.bairros.length} bairros · ${osm.vias.length} ruas</span>
+    </div>
+    <div class="card" style="margin-bottom:14px"><h3 data-pt="6.1 · Resultados por Bairro / Localidade" data-en="6.1 · Results by Neighborhood / Locality">6.1 · Resultados por Bairro / Localidade</h3><div class="table-wrap">${bairrosHtml}</div></div>
+    <div class="card"><h3 data-pt="6.2 · Ranking por Rua / Segmento Viário" data-en="6.2 · Ranking by Street / Road Segment">6.2 · Ranking por Rua / Segmento Viário</h3><div class="table-wrap">${viasHtml}</div></div>
+  </section>
+
+  <section id="modulos" class="section">
+    <div class="section-head">
+      <div><div class="section-kicker" data-pt="07 a 10 · Módulos Setoriais e Condições de Contorno" data-en="07 to 10 · Sectoral Modules and Boundary Conditions">07 a 10 · Módulos Setoriais e Condições de Contorno</div><h2 data-pt="Conforto térmico, saúde, mobilidade ativa e poluição atmosférica" data-en="Thermal comfort, health, active mobility and air pollution">Conforto térmico, saúde, mobilidade ativa e poluição atmosférica</h2></div>
+      <span class="chip pending" data-pt="Rigor científico: sem extrapolação indevida" data-en="Scientific rigor: no improper extrapolation">Rigor científico: sem extrapolação indevida</span>
+    </div>
+    <div class="grid-2">
+      <article class="card theme-card"><div class="theme-icon">🌡️</div><h3 data-pt="07 · Conforto Térmico (UTCI / PET / WBGT)" data-en="07 · Thermal Comfort (UTCI / PET / WBGT)">07 · Conforto Térmico (UTCI / PET / WBGT)</h3><p data-pt="A LST mede a temperatura radiométrica da superfície e NÃO equivale à temperatura do ar a 1,5 m nem à sensação térmica humana. O cálculo de UTCI, PET ou WBGT exige temperatura do ar (Ta), humidade relativa (RH), velocidade do vento (v) e temperatura radiante média (Tmrt)." data-en="LST measures surface radiometric temperature and DOES NOT equal 1.5 m air temperature or human thermal sensation. UTCI, PET or WBGT require air temperature (Ta), relative humidity (RH), wind speed (v) and mean radiant temperature (Tmrt).">A LST mede a temperatura radiométrica da superfície e NÃO equivale à temperatura do ar a 1,5 m nem à sensação térmica humana. O cálculo de UTCI, PET ou WBGT exige temperatura do ar (Ta), humidade relativa (RH), velocidade do vento (v) e temperatura radiante média (Tmrt).</p><span class="chip pending" data-pt="Não calculado — dados micrometeorológicos ausentes" data-en="Not calculated — micrometeorological data missing">Não calculado — dados micrometeorológicos ausentes</span></article>
+      <article class="card theme-card"><div class="theme-icon">🏥</div><h3 data-pt="08 · Exposição e Vulnerabilidade em Saúde" data-en="08 · Health Exposure and Vulnerability">08 · Exposição e Vulnerabilidade em Saúde</h3><p data-pt="Exige cruzamento espacial com população residente, densidade de idosos/crianças, renda e equipamentos de saúde. Nota metodológica: correlação espacial não comprova causalidade clínica." data-en="Requires spatial crossing with resident population, elderly/child density, income and health facilities. Methodological note: spatial correlation does not prove clinical causality.">Exige cruzamento espacial com população residente, densidade de idosos/crianças, renda e equipamentos de saúde. Nota metodológica: correlação espacial não comprova causalidade clínica.</p><span class="chip pending" data-pt="Não calculado — dados demográficos e de saúde ausentes" data-en="Not calculated — demographic and health data missing">Não calculado — dados demográficos e de saúde ausentes</span></article>
+      <article class="card theme-card"><div class="theme-icon">🚲</div><h3 data-pt="09 · Mobilidade Ativa e Acesso a Serviços" data-en="09 · Active Mobility and Service Access">09 · Mobilidade Ativa e Acesso a Serviços</h3><p data-pt="Foram avaliados ${osm.vias.length} corredores viários por interseção com o raster térmico. A análise de conectividade origem-destino e tempo de caminhada até paragens/escolas exige rede caminável topológica e pontos GTFS." data-en="Evaluated ${osm.vias.length} road corridors via thermal raster intersection. Origin-destination connectivity and walking time to stops/schools require a topological walkable network and GTFS points.">Foram avaliados ${osm.vias.length} corredores viários por interseção com o raster térmico. A análise de conectividade origem-destino e tempo de caminhada até paragens/escolas exige rede caminável topológica e pontos GTFS.</p><span class="chip ${osm.vias.length ? 'info' : 'pending'}">${osm.vias.length ? 'Corredores viários calculados · Conectividade OD ausente' : 'Não calculado — dados ausentes'}</span></article>
+      <article class="card theme-card"><div class="theme-icon">🌫️</div><h3 data-pt="10 · Poluição do Ar (PM2.5, PM10, NO2, O3)" data-en="10 · Air Pollution (PM2.5, PM10, NO2, O3)">10 · Poluição do Ar (PM2.5, PM10, NO2, O3)</h3><p data-pt="Temperatura de superfície (LST) NÃO pode ser usada como substituto de concentrações de PM2.5, PM10, NO2 ou O3. Requer estações de qualidade do ar ou sensores dedicados." data-en="Land Surface Temperature (LST) CANNOT be used as a substitute for PM2.5, PM10, NO2 or O3 concentrations. Requires air quality stations or dedicated sensors.">Temperatura de superfície (LST) NÃO pode ser usada como substituto de concentrações de PM2.5, PM10, NO2 ou O3. Requer estações de qualidade do ar ou sensores dedicados.</p><span class="chip pending" data-pt="Não calculado — dados de poluição ausentes" data-en="Not calculated — pollution data missing">Não calculado — dados de poluição ausentes</span></article>
+    </div>
+  </section>
+
+  <section id="indicadores" class="section">
+    <div class="section-head"><div><div class="section-kicker" data-pt="11 · Painel integrado urbano-saúde-ambiental" data-en="11 · Integrated urban-health-environmental panel">11 · Painel integrado urbano-saúde-ambiental</div><h2 data-pt="Matriz síntese de indicadores e disponibilidade de dados" data-en="Synthesis matrix of indicators and data availability">Matriz síntese de indicadores e disponibilidade de dados</h2></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Eixo</th><th>Indicador</th><th>Resultado</th><th>Unidade / Denominador</th><th>Status</th></tr></thead><tbody>
+      <tr><td><strong>Térmico</strong></td><td>LST Média / Mediana / Máxima</td><td><b>${raster.stats.mean.toFixed(2)} °C</b> / ${raster.stats.q50.toFixed(2)} °C / ${raster.stats.max.toFixed(1)} °C</td><td>°C (${valid.toLocaleString('pt-BR')} px)</td><td><span class="tag available">Calculado do raster numérico</span></td></tr>
+      <tr><td><strong>UHI</strong></td><td>UHI Forte + Extrema (&gt; +0,85σ)</td><td><b>${strongExtPct}%</b> (${ha(uhiCnt[4] + uhiCnt[5])} ha)</td><td>% e ha sobre ${areaHa.toFixed(2)} ha</td><td><span class="tag available">Calculado (${uhiMethod.toUpperCase()})</span></td></tr>
+      <tr><td><strong>Espectral</strong></td><td>Vegetação (NDVI&gt;0,3) vs. Construído (NDBI&gt;0,1)</td><td><b>${pct(veg, specValid)}%</b> vs. <b>${pct(built, specValid)}%</b></td><td>% sobre ${specValid.toLocaleString('pt-BR')} px</td><td><span class="tag available">Calculado (SR2D4)</span></td></tr>
+      <tr><td><strong>Território</strong></td><td>Bairros e Segmentos de Rua</td><td>${osm.bairros.length} bairros / ${osm.vias.length} ruas</td><td>°C por feição OSM</td><td><span class="tag ${osm.bairros.length || osm.vias.length ? 'available' : 'pending'}">${osm.bairros.length || osm.vias.length ? 'Calculado (OSM + Raster)' : 'Não calculado — dados ausentes'}</span></td></tr>
+      <tr><td><strong>Conforto / Saúde / Ar</strong></td><td>UTCI, População Exposta e PM2.5/NO2/O3</td><td>—</td><td>°C eq., hab., µg/m³</td><td><span class="tag pending">Não calculado — dados ausentes</span></td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="recomendacoes" class="section">
+    <div class="section-head"><div><div class="section-kicker" data-pt="12 · Recomendações priorizadas e limitações" data-en="12 · Prioritized recommendations and limitations">12 · Recomendações priorizadas e limitações</div><h2 data-pt="Plano de intervenção urbana e nota metodológica" data-en="Urban intervention plan and methodological note">Plano de intervenção urbana e nota metodológica</h2></div></div>
+    <div class="card">
+      <div class="action-row"><div class="priority p1">PRIORIDADE P1</div><div><strong data-pt="Mitigação nos ${ha(uhiCnt[5])} ha de Hotspot Extremo (> +1,40σ)" data-en="Mitigation across ${ha(uhiCnt[5])} ha of Extreme Hotspot (> +1.40σ)">Mitigação nos ${ha(uhiCnt[5])} ha de Hotspot Extremo (&gt; +1,40σ)</strong><p data-pt="Implantar telhados frios (alto albedo) e sombreamento arbóreo nas quadras e vias críticas identificadas acima de ${hotspotLim.toFixed(1)} °C." data-en="Deploy cool roofs (high albedo) and tree shading across critical blocks and streets identified above ${hotspotLim.toFixed(1)} °C.">Implantar telhados frios (alto albedo) e sombreamento arbóreo nas quadras e vias críticas identificadas acima de ${hotspotLim.toFixed(1)} °C.</p></div></div>
+      <div class="action-row"><div class="priority p2">PRIORIDADE P2</div><div><strong data-pt="Integração de camadas censitárias, saúde e rede pedonal no SIG" data-en="Integration of census, health and pedestrian network layers in GIS">Integração de camadas censitárias, saúde e rede pedonal no SIG</strong><p data-pt="Cruzar o GeoTIFF numérico exportado com limites oficiais de setores censitários, UBS e escolas para completar os módulos demográficos e epidemiológicos." data-en="Cross the exported numerical GeoTIFF with official census tract boundaries, health clinics and schools to complete demographic and epidemiological modules.">Cruzar o GeoTIFF numérico exportado com limites oficiais de setores censitários, UBS e escolas para completar os módulos demográficos e epidemiológicos.</p></div></div>
+      <div class="action-row"><div class="priority">PRIORIDADE P3</div><div><strong data-pt="Preservação dos ${ha(uhiCnt[0] + uhiCnt[1])} ha de Ilhas de Frescor e Zonas Amenizadas" data-en="Preservation of ${ha(uhiCnt[0] + uhiCnt[1])} ha of Cool Islands and Mitigated Zones">Preservação dos ${ha(uhiCnt[0] + uhiCnt[1])} ha de Ilhas de Frescor e Zonas Amenizadas</strong><p data-pt="Proteger fragmentos com NDVI > 0,30 (${pct(veg, specValid)}%) e conectá-los aos corredores viários mais quentes." data-en="Protect fragments with NDVI > 0.30 (${pct(veg, specValid)}%) and connect them to the hottest street corridors.">Proteger fragmentos com NDVI &gt; 0,30 (${pct(veg, specValid)}%) e conectá-los aos corredores viários mais quentes.</p></div></div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div><strong>SR2D4 / LST Explorer · v3.0</strong><p data-pt="Relatório gerado a partir do raster numérico Float32Array. Nenhuma estatística foi inventada." data-en="Report generated from the Float32Array numerical raster. No statistics were fabricated.">Relatório gerado a partir do raster numérico Float32Array. Nenhuma estatística foi inventada.</p></div>
+    <div>EPSG:${raster.epsg} · ${issueDate}</div>
+  </footer>
+</div>
+<script>
+let lang = 'pt';
+function toggleReportLang() {
+  lang = lang === 'pt' ? 'en' : 'pt';
+  document.documentElement.lang = lang === 'pt' ? 'pt-BR' : 'en';
+  const b = document.getElementById('lang-btn');
+  if (b) b.textContent = lang === 'pt' ? '🇬🇧 Switch to English (EN)' : '🇵🇹 Mudar para Português (PT)';
+  document.querySelectorAll('[data-pt][data-en]').forEach((el) => {
+    const val = el.getAttribute(lang === 'pt' ? 'data-pt' : 'data-en');
+    if (val !== null) el.textContent = val;
+  });
+}
+</script>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `SR2D4_relatorio_modelo_expandido_${dateOpt}.html`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus('Relatório técnico expandido exportado com sucesso.');
+  };
+
+  // Exportações diretas do Pop-up da AOI
+  const downloadAoiModalPng = async () => {
+    if (!aoiDetailed || !raster) return;
+    const im = new Image(); im.src = aoiDetailed.previewDataUrl;
+    await new Promise<void>((r) => { im.onload = () => r(); im.onerror = () => r(); });
+    const w = Math.max(680, im.width + 60);
+    const iH = Math.min(520, Math.max(240, Math.round(((w - 60) * im.height) / Math.max(1, im.width))));
+    const iW = Math.round((iH * im.width) / Math.max(1, im.height));
+    const c = document.createElement('canvas'); c.width = w; c.height = iH + 260;
+    const ctx = c.getContext('2d'); if (!ctx) return;
+    ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#ffb000'; ctx.font = '700 20px Arial';
+    ctx.fillText(`SR2D4 · RECORTE AOI (${aoiDetailed.shapeMode.toUpperCase()}) · ${aoiDetailed.areaHa.toFixed(2)} ha`, 28, 36);
+    const ix = Math.round((w - iW) / 2);
+    ctx.drawImage(im, ix, 50, iW, iH);
+    ctx.strokeStyle = '#ffb000'; ctx.lineWidth = 2; ctx.strokeRect(ix, 50, iW, iH);
+    const fy = iH + 66;
+    ctx.fillStyle = '#0d1f26'; ctx.fillRect(24, fy, w - 48, 174);
+    ctx.strokeStyle = '#79e2dc'; ctx.strokeRect(24, fy, w - 48, 174);
+    ctx.fillStyle = '#fff'; ctx.font = '700 17px Arial';
+    ctx.fillText(`Mín: ${aoiDetailed.min.toFixed(1)}°C | Média: ${aoiDetailed.mean.toFixed(2)}°C | Mediana: ${aoiDetailed.q50.toFixed(2)}°C | Máx: ${aoiDetailed.max.toFixed(1)}°C | σ=${aoiDetailed.stdDev.toFixed(2)}°C`, 40, fy + 34);
+    ctx.fillStyle = '#9cddda'; ctx.font = '15px Arial';
+    ctx.fillText(`Pixels: ${aoiDetailed.count.toLocaleString('pt-BR')} (${aoiDetailed.areaM2.toFixed(0)} m²) · NDVI: ${aoiDetailed.ndviMean.toFixed(3)} (Veg ${aoiDetailed.vegPct.toFixed(1)}%) · NDBI: ${aoiDetailed.ndbiMean.toFixed(3)} (Const ${aoiDetailed.builtPct.toFixed(1)}%)`, 40, fy + 64);
+    const grad = ctx.createLinearGradient(40, fy + 84, w - 40, fy + 84);
+    for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
+    ctx.fillStyle = grad; ctx.fillRect(40, fy + 84, w - 80, 24);
+    ctx.fillStyle = '#fff'; ctx.font = '700 14px Arial';
+    ctx.fillText(`${aoiDetailed.min.toFixed(1)} °C`, 40, fy + 132);
+    ctx.textAlign = 'center'; ctx.fillText(`Média AOI: ${aoiDetailed.mean.toFixed(2)} °C`, w / 2, fy + 132);
+    ctx.textAlign = 'right'; ctx.fillText(`${aoiDetailed.max.toFixed(1)} °C`, w - 40, fy + 132); ctx.textAlign = 'left';
+    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.png`; a.click();
+  };
+
+  const downloadAoiModalTiff = () => {
+    if (!aoiDetailed || !raster) return;
+    downloadFloat32Tiff(aoiDetailed.clippedFloat32, aoiDetailed.clipWidth, aoiDetailed.clipHeight, `SR2D4-AOI-${aoiDetailed.shapeMode}.tif`, aoiDetailed.clipOrigin, raster.resolution, raster.epsg, raster.isProjected);
+  };
+
+  const downloadAoiModalGeoJson = () => {
+    if (!aoiDetailed || !raster) return;
+    const ring = [...aoiDetailed.vertices, aoiDetailed.vertices[0]];
+    const gj = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {
+          shape: aoiDetailed.shapeMode, pixels: aoiDetailed.count, area_m2: Number(aoiDetailed.areaM2.toFixed(1)), area_ha: Number(aoiDetailed.areaHa.toFixed(3)),
+          lst_min: Number(aoiDetailed.min.toFixed(2)), lst_mean: Number(aoiDetailed.mean.toFixed(2)), lst_median: Number(aoiDetailed.q50.toFixed(2)), lst_max: Number(aoiDetailed.max.toFixed(2)),
+          ndvi_mean: Number(aoiDetailed.ndviMean.toFixed(3)), ndbi_mean: Number(aoiDetailed.ndbiMean.toFixed(3)),
+        },
+        geometry: { type: 'Polygon', coordinates: [ring] },
+      }],
+    };
+    const b = new Blob([JSON.stringify(gj, null, 2)], { type: 'application/geo+json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.geojson`; a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  const downloadAoiModalKml = () => {
+    if (!aoiDetailed) return;
+    const ring = [...aoiDetailed.vertices, aoiDetailed.vertices[0]].map(([lng, lat]) => `${lng},${lat},0`).join(' ');
+    const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark><name>AOI (${aoiDetailed.shapeMode}) · Média ${aoiDetailed.mean.toFixed(2)}°C</name><Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Document></kml>`;
+    const b = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.kml`; a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  const downloadAoiModalCsv = () => {
+    if (!aoiDetailed) return;
+    const csv = [
+      'Parametro;Valor;Unidade',
+      `Formato;${aoiDetailed.shapeMode};geometria`,
+      `Pixels_Validos;${aoiDetailed.count};px`,
+      `Area_m2;${aoiDetailed.areaM2.toFixed(2)};m2`,
+      `Area_ha;${aoiDetailed.areaHa.toFixed(4)};ha`,
+      `LST_Min;${aoiDetailed.min.toFixed(2)};C`,
+      `LST_Q25;${aoiDetailed.q25.toFixed(2)};C`,
+      `LST_Mediana;${aoiDetailed.q50.toFixed(2)};C`,
+      `LST_Media;${aoiDetailed.mean.toFixed(2)};C`,
+      `LST_Q75;${aoiDetailed.q75.toFixed(2)};C`,
+      `LST_Max;${aoiDetailed.max.toFixed(2)};C`,
+      `NDVI_Medio;${aoiDetailed.ndviMean.toFixed(4)};indice`,
+      `NDBI_Medio;${aoiDetailed.ndbiMean.toFixed(4)};indice`,
+    ].join('\n');
+    const b = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
 
   const goTo = (lng: number, lat: number) => { if (Number.isFinite(lng) && Number.isFinite(lat)) mapInstance.current?.flyTo({ center: [lng, lat], zoom: 13, essential: true }); };
@@ -1263,18 +1891,17 @@ export default function App() {
     setDrawAoi(true);
     setIdentifyMode(false);
     setPanEnabled(false);
+    setStatus(`Modo AOI (${mode}): clique no mapa para desenhar.`);
   };
   const clearAoi = () => {
-    setAoi([]);
-    setAoiAnchor(null);
-    setAoiStats(null);
-    setAoiDetailed(null);
-    setShowAoiModal(false);
-    setDrawAoi(false);
-    setPanEnabled(true);
+    setAoi([]); setAoiAnchor(null); setAoiStats(null); setAoiDetailed(null);
+    setShowAoiModal(false); setDrawAoi(false); setPanEnabled(true);
   };
   const analyzeAoi = () => {
-    if (!raster || aoi.length < 3) return;
+    if (!raster || aoi.length < 3) {
+      setStatus('Desenhe uma AOI no mapa primeiro (Retângulo, Quadrado, Círculo ou Polígono).');
+      return;
+    }
     const det = analyzeAoiDetailed(raster, aoi, aoiShapeMode, opticalCanvas.current, lstCanvas.current, opacity);
     if (!det) {
       setStatus('A AOI desenhada está fora dos limites da imagem térmica.');
@@ -1287,22 +1914,14 @@ export default function App() {
   };
   const finishAoi = () => {
     if (aoi.length >= 3) {
-      setDrawAoi(false);
-      setAoiAnchor(null);
-      setPanEnabled(true);
+      setDrawAoi(false); setAoiAnchor(null); setPanEnabled(true);
       analyzeAoi();
     }
   };
   const toggleAoi = () => {
     const n = !drawAoi;
-    setDrawAoi(n);
-    setIdentifyMode(false);
-    setAoiAnchor(null);
-    if (n) {
-      setAoi([]);
-      setAoiStats(null);
-      setAoiDetailed(null);
-    }
+    setDrawAoi(n); setIdentifyMode(false); setAoiAnchor(null);
+    if (n) { setAoi([]); setAoiStats(null); setAoiDetailed(null); }
     setPanEnabled(!n);
   };
 
@@ -1402,19 +2021,50 @@ export default function App() {
             <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title="Identify">ⓘ</button>
             <button className={drawAoi ? 'active' : ''} onClick={toggleAoi} title={t.draw}>⌗</button>
             {drawAoi && aoi.length >= 3 && <button onClick={finishAoi} title="Finalizar AOI">✓</button>}
-            {!drawAoi && aoi.length >= 3 && <button onClick={analyzeAoi} title="Abrir Pop-up AOI">📊</button>}
+            {aoi.length >= 3 && <button onClick={analyzeAoi} title="Abrir Pop-up AOI">📊</button>}
           </div>
-          <AoiToolbar
-            active={drawAoi}
-            shapeMode={aoiShapeMode}
-            vertexCount={aoi.length}
-            hasAnchor={Boolean(aoiAnchor)}
-            hasStats={Boolean(aoiDetailed)}
-            onSelectShape={selectAoiShape}
-            onFinishPolygon={finishAoi}
-            onOpenPopup={analyzeAoi}
-            onClear={clearAoi}
-          />
+
+          {/* BARRINHA FLUTUANTE DE FORMAS DA AOI NO MAPA */}
+          {(drawAoi || aoi.length >= 3) && (
+            <div style={{ position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 9, background: 'rgba(7,19,23,0.95)', border: '2px solid #ffb000', borderRadius: '14px', padding: '10px 14px', boxShadow: '0 12px 32px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '340px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '11px' }}>
+                <b style={{ color: '#ffb000' }}>⌗ BARRA DE FORMAS AOI:</b>
+                <span style={{ color: '#9cddda' }}>
+                  {!drawAoi ? 'AOI desenhada · Clique em 📊 Pop-up AOI' : aoiShapeMode === 'polygon' ? `Polígono (${aoi.length} pts) · Clique em ✓ Concluir` : aoiAnchor ? 'Mova o mouse e clique no 2º ponto para fechar' : 'Clique no 1º ponto no mapa'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {([
+                  ['rectangle', '▭ Retângulo'],
+                  ['square', '◻ Quadrado'],
+                  ['circle', '◯ Círculo'],
+                  ['polygon', '⬠ Polígono'],
+                ] as const).map(([mode, lbl]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => selectAoiShape(mode)}
+                    style={{ padding: '6px 12px', borderRadius: '8px', border: drawAoi && aoiShapeMode === mode ? '2px solid #ffb000' : '1px solid rgba(121,226,220,0.3)', background: drawAoi && aoiShapeMode === mode ? 'rgba(255,176,0,0.25)' : 'rgba(255,255,255,0.06)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+                {drawAoi && aoiShapeMode === 'polygon' && aoi.length >= 3 && (
+                  <button type="button" onClick={finishAoi} style={{ padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #34d399', background: 'rgba(52,211,153,0.22)', color: '#6ee7b7', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}>
+                    ✓ Concluir
+                  </button>
+                )}
+                {aoi.length >= 3 && (
+                  <button type="button" onClick={analyzeAoi} style={{ padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #38bdf8', background: 'rgba(56,189,248,0.25)', color: '#bae6fd', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}>
+                    📊 Abrir Pop-up AOI
+                  </button>
+                )}
+                <button type="button" onClick={clearAoi} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #f43f5e', background: 'rgba(244,63,94,0.18)', color: '#fda4af', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
         </section>
         <div className="resize-handle" onPointerDown={() => { resizing.current = true; document.body.classList.add('is-resizing'); }} title={t.resize}><Icon name="resize" /></div>
         <aside className="control-rail">
@@ -1613,24 +2263,37 @@ export default function App() {
                   <input type="range" min="0" max="100" value={swipePosition} onChange={(e) => setSwipePosition(Number(e.target.value))} />
                 </label>
               )}
-              {differenceReady && differenceStats && (
-                <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(0,0,0,0.26)', borderRadius: '8px', border: '1px solid rgba(121,226,220,0.18)' }}>
-                  <b style={{ fontSize: '11px', display: 'block', marginBottom: '6px' }}>Escala de Mudança Térmica (±1σ = ±{differenceStats.thresholdSigma.toFixed(2)}°C)</b>
-                  <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px', marginBottom: '8px' }} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', textAlign: 'center', fontSize: '11px' }}>
-                    <div style={{ padding: '6px', background: 'rgba(0,150,199,0.18)', border: '1px solid #48cae4', borderRadius: '6px' }}>
-                      <b style={{ color: '#48cae4', display: 'block' }}>↓ DIMINUIU</b><span>&lt; -1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctDecreased.toFixed(1)}%</strong>
-                    </div>
-                    <div style={{ padding: '6px', background: 'rgba(148,163,184,0.14)', border: '1px solid #94a3b8', borderRadius: '6px' }}>
-                      <b style={{ color: '#cbd5e1', display: 'block' }}>＝ IGUAL</b><span>±1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctEqual.toFixed(1)}%</strong>
-                    </div>
-                    <div style={{ padding: '6px', background: 'rgba(247,127,0,0.18)', border: '1px solid #ff9e00', borderRadius: '6px' }}>
-                      <b style={{ color: '#ff9e00', display: 'block' }}>↑ AUMENTOU</b><span>&gt; +1σ</span><strong style={{ display: 'block', fontSize: '13px' }}>{differenceStats.pctIncreased.toFixed(1)}%</strong>
-                    </div>
-                  </div>
-                </div>
-              )}
             </section>
+
+            {/* SEÇÃO AOI SEMPRE VISÍVEL COM BARRINHA DE 4 FORMAS */}
+            <section className="rail-card">
+              <div className="card-heading"><h3>⌗ {t.aoi}</h3><span className="chip">{aoi.length ? `${aoi.length} pts` : aoiShapeMode}</span></div>
+              <p className="microcopy">{aoiStats ? `Média AOI: ${aoiStats.mean.toFixed(2)}°C (${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C · ${aoiStats.count.toLocaleString('pt-BR')} px)` : t.aoiHelp}</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', marginBottom: '8px' }}>
+                {([
+                  ['rectangle', '▭ Retângulo'],
+                  ['square', '◻ Quadrado'],
+                  ['circle', '◯ Círculo'],
+                  ['polygon', '⬠ Polígono'],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={drawAoi && aoiShapeMode === mode ? 'active' : ''}
+                    onClick={() => selectAoiShape(mode)}
+                    style={{ padding: '8px 6px', fontSize: '12px', fontWeight: 700, border: drawAoi && aoiShapeMode === mode ? '2px solid #ffb000' : undefined }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="button-row">
+                <button onClick={drawAoi ? finishAoi : toggleAoi}>{drawAoi ? '✓ Concluir AOI' : t.draw}</button>
+                <button disabled={aoi.length < 3 || !raster} onClick={analyzeAoi}>📊 {t.clip}</button>
+                <button disabled={aoi.length === 0} onClick={clearAoi}>✕ {t.clear}</button>
+              </div>
+            </section>
+
             {raster && (
               <>
                 <section className="rail-card">
@@ -1643,38 +2306,6 @@ export default function App() {
                 <section className="rail-card">
                   <div className="card-heading"><h3>{t.indices}</h3><span className="chip">MS</span></div>
                   <div className="metric-grid index-grid"><Metric label={t.ndvi} value={meanOf(raster.ndvi).toFixed(3)} /><Metric label={t.ndbi} value={meanOf(raster.ndbi).toFixed(3)} /></div>
-                </section>
-                <section className="rail-card">
-                  <div className="card-heading"><h3>{t.aoi}</h3><span className="chip">{aoi.length ? `${aoi.length} pts` : aoiShapeMode}</span></div>
-                  <p className="microcopy">{aoiStats ? `Média AOI: ${aoiStats.mean.toFixed(2)}°C (${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C · ${aoiStats.count.toLocaleString('pt-BR')} px)` : t.aoiHelp}</p>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '8px' }}>
-                    {([
-                      ['rectangle', '▭ Retângulo'],
-                      ['square', '◻ Quadrado'],
-                      ['circle', '◯ Círculo'],
-                      ['polygon', '⬠ Polígono'],
-                    ] as const).map(([mode, label]) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        className={drawAoi && aoiShapeMode === mode ? 'active' : ''}
-                        onClick={() => selectAoiShape(mode)}
-                        style={{
-                          padding: '6px 4px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          border: drawAoi && aoiShapeMode === mode ? '1.5px solid #ffb000' : undefined,
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="button-row">
-                    <button onClick={drawAoi ? finishAoi : toggleAoi}>{drawAoi ? '✓ Concluir AOI' : t.draw}</button>
-                    <button disabled={aoi.length < 3} onClick={analyzeAoi}>📊 {t.clip}</button>
-                    <button disabled={aoi.length === 0} onClick={clearAoi}>✕ {t.clear}</button>
-                  </div>
                 </section>
                 <section className="rail-card">
                   <div className="card-heading"><h3>{t.export}</h3></div>
@@ -1694,12 +2325,60 @@ export default function App() {
           </div>
         </aside>
       </main>
-      <AoiAnalysisModal
-        open={showAoiModal}
-        stats={aoiDetailed}
-        raster={raster}
-        onClose={() => setShowAoiModal(false)}
-      />
+
+      {/* POP-UP DEDICADO DE ANÁLISE DA AOI COM 5 OPÇÕES DE EXPORTAÇÃO */}
+      {showAoiModal && aoiDetailed && raster && (
+        <div className="dialog-backdrop" onClick={() => setShowAoiModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(3,10,14,0.8)', backdropFilter: 'blur(6px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '20px' }}>
+          <div className="dialog-card" onClick={(e) => e.stopPropagation()} style={{ width: 'min(940px, 96vw)', maxHeight: '90vh', overflowY: 'auto', background: '#0b1b22', border: '2px solid #ffb000', borderRadius: '18px', padding: '24px', color: '#fff', position: 'relative' }}>
+            <button className="dialog-close" onClick={() => setShowAoiModal(false)}>×</button>
+            <div className="card-kicker" style={{ color: '#ffb000' }}>⌗ DIAGNÓSTICO DE ÁREA DE INTERESSE (AOI)</div>
+            <h2 style={{ margin: '4px 0 6px' }}>Análise Espacial da AOI ({aoiDetailed.shapeMode.toUpperCase()})</h2>
+            <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#9cddda' }}>
+              Área útil: <b>{aoiDetailed.areaHa.toFixed(2)} ha</b> ({aoiDetailed.areaM2.toFixed(0)} m²) · <b>{aoiDetailed.count.toLocaleString('pt-BR')}</b> píxeis válidos no raster numérico · EPSG:{raster.epsg}
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+              <div style={{ background: '#071317', border: '1px solid rgba(121,226,220,0.25)', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                <img src={aoiDetailed.previewDataUrl} alt="Preview AOI" style={{ maxWidth: '100%', maxHeight: '280px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #ffb000' }} />
+                <small style={{ display: 'block', marginTop: '8px', color: '#9ab0b5' }}>Recorte: {aoiDetailed.clipWidth} × {aoiDetailed.clipHeight} px</small>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Mínima</small><strong style={{ fontSize: '18px', color: '#38bdf8' }}>{aoiDetailed.min.toFixed(1)} °C</strong></div>
+                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Média (μ)</small><strong style={{ fontSize: '18px', color: '#ffb000' }}>{aoiDetailed.mean.toFixed(2)} °C</strong></div>
+                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Máxima</small><strong style={{ fontSize: '18px', color: '#f43f5e' }}>{aoiDetailed.max.toFixed(1)} °C</strong></div>
+                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Mediana (Q50)</small><strong>{aoiDetailed.q50.toFixed(2)} °C</strong></div>
+                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Q25 – Q75</small><strong>{aoiDetailed.q25.toFixed(1)}–{aoiDetailed.q75.toFixed(1)}°</strong></div>
+                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Desvio (σ)</small><strong>±{aoiDetailed.stdDev.toFixed(2)} °C</strong></div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                  <div style={{ background: 'rgba(52,211,153,0.12)', padding: '8px 10px', borderRadius: '8px', border: '1px solid #34d399' }}>🌿 NDVI: <b>{aoiDetailed.ndviMean.toFixed(3)}</b> (Veg: {aoiDetailed.vegPct.toFixed(1)}%)</div>
+                  <div style={{ background: 'rgba(251,146,60,0.12)', padding: '8px 10px', borderRadius: '8px', border: '1px solid #fb923c' }}>🏢 NDBI: <b>{aoiDetailed.ndbiMean.toFixed(3)}</b> (Const: {aoiDetailed.builtPct.toFixed(1)}%)</div>
+                </div>
+                <div style={{ background: 'rgba(0,0,0,0.28)', padding: '10px', borderRadius: '8px', fontSize: '11px' }}>
+                  <b style={{ display: 'block', marginBottom: '6px', color: '#9cddda' }}>Classes UHI dentro da AOI:</b>
+                  {['1. Frescor', '2. Amenizado', '3. Neutro', '4. UHI Moderada', '5. UHI Forte', '6. Hotspot Extremo'].map((lbl, idx) => (
+                    <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                      <span>{lbl}</span>
+                      <b>{aoiDetailed.uhiPcts[idx].toFixed(1)}% ({aoiDetailed.uhiCounts[idx].toLocaleString('pt-BR')} px)</b>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid rgba(121,226,220,0.25)', display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'space-between', alignItems: 'center' }}>
+              <b style={{ fontSize: '12px', color: '#ffb000' }}>⇩ Exportar recorte da AOI:</b>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <button type="button" onClick={() => void downloadAoiModalPng()} style={{ padding: '8px 14px', borderRadius: '8px', background: '#ffb000', color: '#071317', fontWeight: 800, border: 'none', cursor: 'pointer' }}>🖼 PNG (com legenda)</button>
+                <button type="button" onClick={downloadAoiModalTiff} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(121,226,220,0.18)', color: '#79e2dc', fontWeight: 700, border: '1px solid #79e2dc', cursor: 'pointer' }}>🗺 GeoTIFF (LST)</button>
+                <button type="button" onClick={downloadAoiModalGeoJson} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>📐 GeoJSON</button>
+                <button type="button" onClick={downloadAoiModalKml} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>🌍 KML</button>
+                <button type="button" onClick={downloadAoiModalCsv} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>📊 CSV</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {(showMethod || showHelp || showMeta || showLimits) && (
         <div className="dialog-backdrop" onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); setShowLimits(false); }}>
           <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
@@ -1727,4 +2406,4 @@ export default function App() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx
+// FIM DO ARQUIVO src/App.tsx v3.0
