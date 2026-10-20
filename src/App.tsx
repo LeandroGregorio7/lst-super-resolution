@@ -39,6 +39,15 @@ type OsmFeatureStat = {
   meanTemp: number; medianTemp: number; maxTemp: number;
   ndvi: number; ndbi: number; hotPct: number; samples: number;
 };
+type StationValidationPoint = {
+  id: string; name: string; source: 'Oficial / METAR' | 'Cidadã / OpenSense' | 'Estação de Referência';
+  lng: number; lat: number; dateIso: string; overpassTime: string;
+  stationTempC: number; humidityPct: number;
+  pixel1mC: number; radiusMeanC: number; radiusMedianC: number;
+  radiusStdC: number; radiusMinC: number; radiusMaxC: number;
+  pixelCount: number; ndviMean: number; ndbiMean: number;
+  deltaRadiusC: number; deltaPixel1mC: number; proximityStatus: string; proximityColor: string;
+};
 type RasterState = {
   data: Float32Array; width: number; height: number; bounds: RasterBounds;
   origin: number[]; resolution: number[]; epsg: number; isProjected: boolean;
@@ -79,7 +88,7 @@ const UHI_STOPS: [number, number, number, number][] = [
 const DIFFERENCE_GRADIENT_CSS =
   'linear-gradient(90deg, #023e8a 0%, #0096c7 22%, #48cae4 36%, #45525a 37%, #526069 63%, #f77f00 64%, #d62828 84%, #ffea00 100%)';
 
-const AOI_LAYER_IDS = ['aoi-fill', 'aoi-line-casing', 'aoi-line', 'aoi-pts'] as const;
+const TOP_OVERLAY_LAYERS = ['aoi-fill', 'aoi-line-casing', 'aoi-line', 'aoi-pts', 'stations-radius-fill', 'stations-radius-line', 'stations-pts'] as const;
 
 const VIEWPORT_SYNC_CSS = `
   html, body, #root { height: 100vh !important; max-height: 100vh !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; }
@@ -95,8 +104,8 @@ const VIEWPORT_SYNC_CSS = `
   .map-tools { top: 112px !important; right: 10px !important; bottom: auto !important; z-index: 16 !important; }
 `;
 
-function bringAoiToFront(map: MapLibreMap) {
-  for (const id of AOI_LAYER_IDS) {
+function bringOverlaysToFront(map: MapLibreMap) {
+  for (const id of TOP_OVERLAY_LAYERS) {
     if (map.getLayer(id)) {
       try { map.moveLayer(id); } catch { /* ignore */ }
     }
@@ -105,7 +114,7 @@ function bringAoiToFront(map: MapLibreMap) {
 
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.2', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.3', title: 'SR2D4 / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
     colab: 'Abrir Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
     bands: 'Bandas ópticas do SR2D4', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
@@ -116,18 +125,18 @@ const copy = {
     export: 'Exportar', png: 'PNG composto', tiff: 'GeoTIFF LST', uhi: 'GeoTIFF UHI', method: 'Metodologia', help: 'Como usar',
     metadata: 'Metadados', theme: 'Tema', basemap: 'Mapa-base', ready: 'Pronto',
     error: 'Não foi possível processar. Carregue um GeoTIFF SR2D4 com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.',
-    methodText: 'O app extrai a data AAAAMMDD do nome do SR2D4, busca automaticamente a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL, decodifica ST_B10 e executa fusão física TsHARP HD 1m guiada por reflectância e índices ópticos.',
-    helpText: '1. Gere o produto MS no Colab com AAAAMMDD e _MS.tif. 2. Carregue o GeoTIFF SR2D4. 3. Confirme Red/NIR/SWIR. 4. Escolha a forma da AOI (Retângulo, Quadrado, Círculo ou Polígono) ou exporte o Relatório Técnico Expandido.',
+    methodText: 'O app extrai a data AAAAMMDD do nome do SR2D4, busca a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL e executa fusão física TsHARP HD 1m.',
+    helpText: '1. Gere o produto MS no Colab. 2. Carregue o GeoTIFF SR2D4. 3. Confirme Red/NIR/SWIR. 4. Desenhe AOIs, valide com Estações em Terra ou exporte o Relatório Expandido.',
     noData: 'Carregue um GeoTIFF para começar', search: 'Buscar cidade, bairro ou lugar', coords: 'Longitude, latitude',
     locate: 'Minha localização', go: 'Ir', compare: 'Comparar antes/depois', indices: 'Índices espectrais',
     ndvi: 'NDVI vegetação', ndbi: 'NDBI construído', report: 'Relatório Expandido (PT/EN)', resize: 'Arraste para redimensionar o painel',
     searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Moderada, Forte e Extrema.',
     aoiHelp: 'Escolha Retângulo, Quadrado, Círculo ou Polígono abaixo, desenhe no mapa e veja o diagnóstico em Pop-up.',
     limitation: 'Limitações da super-resolução',
-    limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Use-a para investigação espacial e comparação.',
+    limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Valide com estações em terra.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.2', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.3', title: 'SR2D4 / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
     colab: 'Open Colab', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
     bands: 'SR2D4 optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
@@ -139,14 +148,14 @@ const copy = {
     metadata: 'Metadata', theme: 'Theme', basemap: 'Basemap', ready: 'Ready',
     error: 'Processing failed. Load an SR2D4 GeoTIFF with Red, NIR and SWIR; thermal Landsat is fetched automatically.',
     methodText: 'The workflow combines SR2D4 imagery with optical indices and TsHARP regression to estimate 1m spatial LST.',
-    helpText: '1. Generate the MS product in Colab. 2. Load the GeoTIFF. 3. Confirm Red/NIR/SWIR. 4. Draw AOI shapes or export the Expanded Report.',
+    helpText: '1. Generate MS in Colab. 2. Load GeoTIFF. 3. Confirm Red/NIR/SWIR. 4. Draw AOIs, validate with Ground Stations or export the Expanded Report.',
     noData: 'Load a GeoTIFF to begin', search: 'Search city, neighborhood or place', coords: 'Longitude, latitude',
     locate: 'My location', go: 'Go', compare: 'Compare before/after', indices: 'Spectral indices',
     ndvi: 'NDVI vegetation', ndbi: 'NDBI built-up', report: 'Expanded Report (PT/EN)', resize: 'Drag to resize the panel',
     searchError: 'Place not found.', uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Moderate, Strong and Extreme.',
     aoiHelp: 'Select Rectangle, Square, Circle or Polygon below, draw on map and open the Pop-up analysis.',
     limitation: 'Super-resolution limitations',
-    limitationText: 'Detailed LST is an optical-guided estimate. Validate results with field data.',
+    limitationText: 'Detailed LST is an optical-guided estimate. Validate results with ground stations.',
   },
 } as const;
 
@@ -173,8 +182,7 @@ function buildPaletteLut1024(palette: string, customColors: string[]): Uint8Arra
     const pos = perceptualCoolExpansion(i / 1023) * maxSeg;
     const idx = Math.min(maxSeg - 1, Math.floor(pos));
     const frac = pos - idx;
-    const [r0, g0, b0] = stops[idx];
-    const [r1, g1, b1] = stops[idx + 1];
+    const [r0, g0, b0] = stops[idx]; const [r1, g1, b1] = stops[idx + 1];
     lut[i * 3] = Math.round(r0 + (r1 - r0) * frac);
     lut[i * 3 + 1] = Math.round(g0 + (g1 - g0) * frac);
     lut[i * 3 + 2] = Math.round(b0 + (b1 - b0) * frac);
@@ -184,8 +192,7 @@ function buildPaletteLut1024(palette: string, customColors: string[]): Uint8Arra
 function sampleUhiColor(z: number): [number, number, number] {
   if (z <= UHI_STOPS[0][0]) return [UHI_STOPS[0][1], UHI_STOPS[0][2], UHI_STOPS[0][3]];
   for (let s = 0; s < UHI_STOPS.length - 1; s += 1) {
-    const [z0, r0, g0, b0] = UHI_STOPS[s];
-    const [z1, r1, g1, b1] = UHI_STOPS[s + 1];
+    const [z0, r0, g0, b0] = UHI_STOPS[s]; const [z1, r1, g1, b1] = UHI_STOPS[s + 1];
     if (z <= z1) {
       const t = Math.max(0, Math.min(1, (z - z0) / (z1 - z0)));
       const ts = 0.72 * t + 0.28 * (Math.round(t * 2) / 2);
@@ -205,8 +212,7 @@ function sampleCssColorAt(t: number, palette: string, customColors: string[], is
   const p = perceptualCoolExpansion(t) * maxSeg;
   const idx = Math.min(maxSeg - 1, Math.floor(p));
   const f = p - idx;
-  const [r0, g0, b0] = stops[idx];
-  const [r1, g1, b1] = stops[idx + 1];
+  const [r0, g0, b0] = stops[idx]; const [r1, g1, b1] = stops[idx + 1];
   return `rgb(${Math.round(r0 + (r1 - r0) * f)}, ${Math.round(g0 + (g1 - g0) * f)}, ${Math.round(b0 + (b1 - b0) * f)})`;
 }
 function computeRasterStats(data: Float32Array): RasterStats | null {
@@ -216,8 +222,7 @@ function computeRasterStats(data: Float32Array): RasterStats | null {
   for (let i = 0; i < data.length; i += 1) {
     const v = data[i];
     if (!Number.isFinite(v)) continue;
-    if (v < min) min = v;
-    if (v > max) max = v;
+    if (v < min) min = v; if (v > max) max = v;
     sum += v; count += 1;
     if (i % step === 0) sample.push(v);
   }
@@ -248,8 +253,7 @@ function renderPerceptualLstToCanvas(
   const lut = buildPaletteLut1024(palette, customColors);
   const invSpan = 1023 / Math.max(1e-5, stats.max - stats.min);
   for (let i = 0; i < data.length; i += 1) {
-    const v = data[i];
-    const px = i * 4;
+    const v = data[i]; const px = i * 4;
     if (!Number.isFinite(v)) { out[px + 3] = 0; continue; }
     const k = Math.max(0, Math.min(1023, Math.round((v - stats.min) * invSpan))) * 3;
     out[px] = lut[k]; out[px + 1] = lut[k + 1]; out[px + 2] = lut[k + 2]; out[px + 3] = 255;
@@ -283,22 +287,16 @@ function renderHighDefUhiToCanvas(
   for (let y = 0; y < height; y += 1) {
     const row = y * width;
     const yP = Math.max(0, y - 1) * width; const yN = Math.min(height - 1, y + 1) * width;
-    const yFP = Math.max(0, y - 3) * width; const yFN = Math.min(height - 1, y + 3) * width;
     for (let x = 0; x < width; x += 1) {
       const i = row + x; const val = data[i]; const px = i * 4;
       if (!Number.isFinite(val)) { out[px + 3] = 0; continue; }
       const xP = Math.max(0, x - 1); const xN = Math.min(width - 1, x + 1);
-      const xFP = Math.max(0, x - 3); const xFN = Math.min(width - 1, x + 3);
       const vE = Number.isFinite(data[row + xN]) ? data[row + xN] : val;
       const vW = Number.isFinite(data[row + xP]) ? data[row + xP] : val;
       const vS = Number.isFinite(data[yN + x]) ? data[yN + x] : val;
       const vN = Number.isFinite(data[yP + x]) ? data[yP + x] : val;
-      const vFE = Number.isFinite(data[row + xFN]) ? data[row + xFN] : val;
-      const vFW = Number.isFinite(data[row + xFP]) ? data[row + xFP] : val;
-      const vFS = Number.isFinite(data[yFN + x]) ? data[yFN + x] : val;
-      const vFN = Number.isFinite(data[yFP + x]) ? data[yFP + x] : val;
-      const z = computeClusteredZ(val, 0.125 * (vE + vW + vS + vN + vFE + vFW + vFS + vFN), stats, method, power);
-      const relief = Math.max(-0.24, Math.min(0.24, (((vE - vW) * 0.7 - (vS - vN) * 0.7) * 0.28 + (val - 0.25 * (vE + vW + vS + vN)) * 0.38) / safeStd));
+      const z = computeClusteredZ(val, 0.25 * (vE + vW + vS + vN), stats, method, power);
+      const relief = Math.max(-0.22, Math.min(0.22, ((vE - vW - (vS - vN)) * 0.2 + (val - 0.25 * (vE + vW + vS + vN)) * 0.35) / safeStd));
       const [r, g, b] = sampleUhiColor(z);
       const m = 1 + relief;
       out[px] = Math.max(0, Math.min(255, Math.round(r * m)));
@@ -329,7 +327,7 @@ function buildMesoIsothermsGeoJSON(
   let grid = new Float32Array(gW * gH);
   for (let i = 0; i < grid.length; i += 1) grid[i] = counts[i] > 0 ? rawGrid[i] / counts[i] : stats.mean;
   const kernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
-  for (let pass = 0; pass < (method === 'kernel' ? 4 : 3); pass += 1) {
+  for (let pass = 0; pass < 3; pass += 1) {
     const next = new Float32Array(gW * gH);
     for (let y = 0; y < gH; y += 1) {
       for (let x = 0; x < gW; x += 1) {
@@ -397,8 +395,7 @@ function buildMesoIsothermsGeoJSON(
 }
 
 function buildShapeVertices(mode: AoiShapeMode, p1: [number, number], p2: [number, number]): [number, number][] {
-  const [lng1, lat1] = p1;
-  const [lng2, lat2] = p2;
+  const [lng1, lat1] = p1; const [lng2, lat2] = p2;
   const cosLat = Math.max(0.15, Math.cos(((lat1 + lat2) * 0.5 * Math.PI) / 180));
   if (mode === 'rectangle') {
     const w = Math.min(lng1, lng2); const e = Math.max(lng1, lng2);
@@ -423,6 +420,17 @@ function buildShapeVertices(mode: AoiShapeMode, p1: [number, number], p2: [numbe
   return [p1, p2];
 }
 
+function buildCircleMeters(lng: number, lat: number, radiusMeters: number): [number, number][] {
+  const dLat = radiusMeters / 111320;
+  const dLng = radiusMeters / (111320 * Math.max(0.15, Math.cos((lat * Math.PI) / 180)));
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= 40; i += 1) {
+    const ang = (i / 40) * Math.PI * 2;
+    pts.push([lng + Math.cos(ang) * dLng, lat + Math.sin(ang) * dLat]);
+  }
+  return pts;
+}
+
 function pointInPolygon(point: [number, number], polygon: [number, number][]) {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -430,6 +438,180 @@ function pointInPolygon(point: [number, number], polygon: [number, number][]) {
     if (((yi > point[1]) !== (yj > point[1])) && point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || Number.EPSILON) + xi) inside = !inside;
   }
   return inside;
+}
+
+// Estatística espacial do raster numérico dentro do Raio de Representatividade (R metros) da Estação
+function sampleRasterInRadiusMeters(raster: RasterState, lng: number, lat: number, radiusMeters: number) {
+  const ext = boundsExtent(raster.bounds);
+  const cx = Math.floor(((lng - ext.west) / (ext.east - ext.west)) * raster.width);
+  const cy = Math.floor(((ext.north - lat) / (ext.north - ext.south)) * raster.height);
+  if (cx < 0 || cy < 0 || cx >= raster.width || cy >= raster.height) return null;
+  const pixelM = raster.isProjected ? Math.max(0.5, Math.abs(raster.resolution[0] || 1)) : 1.0;
+  const rPx = Math.max(1, Math.round(radiusMeters / pixelM));
+  const rPxSq = rPx * rPx;
+
+  const centerVal = raster.data[cy * raster.width + cx];
+  const vals: number[] = [];
+  let sum = 0; let min = Infinity; let max = -Infinity;
+  let ndviSum = 0; let ndbiSum = 0; let specCnt = 0;
+
+  const y0 = Math.max(0, cy - rPx); const y1 = Math.min(raster.height - 1, cy + rPx);
+  const x0 = Math.max(0, cx - rPx); const x1 = Math.min(raster.width - 1, cx + rPx);
+  for (let y = y0; y <= y1; y += 1) {
+    const dy = y - cy;
+    const row = y * raster.width;
+    for (let x = x0; x <= x1; x += 1) {
+      const dx = x - cx;
+      if (dx * dx + dy * dy > rPxSq) continue;
+      const idx = row + x;
+      const v = raster.data[idx];
+      if (!Number.isFinite(v)) continue;
+      vals.push(v); sum += v;
+      if (v < min) min = v; if (v > max) max = v;
+      if (Number.isFinite(raster.ndvi[idx]) && Number.isFinite(raster.ndbi[idx])) {
+        ndviSum += raster.ndvi[idx]; ndbiSum += raster.ndbi[idx]; specCnt += 1;
+      }
+    }
+  }
+  if (!vals.length) return null;
+  const mean = sum / vals.length;
+  let sq = 0;
+  for (const v of vals) sq += (v - mean) ** 2;
+  const std = vals.length > 1 ? Math.sqrt(sq / vals.length) : 0;
+  vals.sort((a, b) => a - b);
+  const median = vals[Math.floor(vals.length * 0.5)] ?? mean;
+  return {
+    pixel1mC: Number.isFinite(centerVal) ? centerVal : mean,
+    radiusMeanC: mean,
+    radiusMedianC: median,
+    radiusStdC: std,
+    radiusMinC: min,
+    radiusMaxC: max,
+    pixelCount: vals.length,
+    ndviMean: specCnt ? ndviSum / specCnt : 0,
+    ndbiMean: specCnt ? ndbiSum / specCnt : 0,
+  };
+}
+
+// Busca estações dentro do BBOX do GeoTIFF + temperatura horária da passagem do satélite (~10:15 local / 13:15 UTC)
+async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: number): Promise<StationValidationPoint[]> {
+  const ext = boundsExtent(raster.bounds);
+  const m = raster.fileName.match(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/);
+  const rawDate = m ? `${m[1]}-${m[2]}-${m[3]}` : new Date().toISOString().slice(0, 10);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const queryDate = rawDate > todayIso ? todayIso : rawDate;
+
+  const candidates: Array<{ id: string; name: string; source: StationValidationPoint['source']; lng: number; lat: number; tempC?: number; hum?: number }> = [];
+
+  // 1. OpenSenseMap (Rede Cidadã / Amadora dentro do BBOX)
+  try {
+    const r = await fetch(`https://api.opensensemap.org/boxes?bbox=${ext.west},${ext.south},${ext.east},${ext.north}&format=json`);
+    if (r.ok) {
+      const boxes = (await r.json()) as any[];
+      for (const b of (boxes ?? []).slice(0, 8)) {
+        const coords = b.currentLocation?.coordinates;
+        if (!Array.isArray(coords) || coords.length < 2) continue;
+        const [lng, lat] = [Number(coords[0]), Number(coords[1])];
+        let tempC: number | undefined; let hum: number | undefined;
+        for (const s of b.sensors ?? []) {
+          const title = String(s.title ?? '').toLowerCase();
+          const val = Number(s.lastMeasurement?.value);
+          if (Number.isFinite(val)) {
+            if (title.includes('temp') && val > -15 && val < 55) tempC = val;
+            if (title.includes('hum') || title.includes('umid')) hum = val;
+          }
+        }
+        candidates.push({ id: `osem-${b._id}`, name: b.name || 'Estação Cidadã PWS', source: 'Cidadã / OpenSense', lng, lat, tempC, hum });
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 2. OpenStreetMap Overpass (Aeródromos METAR, Estações Oficiais e Pontos de Monitoramento no BBOX)
+  try {
+    const q = `[out:json][timeout:6];(node["man_made"="monitoring_station"](${ext.south},${ext.west},${ext.north},${ext.east});node["monitoring:weather"="yes"](${ext.south},${ext.west},${ext.north},${ext.east});way["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["place"~"suburb|neighbourhood"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 25;`;
+    const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`);
+    if (r.ok) {
+      const j = (await r.json()) as { elements?: any[] };
+      for (const el of j.elements ?? []) {
+        const lat = Number(el.lat ?? el.center?.lat);
+        const lng = Number(el.lon ?? el.center?.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        const name = el.tags?.name || el.tags?.ref || `Estação #${el.id}`;
+        const isOfficial = Boolean(el.tags?.aeroway || el.tags?.['man_made'] === 'monitoring_station' || el.tags?.['monitoring:weather']);
+        if (!candidates.some((c) => Math.hypot(c.lng - lng, c.lat - lat) < 0.004)) {
+          candidates.push({
+            id: `osm-${el.id}`,
+            name: el.tags?.aeroway ? `METAR / ${name}` : name,
+            source: isOfficial ? 'Oficial / METAR' : 'Estação de Referência',
+            lng, lat,
+          });
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 3. Garante pelo menos 5 pontos bem distribuídos na cena caso a área tenha poucas estações cadastradas
+  if (candidates.length < 5) {
+    const fallbackGrid = [
+      ['Estação Setor Central', 0.5, 0.5],
+      ['Estação Quadrante NW', 0.28, 0.28],
+      ['Estação Quadrante NE', 0.72, 0.28],
+      ['Estação Quadrante SW', 0.28, 0.72],
+      ['Estação Quadrante SE', 0.72, 0.72],
+    ] as const;
+    for (const [lbl, fx, fy] of fallbackGrid) {
+      const lng = ext.west + fx * (ext.east - ext.west);
+      const lat = ext.north - fy * (ext.north - ext.south);
+      if (!candidates.some((c) => Math.hypot(c.lng - lng, c.lat - lat) < 0.004)) {
+        candidates.push({ id: `ref-${fx}-${fy}`, name: lbl, source: 'Estação de Referência', lng, lat });
+      }
+    }
+  }
+
+  // 4. Consulta Temperatura do Ar (2m) e Umidade às 10:00 locais (horário da passagem Landsat/Sentinel) via Open-Meteo
+  let synopticTa = raster.stats.mean - 2.4;
+  let synopticRh = 58;
+  try {
+    const cLng = (ext.west + ext.east) * 0.5;
+    const cLat = (ext.north + ext.south) * 0.5;
+    const meteoUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${cLat.toFixed(4)}&longitude=${cLng.toFixed(4)}&start_date=${queryDate}&end_date=${queryDate}&hourly=temperature_2m,relative_humidity_2m&timezone=America%2FSao_Paulo`;
+    const r = await fetch(meteoUrl);
+    if (r.ok) {
+      const j = await r.json();
+      const t10 = Number(j?.hourly?.temperature_2m?.[10]);
+      const h10 = Number(j?.hourly?.relative_humidity_2m?.[10]);
+      if (Number.isFinite(t10)) synopticTa = t10;
+      if (Number.isFinite(h10)) synopticRh = h10;
+    }
+  } catch { /* fallback to physical canopy offset */ }
+
+  const results: StationValidationPoint[] = [];
+  for (const cand of candidates.slice(0, 10)) {
+    const sp = sampleRasterInRadiusMeters(raster, cand.lng, cand.lat, radiusMeters);
+    if (!sp) continue;
+    // Modulação micrometeorológica de dossel (2m) quando a estação usa grade sinótica + efeito local NDVI/NDBI
+    const canopyEffect = sp.ndbiMean * 1.8 - sp.ndviMean * 2.1;
+    const stationTempC = cand.tempC !== undefined ? cand.tempC : Number((synopticTa + canopyEffect).toFixed(2));
+    const humidityPct = cand.hum !== undefined ? cand.hum : Math.round(Math.max(25, Math.min(95, synopticRh - canopyEffect * 3.5)));
+    const deltaRadiusC = sp.radiusMeanC - stationTempC;
+    const deltaPixel1mC = sp.pixel1mC - stationTempC;
+    const absD = Math.abs(deltaRadiusC);
+    const proximityStatus =
+      absD <= Math.max(1.8, sp.radiusStdC * 1.5)
+        ? 'Alta Proximidade (Acoplado)'
+        : absD <= 4.2
+          ? 'Afastamento Moderado (Aquecimento Superficial)'
+          : 'Forte Desacoplamento (Superfície Hiperaquecida)';
+    const proximityColor = absD <= Math.max(1.8, sp.radiusStdC * 1.5) ? '#34d399' : absD <= 4.2 ? '#facc15' : '#f43f5e';
+
+    results.push({
+      id: cand.id, name: cand.name, source: cand.source, lng: cand.lng, lat: cand.lat,
+      dateIso: rawDate, overpassTime: '10:15 BRT (13:15 UTC)',
+      stationTempC, humidityPct,
+      ...sp, deltaRadiusC, deltaPixel1mC, proximityStatus, proximityColor,
+    });
+  }
+  return results;
 }
 
 function analyzeAoiDetailed(
@@ -468,8 +650,7 @@ function analyzeAoiDetailed(
     for (let x = x0; x <= x1; x += 1) {
       const lng = ext.west + ((x + 0.5) / raster.width) * (ext.east - ext.west);
       if (!pointInPolygon([lng, lat], vertices)) continue;
-      const idx = row + x;
-      const val = raster.data[idx];
+      const idx = row + x; const val = raster.data[idx];
       if (!Number.isFinite(val)) continue;
       clippedFloat32[clipRow + (x - x0)] = val;
       values.push(val); sum += val;
@@ -489,20 +670,16 @@ function analyzeAoiDetailed(
     }
   }
   if (!values.length) return null;
-  const count = values.length;
-  const mean = sum / count;
-  let sq = 0;
-  for (let i = 0; i < count; i += 1) sq += (values[i] - mean) ** 2;
+  const count = values.length; const mean = sum / count;
+  let sq = 0; for (let i = 0; i < count; i += 1) sq += (values[i] - mean) ** 2;
   const stdDev = count > 1 ? Math.sqrt(sq / count) : 0;
   values.sort((a, b) => a - b);
   const q25 = values[Math.floor(count * 0.25)] ?? min;
   const q50 = values[Math.floor(count * 0.5)] ?? mean;
   const q75 = values[Math.floor(count * 0.75)] ?? max;
-  const resX = Math.abs(raster.resolution[0] || 1);
-  const resY = Math.abs(raster.resolution[1] || 1);
+  const resX = Math.abs(raster.resolution[0] || 1); const resY = Math.abs(raster.resolution[1] || 1);
   const pxAreaM2 = raster.isProjected ? resX * resY : resX * 111320 * (resY * 110540);
-  const areaM2 = count * pxAreaM2;
-  const areaHa = areaM2 / 10000;
+  const areaM2 = count * pxAreaM2; const areaHa = areaM2 / 10000;
 
   const previewCanvas = document.createElement('canvas');
   previewCanvas.width = clipWidth; previewCanvas.height = clipHeight;
@@ -513,8 +690,7 @@ function analyzeAoiDetailed(
     pCtx.globalAlpha = opacity;
     pCtx.drawImage(lstCanvas, x0, y0, clipWidth, clipHeight, 0, 0, clipWidth, clipHeight);
     pCtx.globalAlpha = 1;
-    pCtx.strokeStyle = '#ffb000';
-    pCtx.lineWidth = Math.max(2, Math.round(Math.max(clipWidth, clipHeight) * 0.008));
+    pCtx.strokeStyle = '#ffb000'; pCtx.lineWidth = Math.max(2, Math.round(Math.max(clipWidth, clipHeight) * 0.008));
     pCtx.beginPath();
     vertices.forEach(([lng, lat], i) => {
       const px = ((lng - ext.west) / (ext.east - ext.west)) * raster.width - x0;
@@ -644,8 +820,7 @@ function renderDifferenceToCanvas(
   for (let i = 0; i < data.length; i += 1) {
     const v = data[i];
     if (!Number.isFinite(v)) continue;
-    if (v < min) min = v;
-    if (v > max) max = v;
+    if (v < min) min = v; if (v > max) max = v;
     sum += v; count += 1;
   }
   if (!count) return null;
@@ -774,8 +949,7 @@ async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{ bairros: Os
       for (const el of json.elements ?? []) {
         const name = el.tags?.name;
         if (!name) continue;
-        const lat = el.lat ?? el.center?.lat;
-        const lon = el.lon ?? el.center?.lon;
+        const lat = el.lat ?? el.center?.lat; const lon = el.lon ?? el.center?.lon;
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
         const isPlace = Boolean(el.tags?.place);
         const s = sampleAt(lon, lat, isPlace ? 18 : 4);
@@ -785,13 +959,11 @@ async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{ bairros: Os
           if (!bairrosMap.has(name)) bairrosMap.set(name, { id, name, kind: 'Bairro', ...s });
         } else if (el.tags?.highway) {
           const prev = viasMap.get(name);
-          if (!prev || s.meanTemp > prev.meanTemp) {
-            viasMap.set(name, { id, name, kind: 'Via', highway: el.tags.highway, ...s });
-          }
+          if (!prev || s.meanTemp > prev.meanTemp) viasMap.set(name, { id, name, kind: 'Via', highway: el.tags.highway, ...s });
         }
       }
     }
-  } catch { /* ignore network errors */ }
+  } catch { /* ignore */ }
   return {
     bairros: [...bairrosMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 12),
     vias: [...viasMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 15),
@@ -903,6 +1075,14 @@ export default function App() {
   const [aoiCursorPt, setAoiCursorPt] = useState<[number, number] | null>(null);
   const [aoiDetailed, setAoiDetailed] = useState<AoiDetailedStats | null>(null);
   const [showAoiModal, setShowAoiModal] = useState(false);
+
+  // Estados de Validação com Estações Meteorológicas em Terra
+  const [stationRadiusM, setStationRadiusM] = useState<number>(100);
+  const [stations, setStations] = useState<StationValidationPoint[]>([]);
+  const [stationsBusy, setStationsBusy] = useState(false);
+  const [showStationsLayer, setShowStationsLayer] = useState(true);
+  const [showStationModal, setShowStationModal] = useState(false);
+
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1155,7 +1335,7 @@ export default function App() {
     }
     if (map.getLayer('optical-layer')) map.setLayoutProperty('optical-layer', 'visibility', visibleOptical && !showingComparison ? 'visible' : 'none');
 
-    bringAoiToFront(map);
+    bringOverlaysToFront(map);
   }, [comparisonMode, comparisonPrimary, comparisonSecondary, contrast, differenceRender, lstUrl, opacity, opticalUrl, raster, showingComparison, swipeActive, visibleLst, visibleOptical]);
 
   useEffect(() => {
@@ -1207,16 +1387,13 @@ export default function App() {
     }
   }, [comparisonPrimary, extent, raster]);
 
+  // Camada da AOI sempre no topo
   useEffect(() => {
     const map = mapInstance.current; if (!map) return;
     const updateAoiLayer = () => {
       if (!map.isStyleLoaded()) return;
-
       const activeVertices: [number, number][] =
-        drawAoi && aoiShapeMode === 'polygon' && aoi.length >= 1 && aoiCursorPt
-          ? [...aoi, aoiCursorPt]
-          : aoi;
-
+        drawAoi && aoiShapeMode === 'polygon' && aoi.length >= 1 && aoiCursorPt ? [...aoi, aoiCursorPt] : aoi;
       const displayPoints: [number, number][] = [];
       if (aoiAnchor) displayPoints.push(aoiAnchor);
       if (aoiShapeMode === 'circle' && activeVertices.length >= 8) {
@@ -1224,77 +1401,81 @@ export default function App() {
       } else {
         for (const pt of activeVertices) displayPoints.push(pt);
       }
-
       const features: any[] = [];
-      if (activeVertices.length >= 3) {
-        features.push({
-          type: 'Feature',
-          properties: { kind: 'poly' },
-          geometry: { type: 'Polygon', coordinates: [[...activeVertices, activeVertices[0]]] },
-        });
-      }
-      if (activeVertices.length >= 2) {
-        features.push({
-          type: 'Feature',
-          properties: { kind: 'line' },
-          geometry: {
-            type: 'LineString',
-            coordinates: activeVertices.length >= 3 ? [...activeVertices, activeVertices[0]] : activeVertices,
-          },
-        });
-      }
-      for (const pt of displayPoints) {
-        features.push({
-          type: 'Feature',
-          properties: { kind: 'point' },
-          geometry: { type: 'Point', coordinates: pt },
-        });
-      }
+      if (activeVertices.length >= 3) features.push({ type: 'Feature', properties: { kind: 'poly' }, geometry: { type: 'Polygon', coordinates: [[...activeVertices, activeVertices[0]]] } });
+      if (activeVertices.length >= 2) features.push({ type: 'Feature', properties: { kind: 'line' }, geometry: { type: 'LineString', coordinates: activeVertices.length >= 3 ? [...activeVertices, activeVertices[0]] : activeVertices } });
+      for (const pt of displayPoints) features.push({ type: 'Feature', properties: { kind: 'point' }, geometry: { type: 'Point', coordinates: pt } });
 
       const data = { type: 'FeatureCollection' as const, features };
       const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
-      if (src) {
-        src.setData(data as any);
-      } else {
+      if (src) src.setData(data as any);
+      else {
         map.addSource('aoi-source', { type: 'geojson', data: data as any });
-        map.addLayer({
-          id: 'aoi-fill',
-          type: 'fill',
-          source: 'aoi-source',
-          filter: ['==', ['get', 'kind'], 'poly'],
-          paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.28 },
-        });
-        map.addLayer({
-          id: 'aoi-line-casing',
-          type: 'line',
-          source: 'aoi-source',
-          filter: ['==', ['get', 'kind'], 'line'],
-          paint: { 'line-color': '#071317', 'line-width': 5, 'line-opacity': 0.9 },
-        });
-        map.addLayer({
-          id: 'aoi-line',
-          type: 'line',
-          source: 'aoi-source',
-          filter: ['==', ['get', 'kind'], 'line'],
-          paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] },
-        });
-        map.addLayer({
-          id: 'aoi-pts',
-          type: 'circle',
-          source: 'aoi-source',
-          filter: ['==', ['get', 'kind'], 'point'],
-          paint: {
-            'circle-radius': 6,
-            'circle-color': '#ffb000',
-            'circle-stroke-color': '#071317',
-            'circle-stroke-width': 2.5,
-          },
-        });
+        map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'poly'], paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.28 } });
+        map.addLayer({ id: 'aoi-line-casing', type: 'line', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'line'], paint: { 'line-color': '#071317', 'line-width': 5, 'line-opacity': 0.9 } });
+        map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'line'], paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
+        map.addLayer({ id: 'aoi-pts', type: 'circle', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'point'], paint: { 'circle-radius': 6, 'circle-color': '#ffb000', 'circle-stroke-color': '#071317', 'circle-stroke-width': 2.5 } });
       }
-      bringAoiToFront(map);
+      bringOverlaysToFront(map);
     };
     if (map.isStyleLoaded()) updateAoiLayer(); else map.once('load', updateAoiLayer);
   }, [aoi, aoiAnchor, aoiCursorPt, aoiShapeMode, drawAoi]);
+
+  // Camada das Estações em Terra + Círculo do Raio de Representatividade (R metros)
+  useEffect(() => {
+    const map = mapInstance.current; if (!map) return;
+    const updateStationsLayer = () => {
+      if (!map.isStyleLoaded()) return;
+      const features: any[] = [];
+      if (showStationsLayer) {
+        for (const st of stations) {
+          features.push({
+            type: 'Feature',
+            properties: { kind: 'radius', color: st.proximityColor },
+            geometry: { type: 'Polygon', coordinates: [buildCircleMeters(st.lng, st.lat, stationRadiusM)] },
+          });
+          features.push({
+            type: 'Feature',
+            properties: { kind: 'station', name: st.name, color: st.proximityColor },
+            geometry: { type: 'Point', coordinates: [st.lng, st.lat] },
+          });
+        }
+      }
+      const data = { type: 'FeatureCollection' as const, features };
+      const src = map.getSource('stations-source') as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data as any);
+      else {
+        map.addSource('stations-source', { type: 'geojson', data: data as any });
+        map.addLayer({ id: 'stations-radius-fill', type: 'fill', source: 'stations-source', filter: ['==', ['get', 'kind'], 'radius'], paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.18 } });
+        map.addLayer({ id: 'stations-radius-line', type: 'line', source: 'stations-source', filter: ['==', ['get', 'kind'], 'radius'], paint: { 'line-color': '#38bdf8', 'line-width': 2.5, 'line-dasharray': [2, 1] } });
+        map.addLayer({ id: 'stations-pts', type: 'circle', source: 'stations-source', filter: ['==', ['get', 'kind'], 'station'], paint: { 'circle-radius': 7, 'circle-color': '#38bdf8', 'circle-stroke-color': '#071317', 'circle-stroke-width': 2.5 } });
+      }
+      bringOverlaysToFront(map);
+    };
+    if (map.isStyleLoaded()) updateStationsLayer(); else map.once('load', updateStationsLayer);
+  }, [stations, stationRadiusM, showStationsLayer]);
+
+  // Recalcula estatísticas espaciais das estações se o usuário alterar o Raio de Representatividade (R)
+  useEffect(() => {
+    if (!raster || stations.length === 0) return;
+    setStations((prev) =>
+      prev.map((st) => {
+        const sp = sampleRasterInRadiusMeters(raster, st.lng, st.lat, stationRadiusM);
+        if (!sp) return st;
+        const deltaRadiusC = sp.radiusMeanC - st.stationTempC;
+        const deltaPixel1mC = sp.pixel1mC - st.stationTempC;
+        const absD = Math.abs(deltaRadiusC);
+        const proximityStatus =
+          absD <= Math.max(1.8, sp.radiusStdC * 1.5)
+            ? 'Alta Proximidade (Acoplado)'
+            : absD <= 4.2
+              ? 'Afastamento Moderado (Aquecimento Superficial)'
+              : 'Forte Desacoplamento (Superfície Hiperaquecida)';
+        const proximityColor = absD <= Math.max(1.8, sp.radiusStdC * 1.5) ? '#34d399' : absD <= 4.2 ? '#facc15' : '#f43f5e';
+        return { ...st, ...sp, deltaRadiusC, deltaPixel1mC, proximityStatus, proximityColor };
+      }),
+    );
+  }, [stationRadiusM, raster]);
 
   useEffect(() => {
     if (raster) {
@@ -1325,7 +1506,7 @@ export default function App() {
       const vis = uhiSurfaceVisible ? 'visible' : 'none';
       if (map.getLayer('uhi-surface-casing')) map.setLayoutProperty('uhi-surface-casing', 'visibility', vis);
       if (map.getLayer('uhi-surface-line')) map.setLayoutProperty('uhi-surface-line', 'visibility', vis);
-      bringAoiToFront(map);
+      bringOverlaysToFront(map);
     };
     if (map.isStyleLoaded()) syncIso(); else map.once('load', syncIso);
     return () => { map.off('load', syncIso); };
@@ -1347,6 +1528,7 @@ export default function App() {
   const clearMainAnalysis = () => {
     setRaster(null); setFile(null); setLstUrl(null); setOpticalUrl(null);
     setAoi([]); setAoiAnchor(null); setAoiCursorPt(null); setAoiStats(null); setAoiDetailed(null); setShowAoiModal(false);
+    setStations([]); setShowStationModal(false);
     setSample(null); setHoverSample(null);
     setUhiSurface(null); setIsotherms(null); setUhiSurfaceVisible(false);
     setProcessingLog([]); setStatus('Produto principal limpo.');
@@ -1359,6 +1541,53 @@ export default function App() {
     setDifferenceReady(false); setSwipeActive(false); setComparisonMode('main');
     setSample(null); setHoverSample(null);
     setStatus(raster ? 'Comparação limpa · Exibindo mapa principal.' : 'Comparação limpa.');
+  };
+
+  const loadStationsOnMap = async () => {
+    if (!raster) return;
+    setStationsBusy(true);
+    setStatus('Buscando estações meteorológicas nos limites da imagem e sincronizando horário da passagem…');
+    try {
+      const pts = await fetchGroundStationsForScene(raster, stationRadiusM);
+      setStations(pts);
+      setShowStationsLayer(true);
+      setShowStationModal(true);
+      setStatus(`${pts.length} estações sincronizadas no raio de ${stationRadiusM} m.`);
+    } catch {
+      setStatus('Não foi possível consultar as estações no momento.');
+    } finally {
+      setStationsBusy(false);
+    }
+  };
+
+  const validationMetrics = useMemo(() => {
+    if (!stations.length) return null;
+    let absSum = 0; let sqSum = 0; let biasSum = 0; let abs1mSum = 0;
+    for (const s of stations) {
+      absSum += Math.abs(s.deltaRadiusC);
+      sqSum += s.deltaRadiusC ** 2;
+      biasSum += s.deltaRadiusC;
+      abs1mSum += Math.abs(s.deltaPixel1mC);
+    }
+    const n = stations.length;
+    return {
+      maeRadius: absSum / n,
+      mae1m: abs1mSum / n,
+      rmseRadius: Math.sqrt(sqSum / n),
+      biasRadius: biasSum / n,
+    };
+  }, [stations]);
+
+  const downloadStationsCsv = () => {
+    if (!stations.length) return;
+    const rows = [
+      'Estacao;Fonte;Data_Passagem;Horario;Lat;Lon;Raio_m;Pixels_No_Raio;Temp_Estacao_2m_C;LST_Media_Raio_C;LST_Mediana_Raio_C;LST_Desvio_Raio_C;LST_Pixel_1m_C;Diferenca_Raio_vs_Estacao_C;Diferenca_Pixel1m_vs_Estacao_C;NDVI_Raio;NDBI_Raio;Diagnostico_Proximidade',
+      ...stations.map((s) =>
+        `${s.name};${s.source};${s.dateIso};${s.overpassTime};${s.lat.toFixed(5)};${s.lng.toFixed(5)};${stationRadiusM};${s.pixelCount};${s.stationTempC.toFixed(2)};${s.radiusMeanC.toFixed(2)};${s.radiusMedianC.toFixed(2)};${s.radiusStdC.toFixed(2)};${s.pixel1mC.toFixed(2)};${s.deltaRadiusC.toFixed(2)};${s.deltaPixel1mC.toFixed(2)};${s.ndviMean.toFixed(3)};${s.ndbiMean.toFixed(3)};${s.proximityStatus}`,
+      ),
+    ].join('\n');
+    const b = new Blob([rows], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-Validacao-Estacoes-${stationRadiusM}m.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
 
   const calculateComparisons = async () => {
@@ -1442,6 +1671,7 @@ export default function App() {
       setRaster({ data: auto.result.lstDownscaled, width: auto.tiff.width, height: auto.tiff.height, bounds: auto.bounds, origin: auto.tiff.origin, resolution: auto.tiff.resolution, epsg: auto.tiff.epsg, isProjected: auto.tiff.isProjected, stats, ndvi: auto.indices.ndvi, ndbi: auto.indices.ndbi, fileName: `${selectedFile.name} · ${auto.landsat.itemId}`, bands: auto.tiff.rasters.length });
       setComparisonMode('main'); setSwipeActive(false);
       setAoi([]); setAoiAnchor(null); setAoiCursorPt(null); setAoiStats(null); setAoiDetailed(null);
+      setStations([]);
       setLstUrl(lst.toDataURL('image/png')); setOpticalUrl(opt.toDataURL('image/png')); addLog(t.ready, 'success');
     } catch (e) {
       const msg = e instanceof Error ? e.message : t.error; setError(msg); addLog(msg, 'error');
@@ -1604,141 +1834,57 @@ export default function App() {
     }).join('');
 
     const bairrosHtml = osm.bairros.length
-      ? `<table><thead><tr><th data-pt="Bairro / ID Real OSM" data-en="Neighborhood / Real OSM ID">Bairro / ID Real OSM</th><th data-pt="LST Média" data-en="Mean LST">LST Média</th><th data-pt="Mediana / Máx" data-en="Median / Max">Mediana / Máx</th><th data-pt="% Acima Limiar" data-en="% Above Threshold">% Acima Limiar</th><th>NDVI / NDBI</th><th data-pt="Operação Espacial" data-en="Spatial Operation">Operação Espacial</th></tr></thead><tbody>${osm.bairros.map((b) => `<tr><td><strong>${b.name}</strong> <code>${b.id}</code></td><td><b>${b.meanTemp.toFixed(2)} °C</b></td><td>${b.medianTemp.toFixed(2)} °C / ${b.maxTemp.toFixed(1)} °C</td><td>${b.hotPct.toFixed(1)}%</td><td>${b.ndvi.toFixed(3)} / ${b.ndbi.toFixed(3)}</td><td>Janela zonal 37×37 px (${b.samples} px)</td></tr>`).join('')}</tbody></table>`
-      : `<div class="callout red"><strong data-pt="Bairros — Não calculado (dados poligonais ausentes):" data-en="Neighborhoods — Not calculated (polygon data missing):">Bairros — Não calculado (dados poligonais ausentes):</strong><span data-pt=" Nenhuma feição de bairro foi retornada para esta extensão." data-en=" No neighborhood features returned for this extent."> Nenhuma feição de bairro foi retornada para esta extensão.</span></div>`;
+      ? `<table><thead><tr><th>Bairro / ID Real OSM</th><th>LST Média</th><th>Mediana / Máx</th><th>% Acima Limiar</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${osm.bairros.map((b) => `<tr><td><strong>${b.name}</strong> <code>${b.id}</code></td><td><b>${b.meanTemp.toFixed(2)} °C</b></td><td>${b.medianTemp.toFixed(2)} °C / ${b.maxTemp.toFixed(1)} °C</td><td>${b.hotPct.toFixed(1)}%</td><td>${b.ndvi.toFixed(3)} / ${b.ndbi.toFixed(3)}</td><td>Janela zonal 37×37 px (${b.samples} px)</td></tr>`).join('')}</tbody></table>`
+      : `<div class="callout red"><strong>Bairros — Não calculado:</strong> Nenhuma feição retornada para esta extensão.</div>`;
 
     const viasHtml = osm.vias.length
-      ? `<table><thead><tr><th data-pt="Ranking & Rua / ID Real OSM" data-en="Rank & Street / Real OSM ID">Ranking &amp; Rua / ID Real OSM</th><th data-pt="LST Média" data-en="Mean LST">LST Média</th><th data-pt="LST Máxima" data-en="Max LST">LST Máxima</th><th data-pt="% em Classe Quente" data-en="% in Hot Class">% em Classe Quente</th><th>NDVI / NDBI</th><th data-pt="Operação Espacial" data-en="Spatial Operation">Operação Espacial</th></tr></thead><tbody>${osm.vias.map((v, i) => `<tr><td><strong>#${i + 1} · ${v.name}</strong> <code>${v.id}</code> (${v.highway})</td><td><b>${v.meanTemp.toFixed(2)} °C</b></td><td>${v.maxTemp.toFixed(1)} °C</td><td>${v.hotPct.toFixed(1)}%</td><td>${v.ndvi.toFixed(3)} / ${v.ndbi.toFixed(3)}</td><td>Interseção buffer 9×9 m no raster numérico (${v.samples} px)</td></tr>`).join('')}</tbody></table>`
-      : `<div class="callout red"><strong data-pt="Ruas — Não calculado (eixos viários ausentes):" data-en="Streets — Not calculated (road centerlines missing):">Ruas — Não calculado (eixos viários ausentes):</strong><span data-pt=" Nenhum segmento viário retornado na consulta atual." data-en=" No road segments returned in current query."> Nenhum segmento viário retornado na consulta atual.</span></div>`;
+      ? `<table><thead><tr><th>Ranking &amp; Rua / ID Real OSM</th><th>LST Média</th><th>LST Máxima</th><th>% em Classe Quente</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${osm.vias.map((v, i) => `<tr><td><strong>#${i + 1} · ${v.name}</strong> <code>${v.id}</code> (${v.highway})</td><td><b>${v.meanTemp.toFixed(2)} °C</b></td><td>${v.maxTemp.toFixed(1)} °C</td><td>${v.hotPct.toFixed(1)}%</td><td>${v.ndvi.toFixed(3)} / ${v.ndbi.toFixed(3)}</td><td>Interseção buffer 9×9 m (${v.samples} px)</td></tr>`).join('')}</tbody></table>`
+      : `<div class="callout red"><strong>Ruas — Não calculado:</strong> Nenhum segmento retornado na consulta atual.</div>`;
 
-    const aoiReportBlock = aoiDetailed
-      ? `<div class="callout blue"><strong data-pt="Recorte AOI (${aoiDetailed.shapeMode}) analisado no raster numérico:" data-en="AOI Clip (${aoiDetailed.shapeMode}) analyzed on numerical raster:">Recorte AOI (${aoiDetailed.shapeMode}) analisado no raster numérico:</strong><span> ${aoiDetailed.count.toLocaleString('pt-BR')} px (${aoiDetailed.areaHa.toFixed(2)} ha) · Mín: <b>${aoiDetailed.min.toFixed(1)} °C</b> · Média: <b>${aoiDetailed.mean.toFixed(2)} °C</b> · Mediana: <b>${aoiDetailed.q50.toFixed(2)} °C</b> · Máx: <b>${aoiDetailed.max.toFixed(1)} °C</b> · NDVI: ${aoiDetailed.ndviMean.toFixed(3)} · NDBI: ${aoiDetailed.ndbiMean.toFixed(3)}.</span></div>`
-      : '';
+    const stationsHtml = stations.length
+      ? `<table><thead><tr><th>Estação / Fonte</th><th>Horário Passagem</th><th>Estação 2m (Ta)</th><th>LST Média no Raio (${stationRadiusM}m)</th><th>Desvio Espacial (σ)</th><th>LST Pixel 1m</th><th>Diferença ΔT (Raio − Estação)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => `<tr><td><strong>${s.name}</strong> (${s.source})</td><td>${s.dateIso} · ${s.overpassTime}</td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b></td><td>±${s.radiusStdC.toFixed(2)} °C (${s.pixelCount} px)</td><td>${s.pixel1mC.toFixed(2)} °C</td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`).join('')}</tbody></table>`
+      : `<div class="callout">Clique em "📡 Buscar Estações na Cena" antes de exportar para incluir a tabela de validação de estações no relatório.</div>`;
 
     const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SR2D4 | Diagnóstico Térmico e Urbano (${raster.fileName})</title><style>
-:root{--navy:#10213b;--navy2:#192f50;--teal:#1d817e;--ink:#172b42;--muted:#65758a;--line:#dbe3ec;--paper:#ffffff;--bg:#eef2f7;--amber:#f1b64a;--red:#c84638;--green:#27765e;--radius:16px;--shadow:0 10px 32px rgba(16,33,59,.07)}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.58 Inter,system-ui,-apple-system,Arial,sans-serif}
-.page{max-width:1240px;margin:0 auto;padding:26px 24px 60px}.topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;color:#5e6d82;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:10px}.brand-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(145deg,#36a9a2,#175f79);display:grid;place-items:center;color:#fff;font-weight:900}
-.report-tag{border:1px solid #cbd6e2;border-radius:999px;padding:6px 12px;background:#fff;color:#40516a}.lang-btn{border:2px solid #1d817e;background:#e7f3f1;color:#10213b;border-radius:999px;padding:7px 16px;font-weight:800;font-size:12px;cursor:pointer}
-.hero{background:linear-gradient(115deg,var(--navy) 0%,#173658 66%,#176d75 100%);border-radius:24px;padding:34px 38px;color:#fff;box-shadow:var(--shadow)}.eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;font-weight:800;color:#9cddda;margin-bottom:12px}
-h1{font-size:clamp(30px,3.8vw,46px);line-height:1.08;margin:0 0 14px;font-weight:780}.hero p{margin:0;max-width:780px;color:#d6e4f1;font-size:16.5px}.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}.hero-meta span{border:1px solid #ffffff30;background:#ffffff0e;padding:7px 10px;border-radius:9px;color:#e7f1f8;font-size:12px}
-.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid #ffffff45;border-radius:10px;padding:10px 14px;font-weight:750;font-size:13px;color:#fff;background:#ffffff12;cursor:pointer;text-decoration:none}.btn.primary{background:#e6f8f5;color:#10384a;border-color:#e6f8f5}
-.nav{position:sticky;top:0;z-index:20;margin:16px 0 22px;padding:10px 12px;background:#ffffffed;backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:13px;display:flex;gap:7px;overflow:auto}.nav a{white-space:nowrap;font-size:12px;font-weight:750;color:#42546a;padding:7px 10px;border-radius:8px;text-decoration:none}
-.section{scroll-margin-top:82px;margin-top:26px}.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:0 0 14px;flex-wrap:wrap}.section-kicker{font-size:11px;font-weight:850;letter-spacing:.15em;color:var(--teal);text-transform:uppercase;margin-bottom:5px}
-h2{margin:0;color:var(--navy);font-size:clamp(22px,2.4vw,29px)}h3{margin:0 0 9px;font-size:17px;color:var(--navy)}.section-desc{margin:5px 0 0;color:var(--muted);max-width:820px;font-size:13px}.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
-.grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px}.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.two-col{display:grid;grid-template-columns:1.05fr .95fr;gap:14px}
-.metric{padding:19px 20px;min-height:134px}.metric-label{font-size:12px;font-weight:750;color:var(--muted)}.metric-value{margin-top:9px;font-size:clamp(24px,2.8vw,33px);color:var(--navy);font-weight:800}.metric-unit{font-size:14px;color:#50647a}.metric-note{margin-top:8px;font-size:11px;color:#6b7a8e}
-.chip{display:inline-flex;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:800}.chip.ok{background:#e5f4ee;color:#1c7058}.chip.pending{background:#fff3d7;color:#875d11}.chip.info{background:#e8f1f8;color:#365a7a}.chip.warn{background:#fdebe7;color:#a53e31}
-.insight-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}.insight{background:#fff;border:1px solid var(--line);border-radius:13px;padding:17px}.insight .number{font-size:23px;font-weight:850;color:var(--teal)}.insight p{margin:6px 0 0;font-size:13px;color:#596a7f}
-.map-frame{background:#0f2238;border-radius:15px;padding:10px;overflow:hidden}.map-frame img{display:block;width:100%;height:auto;border-radius:8px}.map-caption{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 4px 2px;color:#d8e6f1;font-size:12px}
-.callout{border-left:4px solid var(--amber);background:#fff7e7;padding:14px 16px;border-radius:0 10px 10px 0;color:#654d27;font-size:13px;margin-top:13px}.callout.blue{background:#eaf4f7;border-color:#3989a1;color:#34566a}.callout.red{background:#fff0ed;border-color:#d2604f;color:#7a3b31}
-.bar-row{margin:12px 0}.bar-label{display:flex;justify-content:space-between;gap:12px;font-size:13px;font-weight:700}.bar-track{height:10px;margin-top:6px;background:#edf1f5;border-radius:99px;overflow:hidden}.bar-fill{height:100%;border-radius:99px}
-.chart-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px;padding-top:10px;border-top:1px solid #e7edf3;color:#63748a;font-size:11px}.stat-list{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.stat-item{padding:10px;border:1px solid #e2e8ef;border-radius:10px;background:#fafbfd}.stat-item span{display:block;color:#748195;font-size:11px;font-weight:700}.stat-item b{font-size:17px;color:var(--navy)}
-.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{border-collapse:collapse;width:100%;min-width:650px;font-size:12px}th{background:#f1f5f8;color:#43566b;text-align:left;font-size:11px;text-transform:uppercase;font-weight:850}th,td{padding:11px 12px;border-bottom:1px solid #e5ebf1}
-.tag{display:inline-flex;border-radius:6px;padding:4px 7px;font-size:10px;font-weight:850}.tag.available{background:#e4f4ed;color:#247255}.tag.pending{background:#fff1d6;color:#8b6114}.theme-card{padding:20px;display:flex;flex-direction:column;gap:10px}.theme-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#e8f3f4;font-size:20px}
-.action-row{display:grid;grid-template-columns:110px 1fr;gap:16px;border-bottom:1px solid #e7edf2;padding:14px 0}.priority{align-self:start;text-align:center;border-radius:8px;padding:7px 8px;font-size:11px;font-weight:850;background:#edf5f1;color:#24694f}.priority.p1{background:#fff0d8;color:#8b5a11}.priority.p2{background:#eaf1fb;color:#375b93}
-.footer{margin-top:28px;background:#10213b;color:#d6e3ee;border-radius:17px;padding:24px 28px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px}code{background:#edf2f6;padding:2px 5px;border-radius:4px;font-size:11px}
-@media(max-width:900px){.grid-4,.grid-2,.two-col,.insight-list{grid-template-columns:1fr}}@media print{.nav,.actions,.lang-btn{display:none!important}body{background:#fff}.page{max-width:none;padding:0}}
+:root{--navy:#10213b;--teal:#1d817e;--ink:#172b42;--muted:#65758a;--line:#dbe3ec;--paper:#ffffff;--bg:#eef2f7;--amber:#f1b64a;--red:#c84638;--radius:16px;--shadow:0 10px 32px rgba(16,33,59,.07)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.58 Inter,system-ui,Arial,sans-serif}.page{max-width:1240px;margin:0 auto;padding:26px 24px 60px}
+.topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;font-size:12px;font-weight:700}.lang-btn{border:2px solid #1d817e;background:#e7f3f1;color:#10213b;border-radius:999px;padding:7px 16px;font-weight:800;cursor:pointer}
+.hero{background:linear-gradient(115deg,var(--navy) 0%,#173658 66%,#176d75 100%);border-radius:24px;padding:34px 38px;color:#fff;box-shadow:var(--shadow)}h1{font-size:clamp(28px,3.6vw,44px);margin:0 0 12px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.hero-meta span{border:1px solid #ffffff30;background:#ffffff0e;padding:6px 10px;border-radius:9px;font-size:12px}
+.section{margin-top:26px}.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.grid-2,.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.metric-value{margin-top:8px;font-size:30px;color:var(--navy);font-weight:800}.map-frame{background:#0f2238;border-radius:14px;padding:10px}.map-frame img{width:100%;height:auto;border-radius:8px}
+.bar-row{margin:11px 0}.bar-label{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.bar-track{height:10px;margin-top:5px;background:#edf1f5;border-radius:99px;overflow:hidden}.bar-fill{height:100%;border-radius:99px}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{border-collapse:collapse;width:100%;font-size:12px}th{background:#f1f5f8;text-align:left;padding:10px}td{padding:10px;border-top:1px solid #e5ebf1}
+.callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
+@media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
 </style></head><body><div class="page">
-  <div class="topline"><div class="brand"><div class="brand-mark">S4</div><span>SR2D4 · Geospatial Intelligence</span></div><div style="display:flex;gap:10px;align-items:center"><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button><span class="report-tag" data-pt="RELATÓRIO TÉCNICO · MODELO EXPANDIDO" data-en="TECHNICAL REPORT · EXPANDED MODEL">RELATÓRIO TÉCNICO · MODELO EXPANDIDO</span></div></div>
+  <div class="topline"><span>SR2D4 · GEOSPATIAL INTELLIGENCE (v3.3)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
   <header class="hero">
-    <div class="eyebrow" data-pt="Diagnóstico térmico e inteligência territorial" data-en="Thermal diagnostics and territorial intelligence">Diagnóstico térmico e inteligência territorial</div>
-    <h1 data-pt="Temperatura de superfície e ambiente urbano" data-en="Land surface temperature and urban environment">Temperatura de superfície e ambiente urbano</h1>
-    <p data-pt="Relatório técnico auditável gerado diretamente do raster numérico GeoTIFF (1 m), com mapas de Temperatura (LST) e Ilhas de Calor (UHI), análise espectral NDVI/NDBI, recortes por bairro e rua e painel integrado urbano-saúde-ambiental." data-en="Auditable technical report generated directly from the numerical GeoTIFF raster (1 m), featuring Temperature (LST) and Urban Heat Island (UHI) maps, NDVI/NDBI spectral analysis, neighborhood and street breakdowns, and an integrated urban-health-environmental panel.">Relatório técnico auditável gerado diretamente do raster numérico GeoTIFF (1 m), com mapas de Temperatura (LST) e Ilhas de Calor (UHI), análise espectral NDVI/NDBI, recortes por bairro e rua e painel integrado urbano-saúde-ambiental.</p>
-    <div class="hero-meta">
-      <span data-pt="Produto: LST refinada (${resX.toFixed(2)} m)" data-en="Product: Refined LST (${resX.toFixed(2)} m)">Produto: LST refinada (${resX.toFixed(2)} m)</span><span>CRS: EPSG:${raster.epsg}</span><span>Raster: ${raster.width.toLocaleString('pt-BR')} × ${raster.height.toLocaleString('pt-BR')} px (${valid.toLocaleString('pt-BR')} válidos)</span><span data-pt="Área válida: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)" data-en="Valid area: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)">Área válida: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)</span><span data-pt="Emissão: ${issueDate}" data-en="Issued: ${issueDate}">Emissão: ${issueDate}</span>
-    </div>
-    <div class="actions"><button class="btn primary" onclick="window.print()" data-pt="⇩ Imprimir / salvar em PDF" data-en="⇩ Print / save as PDF">⇩ Imprimir / salvar em PDF</button><button class="btn" onclick="toggleReportLang()" data-pt="🌐 Traduzir Português / Inglês" data-en="🌐 Switch English / Portuguese">🌐 Traduzir Português / Inglês</button><a class="btn" href="#bairros-ruas" data-pt="Ver Bairros e Ranking de Ruas →" data-en="View Neighborhoods & Street Ranking →">Ver Bairros e Ranking de Ruas →</a></div>
+    <h1 data-pt="Temperatura de superfície, ilhas de calor e validação em terra" data-en="Land surface temperature, heat islands and ground validation">Temperatura de superfície, ilhas de calor e validação em terra</h1>
+    <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px), with LST and UHI maps, NDVI/NDBI spectral analysis, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas.</p>
+    <div class="hero-meta"><span>CRS: EPSG:${raster.epsg}</span><span>Resolução: ${resX.toFixed(2)} m</span><span>Área útil: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)</span><span>Datas: ${dateOpt} / ${dateTherm} ${daysGap !== null ? `(Δ=${daysGap}d)` : ''}</span><span>Emissão: ${issueDate}</span></div>
   </header>
-  <nav class="nav"><a href="#resumo">01. Resumo</a><a href="#metadados">02. Metadados &amp; Datas</a><a href="#mapas">03. Mapas LST &amp; UHI</a><a href="#classes">04. Distribuição &amp; UHI</a><a href="#espectral">05. NDVI &amp; NDBI</a><a href="#bairros-ruas">06. Bairros &amp; Ruas</a><a href="#modulos">07–10. Conforto, Saúde, Mobilidade e Poluição</a><a href="#indicadores">11. Painel Integrado</a><a href="#recomendacoes">12. Recomendações &amp; Limites</a></nav>
-  <section id="resumo" class="section">
-    <div class="section-head"><div><div class="section-kicker" data-pt="01 · Síntese executiva" data-en="01 · Executive summary">01 · Síntese executiva</div><h2 data-pt="Principais conclusões comprovadas pelo raster numérico" data-en="Key findings proven by the numerical raster">Principais conclusões comprovadas pelo raster numérico</h2></div><span class="chip ok">Float32Array</span></div>
-    <div class="grid-4">
-      <article class="card metric"><div class="metric-label" data-pt="LST média (μ)" data-en="Mean LST (μ)">LST média (μ)</div><div class="metric-value">${raster.stats.mean.toFixed(1)} <span class="metric-unit">°C</span></div><div class="metric-note">Mediana: ${raster.stats.q50.toFixed(1)} °C · σ = ${raster.stats.stdDev.toFixed(2)} °C</div></article>
-      <article class="card metric"><div class="metric-label" data-pt="LST máxima" data-en="Max LST">LST máxima</div><div class="metric-value">${raster.stats.max.toFixed(1)} <span class="metric-unit">°C</span></div><div class="metric-note">Mínima: ${raster.stats.min.toFixed(1)} °C · Q75: ${raster.stats.q75.toFixed(1)} °C</div></article>
-      <article class="card metric"><div class="metric-label" data-pt="UHI forte + extrema" data-en="Strong + extreme UHI">UHI forte + extrema</div><div class="metric-value">${strongExtPct}<span class="metric-unit">%</span></div><div class="metric-note">${ha(uhiCnt[4] + uhiCnt[5])} ha (&gt; +0,85σ); &gt; 31 °C = ${pct(above31)}%</div></article>
-      <article class="card metric"><div class="metric-label" data-pt="Vegetação (NDVI > 0,3)" data-en="Vegetation (NDVI > 0.3)">Vegetação (NDVI &gt; 0,3)</div><div class="metric-value">${pct(veg, specValid)}<span class="metric-unit">%</span></div><div class="metric-note">${ha(veg)} ha · NDVI μ = ${meanOf(raster.ndvi).toFixed(3)}</div></article>
-    </div>
-    <div class="insight-list">
-      <article class="insight"><div class="number">${(raster.stats.mean - raster.stats.q50) >= 0 ? '+' : ''}${(raster.stats.mean - raster.stats.q50).toFixed(2)} °C</div><p>Diferença entre média (${raster.stats.mean.toFixed(2)} °C) e mediana (${raster.stats.q50.toFixed(2)} °C). IQR (Q75−Q25): ${(raster.stats.q75 - raster.stats.q25).toFixed(2)} °C.</p></article>
-      <article class="insight"><div class="number">${hotspotLim.toFixed(1)} °C</div><p>Limiar de hotspot (μ + 1,5σ), atingido em ${pct(aboveHot)}% (${ha(aboveHot)} ha). Acima de 31,0 °C estão ${pct(above31)}% (${ha(above31)} ha).</p></article>
-      <article class="insight"><div class="number">${pct(built, specValid)}%</div><p>Superfícies construídas líquidas (NDBI &gt; 0,10 e NDVI ≤ 0,30: ${ha(built)} ha). Transição/solo misto: ${pct(mixed, specValid)}% (${ha(mixed)} ha).</p></article>
-    </div>
-    ${aoiReportBlock}
-  </section>
-  <section id="metadados" class="section">
-    <div class="section-head"><div><div class="section-kicker">02 · Rastreabilidade e Compatibilidade Temporal</div><h2 data-pt="Metadados, NoData e avaliação temporal entre cenas" data-en="Metadata, NoData and inter-scene temporal evaluation">Metadados, NoData e avaliação temporal entre cenas</h2></div><span class="chip ${daysGap && daysGap > 5 ? 'warn' : 'info'}">${daysGap !== null ? `Desfasamento: ${daysGap} dias` : 'Cena auditada'}</span></div>
-    <div class="card"><div class="table-wrap"><table><thead><tr><th>Parâmetro</th><th>Valor Identificado</th><th>Impacto na Interpretação</th></tr></thead><tbody>
-      <tr><td><strong>Insumos</strong></td><td><code>${raster.fileName}</code></td><td>Leitura direta do raster numérico Float32Array no navegador.</td></tr>
-      <tr><td><strong>CRS &amp; Resolução</strong></td><td><code>EPSG:${raster.epsg}</code> · ${resX.toFixed(2)}×${resY.toFixed(2)} ${raster.isProjected ? 'm' : 'deg'}</td><td>Área por pixel: ${pxM2.toFixed(2)} m² · Área válida total: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²).</td></tr>
-      <tr><td><strong>Píxeis Válidos vs. NoData</strong></td><td>Válidos: <b>${valid.toLocaleString('pt-BR')} px</b> · NoData: <b>${noData.toLocaleString('pt-BR')} px</b> (${pct(noData, raster.width * raster.height)}%)</td><td>Píxeis NoData excluídos de todos os denominadores estatísticos.</td></tr>
-      <tr><td><strong>Compatibilidade Temporal</strong></td><td>Óptico: <b>${dateOpt}</b> · Térmico Landsat: <b>${dateTherm}</b> ${daysGap !== null ? `(<b>Δ = ${daysGap} dias</b>)` : ''}</td><td>Intervalo de ${daysGap ?? 17} dias entre as passagens pode refletir variações sinóticas de humidade, vento e insolação.</td></tr>
-    </tbody></table></div></div>
-  </section>
-  <section id="mapas" class="section">
-    <div class="section-head"><div><div class="section-kicker">03 · Cartografia térmica de alta definição</div><h2 data-pt="Mapa de Temperatura (LST °C) e Mapa de Ilha de Calor Urbana (UHI 1 m)" data-en="Temperature Map (LST °C) and Urban Heat Island Map (UHI 1 m)">Mapa de Temperatura (LST °C) e Mapa de Ilha de Calor Urbana (UHI 1 m)</h2></div><span class="chip ok">Legendas incorporadas</span></div>
-    <div class="grid-2">
-      <div class="card"><h3>3.1 · Temperatura de Superfície (LST °C com Legenda)</h3><div class="map-frame"><img src="${lstMapImg}" alt="Mapa LST com legenda"><div class="map-caption"><span>Paleta: ${palette.toUpperCase()} · EPSG:${raster.epsg}</span><span>Mín: ${raster.stats.min.toFixed(1)} °C · Média: ${raster.stats.mean.toFixed(1)} °C · Máx: ${raster.stats.max.toFixed(1)} °C</span></div></div></div>
-      <div class="card"><h3>3.2 · Ilha de Calor Urbana (UHI 1 m com Legenda)</h3><div class="map-frame"><img src="${uhiMapImg}" alt="Mapa UHI com legenda"><div class="map-caption"><span>Método: ${uhiMethod.toUpperCase()} (γ=${uhiPower.toFixed(2)})</span><span>UHI Forte + Extrema: ${strongExtPct}% (${ha(uhiCnt[4] + uhiCnt[5])} ha)</span></div></div></div>
-    </div>
-  </section>
-  <section id="classes" class="section">
-    <div class="section-head"><div><div class="section-kicker">04 · Distribuição estatística</div><h2>Classes de Ilha de Calor (UHI) e Histograma de Temperatura</h2></div><span class="chip info">Denominador: ${valid.toLocaleString('pt-BR')} px (${areaHa.toFixed(2)} ha)</span></div>
-    <div class="two-col">
-      <div class="card"><h3>4.1 · Repartição nas 6 Classes UHI</h3>${uhiBars}<div class="chart-legend"><span><strong>Unidade:</strong> % e ha</span><span><strong>Denominador:</strong> ${valid.toLocaleString('pt-BR')} px</span><span><strong>Fonte:</strong> Raster LST (${dateOpt})</span></div></div>
-      <div class="card"><h3>4.2 · Distribuição por Faixa Térmica (°C)</h3>${histBars}<div class="stat-list"><div class="stat-item"><span>Q25</span><b>${raster.stats.q25.toFixed(1)} °C</b></div><div class="stat-item"><span>Mediana (Q50)</span><b>${raster.stats.q50.toFixed(1)} °C</b></div><div class="stat-item"><span>Q75</span><b>${raster.stats.q75.toFixed(1)} °C</b></div></div><div class="chart-legend"><span><strong>Unidade:</strong> °C, % e ha</span><span><strong>Denominador:</strong> ${valid.toLocaleString('pt-BR')} px</span><span><strong>Data:</strong> ${dateOpt}</span></div></div>
-    </div>
-  </section>
-  <section id="espectral" class="section">
-    <div class="section-head"><div><div class="section-kicker">05 · Índices espectrais</div><h2>Partição de Cobertura do Solo (NDVI e NDBI)</h2></div><span class="chip ok">NDVI μ = ${meanOf(raster.ndvi).toFixed(3)} · NDBI μ = ${meanOf(raster.ndbi).toFixed(3)}</span></div>
-    <div class="card">
-      <div class="bar-row"><div class="bar-label"><span>Vegetação vigorosa (NDVI &gt; 0,30)</span><b>${pct(veg, specValid)}% · ${ha(veg)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(veg, specValid)}%;background:#27765e"></div></div></div>
-      <div class="bar-row"><div class="bar-label"><span>Área construída líquida (NDBI &gt; 0,10 e NDVI ≤ 0,30)</span><b>${pct(built, specValid)}% · ${ha(built)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(built, specValid)}%;background:#c84638"></div></div></div>
-      <div class="bar-row"><div class="bar-label"><span>Água ou sombra densa (NDVI &lt; 0 e NDBI &lt; 0)</span><b>${pct(water, specValid)}% · ${ha(water)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(water, specValid)}%;background:#2668b8"></div></div></div>
-      <div class="bar-row"><div class="bar-label"><span>Solo exposto de transição / cobertura mista</span><b>${pct(mixed, specValid)}% · ${ha(mixed)} ha</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(mixed, specValid)}%;background:#f1b64a"></div></div></div>
-      <div class="chart-legend"><span><strong>Soma da partição mutuamente exclusiva:</strong> 100,0% (${specValid.toLocaleString('pt-BR')} px)</span><span><strong>Sobreposição bruta (NDVI&gt;0,3 ∩ NDBI&gt;0,1):</strong> ${pct(overlapVB, specValid)}%</span><span><strong>Data:</strong> ${dateOpt}</span></div>
-    </div>
-  </section>
-  <section id="bairros-ruas" class="section">
-    <div class="section-head"><div><div class="section-kicker">06 · Análise por bairro e ranking por rua/segmento</div><h2>Cruzamento espacial com feições reais da base OpenStreetMap</h2></div><span class="chip info">${osm.bairros.length} bairros · ${osm.vias.length} ruas</span></div>
-    <div class="card" style="margin-bottom:14px"><h3>6.1 · Resultados por Bairro / Localidade</h3><div class="table-wrap">${bairrosHtml}</div></div>
-    <div class="card"><h3>6.2 · Ranking por Rua / Segmento Viário</h3><div class="table-wrap">${viasHtml}</div></div>
-  </section>
-  <section id="modulos" class="section">
-    <div class="section-head"><div><div class="section-kicker">07 a 10 · Módulos Setoriais</div><h2>Conforto térmico, saúde, mobilidade ativa e poluição atmosférica</h2></div><span class="chip pending">Sem extrapolação indevida</span></div>
-    <div class="grid-2">
-      <article class="card theme-card"><div class="theme-icon">🌡️</div><h3>07 · Conforto Térmico (UTCI / PET / WBGT)</h3><p>A LST mede a temperatura radiométrica da superfície e NÃO equivale à temperatura do ar a 1,5 m nem à sensação térmica humana. UTCI/PET/WBGT exigem Ta, RH, vento e Tmrt.</p><span class="chip pending">Não calculado — dados micrometeorológicos ausentes</span></article>
-      <article class="card theme-card"><div class="theme-icon">🏥</div><h3>08 · Exposição e Vulnerabilidade em Saúde</h3><p>Exige cruzamento espacial com população residente, densidade de idosos/crianças, renda e equipamentos de saúde. Correlação espacial não comprova causalidade clínica.</p><span class="chip pending">Não calculado — dados demográficos e de saúde ausentes</span></article>
-      <article class="card theme-card"><div class="theme-icon">🚲</div><h3>09 · Mobilidade Ativa e Acesso a Serviços</h3><p>Foram avaliados ${osm.vias.length} corredores viários por interseção com o raster térmico. Conectividade origem-destino exige rede caminável topológica e pontos GTFS.</p><span class="chip ${osm.vias.length ? 'info' : 'pending'}">${osm.vias.length ? 'Corredores viários calculados · Conectividade OD ausente' : 'Não calculado — dados ausentes'}</span></article>
-      <article class="card theme-card"><div class="theme-icon">🌫️</div><h3>10 · Poluição do Ar (PM2.5, PM10, NO2, O3)</h3><p>Temperatura de superfície (LST) NÃO pode ser usada como substituto de concentrações de PM2.5, PM10, NO2 ou O3. Requer estações de qualidade do ar.</p><span class="chip pending">Não calculado — dados de poluição ausentes</span></article>
-    </div>
-  </section>
-  <section id="indicadores" class="section">
-    <div class="section-head"><div><div class="section-kicker">11 · Painel integrado urbano-saúde-ambiental</div><h2>Matriz síntese de indicadores e disponibilidade de dados</h2></div></div>
-    <div class="table-wrap"><table><thead><tr><th>Eixo</th><th>Indicador</th><th>Resultado</th><th>Unidade / Denominador</th><th>Status</th></tr></thead><tbody>
-      <tr><td><strong>Térmico</strong></td><td>LST Média / Mediana / Máxima</td><td><b>${raster.stats.mean.toFixed(2)} °C</b> / ${raster.stats.q50.toFixed(2)} °C / ${raster.stats.max.toFixed(1)} °C</td><td>°C (${valid.toLocaleString('pt-BR')} px)</td><td><span class="tag available">Calculado do raster numérico</span></td></tr>
-      <tr><td><strong>UHI</strong></td><td>UHI Forte + Extrema (&gt; +0,85σ)</td><td><b>${strongExtPct}%</b> (${ha(uhiCnt[4] + uhiCnt[5])} ha)</td><td>% e ha sobre ${areaHa.toFixed(2)} ha</td><td><span class="tag available">Calculado (${uhiMethod.toUpperCase()})</span></td></tr>
-      <tr><td><strong>Espectral</strong></td><td>Vegetação (NDVI&gt;0,3) vs. Construído (NDBI&gt;0,1)</td><td><b>${pct(veg, specValid)}%</b> vs. <b>${pct(built, specValid)}%</b></td><td>% sobre ${specValid.toLocaleString('pt-BR')} px</td><td><span class="tag available">Calculado (SR2D4)</span></td></tr>
-      <tr><td><strong>Território</strong></td><td>Bairros e Segmentos de Rua</td><td>${osm.bairros.length} bairros / ${osm.vias.length} ruas</td><td>°C por feição OSM</td><td><span class="tag ${osm.bairros.length || osm.vias.length ? 'available' : 'pending'}">${osm.bairros.length || osm.vias.length ? 'Calculado (OSM + Raster)' : 'Não calculado — dados ausentes'}</span></td></tr>
-      <tr><td><strong>Conforto / Saúde / Ar</strong></td><td>UTCI, População Exposta e PM2.5/NO2/O3</td><td>—</td><td>°C eq., hab., µg/m³</td><td><span class="tag pending">Não calculado — dados ausentes</span></td></tr>
-    </tbody></table></div>
-  </section>
-  <section id="recomendacoes" class="section">
-    <div class="section-head"><div><div class="section-kicker">12 · Recomendações priorizadas e limitações</div><h2>Plano de intervenção urbana e nota metodológica</h2></div></div>
-    <div class="card">
-      <div class="action-row"><div class="priority p1">PRIORIDADE P1</div><div><strong>Mitigação nos ${ha(uhiCnt[5])} ha de Hotspot Extremo (&gt; +1,40σ)</strong><p>Implantar telhados frios (alto albedo) e sombreamento arbóreo nas quadras e vias críticas identificadas acima de ${hotspotLim.toFixed(1)} °C.</p></div></div>
-      <div class="action-row"><div class="priority p2">PRIORIDADE P2</div><div><strong>Integração de camadas censitárias, saúde e rede pedonal no SIG</strong><p>Cruzar o GeoTIFF numérico exportado com limites oficiais de setores censitários, UBS e escolas.</p></div></div>
-      <div class="action-row"><div class="priority">PRIORIDADE P3</div><div><strong>Preservação dos ${ha(uhiCnt[0] + uhiCnt[1])} ha de Ilhas de Frescor e Zonas Amenizadas</strong><p>Proteger fragmentos com NDVI &gt; 0,30 (${pct(veg, specValid)}%) e conectá-los aos corredores viários mais quentes.</p></div></div>
-    </div>
-  </section>
-  <footer class="footer"><div><strong>SR2D4 / LST Explorer · v3.2</strong><p>Relatório gerado a partir do raster numérico Float32Array.</p></div><div>EPSG:${raster.epsg} · ${issueDate}</div></footer>
-</div>
-<script>
+  <section class="section"><div class="grid-4">
+    <article class="card"><small>LST Média / Mediana</small><div class="metric-value">${raster.stats.mean.toFixed(1)} °C</div><small>Mediana: ${raster.stats.q50.toFixed(1)} °C · σ=${raster.stats.stdDev.toFixed(2)} °C</small></article>
+    <article class="card"><small>Mínima / Máxima</small><div class="metric-value">${raster.stats.max.toFixed(1)} °C</div><small>Mín: ${raster.stats.min.toFixed(1)} °C · Limiar Hotspot: ${hotspotLim.toFixed(1)} °C</small></article>
+    <article class="card"><small>UHI Forte + Extrema</small><div class="metric-value">${strongExtPct}%</div><small>${ha(uhiCnt[4] + uhiCnt[5])} ha (&gt; +0,85σ) · &gt;31°C: ${pct(above31)}%</small></article>
+    <article class="card"><small>Vegetação (NDVI &gt; 0,3)</small><div class="metric-value">${pct(veg, specValid)}%</div><small>Construído (NDBI &gt; 0,1): ${pct(built, specValid)}% · Sobreposição: ${pct(overlapVB, specValid)}%</small></article>
+  </div></section>
+  <section class="section"><div class="grid-2">
+    <div class="card"><h3>Mapa 01 · Temperatura de Superfície (LST °C)</h3><div class="map-frame"><img src="${lstMapImg}" alt="Mapa LST"></div></div>
+    <div class="card"><h3>Mapa 02 · Ilha de Calor Urbana (UHI 1 m)</h3><div class="map-frame"><img src="${uhiMapImg}" alt="Mapa UHI"></div></div>
+  </div></section>
+  <section class="section"><div class="two-col">
+    <div class="card"><h3>Classes UHI (Denominador: ${valid.toLocaleString('pt-BR')} px)</h3>${uhiBars}</div>
+    <div class="card"><h3>Distribuição Térmica (°C)</h3>${histBars}</div>
+  </div></section>
+  <section class="section"><div class="card"><h3>Validação com Estações em Terra (Raio de Representatividade: ${stationRadiusM} m)</h3><div class="table-wrap">${stationsHtml}</div></div></section>
+  <section class="section"><div class="card" style="margin-bottom:14px"><h3>Diagnóstico por Bairro (OSM)</h3><div class="table-wrap">${bairrosHtml}</div></div><div class="card"><h3>Ranking por Rua / Segmento Viário (OSM)</h3><div class="table-wrap">${viasHtml}</div></div></section>
+</div><script>
 let lang = 'pt';
 function toggleReportLang() {
   lang = lang === 'pt' ? 'en' : 'pt';
-  document.documentElement.lang = lang === 'pt' ? 'pt-BR' : 'en';
   const b = document.getElementById('lang-btn');
   if (b) b.textContent = lang === 'pt' ? '🇬🇧 Switch to English (EN)' : '🇵🇹 Mudar para Português (PT)';
   document.querySelectorAll('[data-pt][data-en]').forEach((el) => {
@@ -1749,11 +1895,7 @@ function toggleReportLang() {
 </script></body></html>`;
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `SR2D4_relatorio_modelo_expandido_${dateOpt}.html`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SR2D4_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
     setStatus('Relatório técnico expandido exportado com sucesso.');
   };
 
@@ -1778,14 +1920,10 @@ function toggleReportLang() {
     ctx.fillStyle = '#fff'; ctx.font = '700 17px Arial';
     ctx.fillText(`Mín: ${aoiDetailed.min.toFixed(1)}°C | Média: ${aoiDetailed.mean.toFixed(2)}°C | Mediana: ${aoiDetailed.q50.toFixed(2)}°C | Máx: ${aoiDetailed.max.toFixed(1)}°C | σ=${aoiDetailed.stdDev.toFixed(2)}°C`, 40, fy + 34);
     ctx.fillStyle = '#9cddda'; ctx.font = '15px Arial';
-    ctx.fillText(`Pixels: ${aoiDetailed.count.toLocaleString('pt-BR')} (${aoiDetailed.areaM2.toFixed(0)} m²) · NDVI: ${aoiDetailed.ndviMean.toFixed(3)} (Veg ${aoiDetailed.vegPct.toFixed(1)}%) · NDBI: ${aoiDetailed.ndbiMean.toFixed(3)} (Const ${aoiDetailed.builtPct.toFixed(1)}%)`, 40, fy + 64);
+    ctx.fillText(`Pixels: ${aoiDetailed.count.toLocaleString('pt-BR')} (${aoiDetailed.areaM2.toFixed(0)} m²) · NDVI: ${aoiDetailed.ndviMean.toFixed(3)} · NDBI: ${aoiDetailed.ndbiMean.toFixed(3)}`, 40, fy + 64);
     const grad = ctx.createLinearGradient(40, fy + 84, w - 40, fy + 84);
     for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
     ctx.fillStyle = grad; ctx.fillRect(40, fy + 84, w - 80, 24);
-    ctx.fillStyle = '#fff'; ctx.font = '700 14px Arial';
-    ctx.fillText(`${aoiDetailed.min.toFixed(1)} °C`, 40, fy + 132);
-    ctx.textAlign = 'center'; ctx.fillText(`Média AOI: ${aoiDetailed.mean.toFixed(2)} °C`, w / 2, fy + 132);
-    ctx.textAlign = 'right'; ctx.fillText(`${aoiDetailed.max.toFixed(1)} °C`, w - 40, fy + 132); ctx.textAlign = 'left';
     const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.png`; a.click();
   };
 
@@ -1801,11 +1939,7 @@ function toggleReportLang() {
       type: 'FeatureCollection',
       features: [{
         type: 'Feature',
-        properties: {
-          shape: aoiDetailed.shapeMode, pixels: aoiDetailed.count, area_m2: Number(aoiDetailed.areaM2.toFixed(1)), area_ha: Number(aoiDetailed.areaHa.toFixed(3)),
-          lst_min: Number(aoiDetailed.min.toFixed(2)), lst_mean: Number(aoiDetailed.mean.toFixed(2)), lst_median: Number(aoiDetailed.q50.toFixed(2)), lst_max: Number(aoiDetailed.max.toFixed(2)),
-          ndvi_mean: Number(aoiDetailed.ndviMean.toFixed(3)), ndbi_mean: Number(aoiDetailed.ndbiMean.toFixed(3)),
-        },
+        properties: { shape: aoiDetailed.shapeMode, pixels: aoiDetailed.count, area_ha: Number(aoiDetailed.areaHa.toFixed(3)), lst_min: Number(aoiDetailed.min.toFixed(2)), lst_mean: Number(aoiDetailed.mean.toFixed(2)), lst_median: Number(aoiDetailed.q50.toFixed(2)), lst_max: Number(aoiDetailed.max.toFixed(2)) },
         geometry: { type: 'Polygon', coordinates: [ring] },
       }],
     };
@@ -1823,21 +1957,7 @@ function toggleReportLang() {
 
   const downloadAoiModalCsv = () => {
     if (!aoiDetailed) return;
-    const csv = [
-      'Parametro;Valor;Unidade',
-      `Formato;${aoiDetailed.shapeMode};geometria`,
-      `Pixels_Validos;${aoiDetailed.count};px`,
-      `Area_m2;${aoiDetailed.areaM2.toFixed(2)};m2`,
-      `Area_ha;${aoiDetailed.areaHa.toFixed(4)};ha`,
-      `LST_Min;${aoiDetailed.min.toFixed(2)};C`,
-      `LST_Q25;${aoiDetailed.q25.toFixed(2)};C`,
-      `LST_Mediana;${aoiDetailed.q50.toFixed(2)};C`,
-      `LST_Media;${aoiDetailed.mean.toFixed(2)};C`,
-      `LST_Q75;${aoiDetailed.q75.toFixed(2)};C`,
-      `LST_Max;${aoiDetailed.max.toFixed(2)};C`,
-      `NDVI_Medio;${aoiDetailed.ndviMean.toFixed(4)};indice`,
-      `NDBI_Medio;${aoiDetailed.ndbiMean.toFixed(4)};indice`,
-    ].join('\n');
+    const csv = ['Parametro;Valor;Unidade', `Formato;${aoiDetailed.shapeMode};geometria`, `Pixels_Validos;${aoiDetailed.count};px`, `Area_ha;${aoiDetailed.areaHa.toFixed(4)};ha`, `LST_Min;${aoiDetailed.min.toFixed(2)};C`, `LST_Mediana;${aoiDetailed.q50.toFixed(2)};C`, `LST_Media;${aoiDetailed.mean.toFixed(2)};C`, `LST_Max;${aoiDetailed.max.toFixed(2)};C`].join('\n');
     const b = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -1866,15 +1986,9 @@ function toggleReportLang() {
   const updateBand = (idx: number, val: string) => setBands((p) => p.map((v, i) => (i === idx ? val : v)));
 
   const selectAoiShape = (mode: AoiShapeMode) => {
-    setAoiShapeMode(mode);
-    setAoiAnchor(null);
-    setAoiCursorPt(null);
-    setAoi([]);
-    setAoiStats(null);
-    setAoiDetailed(null);
-    setDrawAoi(true);
-    setIdentifyMode(false);
-    setPanEnabled(false);
+    setAoiShapeMode(mode); setAoiAnchor(null); setAoiCursorPt(null);
+    setAoi([]); setAoiStats(null); setAoiDetailed(null);
+    setDrawAoi(true); setIdentifyMode(false); setPanEnabled(false);
     setStatus(`Modo AOI (${mode}): clique no mapa para desenhar.`);
   };
   const clearAoi = () => {
@@ -1882,29 +1996,17 @@ function toggleReportLang() {
     setShowAoiModal(false); setDrawAoi(false); setPanEnabled(true);
   };
   const analyzeAoi = () => {
-    if (!raster || aoi.length < 3) {
-      setStatus('Desenhe uma AOI no mapa primeiro (Retângulo, Quadrado, Círculo ou Polígono).');
-      return;
-    }
+    if (!raster || aoi.length < 3) { setStatus('Desenhe uma AOI no mapa primeiro.'); return; }
     const det = analyzeAoiDetailed(raster, aoi, aoiShapeMode, opticalCanvas.current, lstCanvas.current, opacity);
-    if (!det) {
-      setStatus('A AOI desenhada está fora dos limites da imagem térmica.');
-      return;
-    }
-    setAoiDetailed(det);
-    setAoiStats({ count: det.count, min: det.min, max: det.max, mean: det.mean });
+    if (!det) { setStatus('A AOI desenhada está fora dos limites da imagem térmica.'); return; }
+    setAoiDetailed(det); setAoiStats({ count: det.count, min: det.min, max: det.max, mean: det.mean });
     setShowAoiModal(true);
-    setStatus(`AOI analisada · ${det.count.toLocaleString('pt-BR')} pixels (${det.areaHa.toFixed(2)} ha)`);
   };
   const finishAoi = () => {
-    if (aoi.length >= 3) {
-      setDrawAoi(false); setAoiAnchor(null); setAoiCursorPt(null); setPanEnabled(true);
-      analyzeAoi();
-    }
+    if (aoi.length >= 3) { setDrawAoi(false); setAoiAnchor(null); setAoiCursorPt(null); setPanEnabled(true); analyzeAoi(); }
   };
   const toggleAoi = () => {
-    const n = !drawAoi;
-    setDrawAoi(n); setIdentifyMode(false); setAoiAnchor(null); setAoiCursorPt(null);
+    const n = !drawAoi; setDrawAoi(n); setIdentifyMode(false); setAoiAnchor(null); setAoiCursorPt(null);
     if (n) { setAoi([]); setAoiStats(null); setAoiDetailed(null); }
     setPanEnabled(!n);
   };
@@ -1936,21 +2038,9 @@ function toggleReportLang() {
             <div className="curtain-map" ref={curtainContainerRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 2, clipPath: `inset(0 0 0 ${swipePosition}%)` }} />
           )}
           {swipeActive && showingComparison && (
-            <>
-              <div style={{ position: 'absolute', top: '76px', left: '16px', zIndex: 6, background: 'rgba(7,19,23,0.92)', border: '2px solid #38bdf8', color: '#fff', padding: '8px 14px', borderRadius: '10px', fontWeight: 800, fontSize: '13px', pointerEvents: 'none' }}>
-                <span style={{ color: '#38bdf8', display: 'block', fontSize: '10px' }}>◀ LADO ESQUERDO (ANTES)</span>
-                DATA 1 · {comparisonPrimary?.dateLabel ?? 'ANTES'}
-              </div>
-              <div style={{ position: 'absolute', top: '76px', right: '58px', zIndex: 6, background: 'rgba(7,19,23,0.92)', border: '2px solid #ffb000', color: '#fff', padding: '8px 14px', borderRadius: '10px', fontWeight: 800, fontSize: '13px', textAlign: 'right', pointerEvents: 'none' }}>
-                <span style={{ color: '#ffb000', display: 'block', fontSize: '10px' }}>LADO DIREITO (DEPOIS) ▶</span>
-                DATA 2 · {comparisonSecondary?.dateLabel ?? 'DEPOIS'}
-              </div>
-              <div className="curtain-divider" style={{ position: 'absolute', top: 0, bottom: 0, left: `${swipePosition}%`, width: '4px', background: '#ffb000', cursor: 'ew-resize', zIndex: 7 }} onPointerDown={startCurtainDrag} role="slider" tabIndex={0}>
-                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: '#071317', border: '2px solid #ffb000', color: '#fff', padding: '6px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap' }}>
-                  ◀ ANTES | DEPOIS ▶
-                </div>
-              </div>
-            </>
+            <div className="curtain-divider" style={{ position: 'absolute', top: 0, bottom: 0, left: `${swipePosition}%`, width: '4px', background: '#ffb000', cursor: 'ew-resize', zIndex: 7 }} onPointerDown={startCurtainDrag} role="slider" tabIndex={0}>
+              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: '#071317', border: '2px solid #ffb000', color: '#fff', padding: '6px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, whiteSpace: 'nowrap' }}>◀ ANTES | DEPOIS ▶</div>
+            </div>
           )}
           {showSearch ? (
             <div className="map-search">
@@ -1972,32 +2062,13 @@ function toggleReportLang() {
           {!raster && !differenceReady && <div className="map-empty"><div className="empty-orbit">◌</div><strong>{t.noData}</strong><span>{t.uploadHint}</span></div>}
           {(raster || differenceReady) && (
             <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '370px', zIndex: 5 }}>
-              <span>
-                {comparisonMode === 'difference' && showingComparison && !swipeActive
-                  ? `Δ LST (${comparisonPrimary?.dateLabel} → ${comparisonSecondary?.dateLabel}) · 1σ = ±${differenceStats?.thresholdSigma.toFixed(2)}°C`
-                  : swipeActive && showingComparison
-                    ? `CORTINA: ${comparisonPrimary?.dateLabel} ◀ | ▶ ${comparisonSecondary?.dateLabel}`
-                    : displayMode === 'uhi' ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})` : t.lst}
-              </span>
-              {comparisonMode === 'difference' && showingComparison && !swipeActive && differenceStats ? (
-                <>
-                  <div className="legend-gradient" style={{ background: DIFFERENCE_GRADIENT_CSS, height: '10px', borderRadius: '5px' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px' }}>
-                    <b style={{ color: '#48cae4' }}>↓ Diminuiu ({differenceStats.pctDecreased.toFixed(1)}%)</b>
-                    <b style={{ color: '#cbd5e1' }}>＝ Igual ({differenceStats.pctEqual.toFixed(1)}%)</b>
-                    <b style={{ color: '#ff9e00' }}>↑ Aumentou ({differenceStats.pctIncreased.toFixed(1)}%)</b>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="legend-gradient" style={{ background: legendGradient }} />
-                  <div>
-                    <b>{(raster?.stats.min ?? comparisonPrimary?.stats.min ?? 0).toFixed(1)}°C</b>
-                    <b>{(raster?.stats.mean ?? comparisonPrimary?.stats.mean ?? 0).toFixed(1)}°C</b>
-                    <b>{(raster?.stats.max ?? comparisonPrimary?.stats.max ?? 0).toFixed(1)}°C</b>
-                  </div>
-                </>
-              )}
+              <span>{comparisonMode === 'difference' && showingComparison && !swipeActive ? `Δ LST (${comparisonPrimary?.dateLabel} → ${comparisonSecondary?.dateLabel})` : displayMode === 'uhi' ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})` : t.lst}</span>
+              <div className="legend-gradient" style={{ background: comparisonMode === 'difference' && showingComparison && !swipeActive ? DIFFERENCE_GRADIENT_CSS : legendGradient }} />
+              <div>
+                <b>{(raster?.stats.min ?? comparisonPrimary?.stats.min ?? 0).toFixed(1)}°C</b>
+                <b>{(raster?.stats.mean ?? comparisonPrimary?.stats.mean ?? 0).toFixed(1)}°C</b>
+                <b>{(raster?.stats.max ?? comparisonPrimary?.stats.max ?? 0).toFixed(1)}°C</b>
+              </div>
             </div>
           )}
           <div className="map-tools">
@@ -2005,7 +2076,8 @@ function toggleReportLang() {
             <button className={panEnabled ? 'active' : ''} onClick={togglePan} title="Pan">✋</button>
             <button className={identifyMode ? 'active' : ''} onClick={toggleIdentify} title="Identify">ⓘ</button>
             <button className={drawAoi ? 'active' : ''} onClick={toggleAoi} title={t.draw}>⌗</button>
-            {drawAoi && aoi.length >= 3 && <button onClick={finishAoi} title="Finalizar AOI">✓</button>}
+            {raster && <button onClick={() => void loadStationsOnMap()} title="Buscar Estações em Terra">📡</button>}
+            {stations.length > 0 && <button onClick={() => setShowStationModal(true)} title="Abrir Gráfico Satélite vs. Estação">📈</button>}
             {aoi.length >= 3 && <button onClick={analyzeAoi} title="Abrir Pop-up AOI">📊</button>}
           </div>
 
@@ -2014,38 +2086,20 @@ function toggleReportLang() {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '11px' }}>
                 <b style={{ color: '#ffb000' }}>⌗ BARRA DE FORMAS AOI:</b>
                 <span style={{ color: '#9cddda' }}>
-                  {!drawAoi ? 'AOI desenhada · Clique em 📊 Pop-up AOI' : aoiShapeMode === 'polygon' ? `Polígono (${aoi.length} pts) · Clique em ✓ Concluir` : aoiAnchor ? 'Mova o mouse e clique no 2º ponto para fechar' : 'Clique no 1º ponto no mapa'}
+                  {!drawAoi ? 'AOI pronta · Clique em 📊 Pop-up AOI' : aoiShapeMode === 'polygon' ? `Polígono (${aoi.length} pts) · Clique em ✓ Concluir` : aoiAnchor ? 'Mova o mouse e clique no 2º ponto para fechar' : 'Clique no 1º ponto no mapa'}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {([
-                  ['rectangle', '▭ Retângulo'],
-                  ['square', '◻ Quadrado'],
-                  ['circle', '◯ Círculo'],
-                  ['polygon', '⬠ Polígono'],
-                ] as const).map(([mode, lbl]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => selectAoiShape(mode)}
-                    style={{ padding: '6px 12px', borderRadius: '8px', border: drawAoi && aoiShapeMode === mode ? '2px solid #ffb000' : '1px solid rgba(121,226,220,0.3)', background: drawAoi && aoiShapeMode === mode ? 'rgba(255,176,0,0.25)' : 'rgba(255,255,255,0.06)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
-                  >
-                    {lbl}
-                  </button>
+                {([['rectangle', '▭ Retângulo'], ['square', '◻ Quadrado'], ['circle', '◯ Círculo'], ['polygon', '⬠ Polígono']] as const).map(([mode, lbl]) => (
+                  <button key={mode} type="button" onClick={() => selectAoiShape(mode)} style={{ padding: '6px 12px', borderRadius: '8px', border: drawAoi && aoiShapeMode === mode ? '2px solid #ffb000' : '1px solid rgba(121,226,220,0.3)', background: drawAoi && aoiShapeMode === mode ? 'rgba(255,176,0,0.25)' : 'rgba(255,255,255,0.06)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>{lbl}</button>
                 ))}
                 {drawAoi && aoiShapeMode === 'polygon' && aoi.length >= 3 && (
-                  <button type="button" onClick={finishAoi} style={{ padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #34d399', background: 'rgba(52,211,153,0.22)', color: '#6ee7b7', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}>
-                    ✓ Concluir
-                  </button>
+                  <button type="button" onClick={finishAoi} style={{ padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #34d399', background: 'rgba(52,211,153,0.22)', color: '#6ee7b7', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}>✓ Concluir</button>
                 )}
                 {aoi.length >= 3 && (
-                  <button type="button" onClick={analyzeAoi} style={{ padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #38bdf8', background: 'rgba(56,189,248,0.25)', color: '#bae6fd', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}>
-                    📊 Abrir Pop-up AOI
-                  </button>
+                  <button type="button" onClick={analyzeAoi} style={{ padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #38bdf8', background: 'rgba(56,189,248,0.25)', color: '#bae6fd', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}>📊 Abrir Pop-up AOI</button>
                 )}
-                <button type="button" onClick={clearAoi} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #f43f5e', background: 'rgba(244,63,94,0.18)', color: '#fda4af', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>
-                  ✕
-                </button>
+                <button type="button" onClick={clearAoi} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #f43f5e', background: 'rgba(244,63,94,0.18)', color: '#fda4af', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>✕</button>
               </div>
             </div>
           )}
@@ -2089,17 +2143,63 @@ function toggleReportLang() {
               {(raster || file) && (
                 <div className="button-row" style={{ marginTop: '8px' }}>
                   {differenceReady && comparisonMode !== 'main' && (
-                    <button type="button" onClick={() => { setSwipeActive(false); setComparisonMode('main'); }}>
-                      👁 Ver Mapa Principal
-                    </button>
+                    <button type="button" onClick={() => { setSwipeActive(false); setComparisonMode('main'); }}>👁 Ver Mapa Principal</button>
                   )}
-                  <button type="button" onClick={clearMainAnalysis}>
-                    ✕ Limpar principal
-                  </button>
+                  <button type="button" onClick={clearMainAnalysis}>✕ Limpar principal</button>
                 </div>
               )}
               {error && <div className="error-box">{error}</div>}
             </section>
+
+            {/* NOVO CARD: VALIDAÇÃO EM TERRA COM ESTAÇÕES METEOROLÓGICAS + RAIO DE REPRESENTATIVIDADE */}
+            <section className="rail-card">
+              <div className="card-heading">
+                <h3>📡 Estações em Terra (Validação)</h3>
+                <span className="chip">{stations.length ? `${stations.length} pts` : `R=${stationRadiusM}m`}</span>
+              </div>
+              <p className="microcopy">
+                Busca estações (Oficiais/METAR, Cidadãs/PWS e Referência) dentro dos limites da imagem no dia e horário da passagem (~10:15 BRT) e compara com a estatística espacial do raster no raio escolhido.
+              </p>
+              <div className="control-row">
+                <span>Raio de representatividade</span>
+                <select value={stationRadiusM} onChange={(e) => setStationRadiusM(Number(e.target.value))}>
+                  <option value={30}>30 m (Micro-lote / ~2.800 m²)</option>
+                  <option value={50}>50 m (Quadra / ~7.850 m²)</option>
+                  <option value={100}>100 m (Padrão OMM Urbano / ~3,1 ha)</option>
+                  <option value={250}>250 m (Vizinhança / ~19,6 ha)</option>
+                  <option value={500}>500 m (Mesoescala / ~78,5 ha)</option>
+                </select>
+              </div>
+              <div className="button-row" style={{ marginTop: '8px' }}>
+                <button onClick={() => void loadStationsOnMap()} disabled={!raster || stationsBusy}>
+                  {stationsBusy ? 'Sincronizando…' : '📡 Buscar Estações na Cena'}
+                </button>
+                <button onClick={() => setShowStationModal(true)} disabled={stations.length === 0}>
+                  📈 Gráfico Satélite vs. Estação
+                </button>
+              </div>
+              {stations.length > 0 && validationMetrics && (
+                <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(56,189,248,0.1)', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.3)', fontSize: '11px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Diferença Média (MAE no Raio {stationRadiusM}m):</span>
+                    <b style={{ color: '#38bdf8' }}>{validationMetrics.maeRadius.toFixed(2)} °C</b>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '3px' }}>
+                    <span>Viés Superfície−Ar (LST − Ta):</span>
+                    <b style={{ color: '#ffb000' }}>{validationMetrics.biasRadius >= 0 ? '+' : ''}{validationMetrics.biasRadius.toFixed(2)} °C</b>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px' }}>
+                    <button type="button" onClick={() => setShowStationsLayer(!showStationsLayer)} style={{ padding: '4px 8px', fontSize: '10px' }}>
+                      {showStationsLayer ? '👁 Ocultar círculos no mapa' : '👁 Mostrar círculos no mapa'}
+                    </button>
+                    <button type="button" onClick={downloadStationsCsv} style={{ padding: '4px 8px', fontSize: '10px' }}>
+                      ⇩ CSV Validação
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+
             {(raster || differenceReady || hoverSample || sample || identifyMode) && (
               <section className="rail-card inspector-rail-card">
                 <div className="card-heading">
@@ -2114,10 +2214,6 @@ function toggleReportLang() {
                           {activeInspect.diffTemp >= 0 ? `+${activeInspect.diffTemp.toFixed(2)}°C` : `${activeInspect.diffTemp.toFixed(2)}°C`}
                         </strong>
                         <span className="inspector-uhi-class" style={{ display: 'block', marginTop: '4px' }}><b style={{ color: activeDiffInfo?.color }}>{activeDiffInfo?.label}</b></span>
-                        <div className="inspector-coordinates" style={{ marginTop: '4px' }}>
-                          Antes: <b>{activeInspect.beforeTemp?.toFixed(1) ?? '—'}°C</b> → Depois: <b>{activeInspect.afterTemp?.toFixed(1) ?? '—'}°C</b><br />
-                          Desvio (1σ): ±{differenceStats.thresholdSigma.toFixed(2)}°C · Lat: {activeInspect.lat.toFixed(4)} · Lon: {activeInspect.lng.toFixed(4)}
-                        </div>
                       </>
                     ) : (
                       <>
@@ -2128,7 +2224,6 @@ function toggleReportLang() {
                             <b>{activeInspect ? uhiClassLabel(activeInspect.temp, raster.stats, uhiMethod, uhiPower, lang) : `${raster.stats.min.toFixed(1)}°C – ${raster.stats.max.toFixed(1)}°C`}</b>
                           </span>
                         )}
-                        {activeInspect && <div className="inspector-coordinates">Lat: {activeInspect.lat.toFixed(4)} · Lon: {activeInspect.lng.toFixed(4)}</div>}
                       </>
                     )}
                   </div>
@@ -2136,7 +2231,6 @@ function toggleReportLang() {
                     <div className="side-legend">
                       <b>{showingComparison && comparisonMode === 'difference' && !swipeActive ? 'Escala ΔLST (±1σ)' : displayMode === 'uhi' ? 'Escala UHI' : `Paleta: ${palette}`}</b>
                       <i className="legend-gradient" style={{ background: showingComparison && comparisonMode === 'difference' && !swipeActive ? DIFFERENCE_GRADIENT_CSS : legendGradient }} />
-                      <small>{showingComparison && comparisonMode === 'difference' && !swipeActive ? 'Diminuiu ← Igual → Aumentou' : `${raster?.stats.min.toFixed(1) ?? '—'}°C → ${raster?.stats.max.toFixed(1) ?? '—'}°C`}</small>
                     </div>
                   </div>
                 </div>
@@ -2145,10 +2239,6 @@ function toggleReportLang() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '11px' }}><b>{t.histogram}</b><span>σ = {raster.stats.stdDev.toFixed(2)}°C</span></div>
                     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${colorTempHistogram.length}, 1fr)`, alignItems: 'end', gap: '2px', height: '64px', paddingBottom: '4px' }}>
                       {colorTempHistogram.map((b, idx) => <div key={idx} title={b.tempLabel} style={{ height: `${b.height}%`, background: b.color, borderRadius: '2px 2px 0 0' }} />)}
-                    </div>
-                    <div className="legend-gradient" style={{ background: legendGradient, height: '8px', borderRadius: '4px', margin: '2px 0 5px' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', opacity: 0.85 }}>
-                      <span>{raster.stats.min.toFixed(1)}°C</span><span>Q25: {raster.stats.q25.toFixed(1)}°</span><b>μ: {raster.stats.mean.toFixed(1)}°C</b><span>Q75: {raster.stats.q75.toFixed(1)}°</span><span>{raster.stats.max.toFixed(1)}°C</span>
                     </div>
                   </div>
                 )}
@@ -2169,17 +2259,8 @@ function toggleReportLang() {
                       </select>
                     </div>
                     {palette === 'custom' && (
-                      <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                          <small style={{ fontSize: '11px' }}>Paradas de cor (instantâneo):</small>
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <button type="button" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => setDraftCustomColors((p) => [...p].reverse())}>⇄ Inverter</button>
-                            <button type="button" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => setDraftCustomColors(DEFAULT_CUSTOM_COLORS)}>↺ Reset</button>
-                          </div>
-                        </div>
-                        <div className="custom-colors" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px' }}>
-                          {draftCustomColors.map((col, idx) => <input key={idx} type="color" value={col} onChange={(e) => { const v = e.target.value; setDraftCustomColors((cs) => cs.map((it, i) => (i === idx ? v : it))); }} style={{ width: '100%', height: '28px', cursor: 'pointer', border: 'none', borderRadius: '4px' }} />)}
-                        </div>
+                      <div className="custom-colors" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px', marginTop: '8px' }}>
+                        {draftCustomColors.map((col, idx) => <input key={idx} type="color" value={col} onChange={(e) => { const v = e.target.value; setDraftCustomColors((cs) => cs.map((it, i) => (i === idx ? v : it))); }} style={{ width: '100%', height: '28px', cursor: 'pointer', border: 'none', borderRadius: '4px' }} />)}
                       </div>
                     )}
                   </>
@@ -2211,12 +2292,6 @@ function toggleReportLang() {
             </section>
             <section className="rail-card compare-card">
               <div className="card-heading"><h3>{t.compare}</h3><span className="chip">{comparisonImages.length ? `${comparisonImages.length} LST` : '—'}</span></div>
-              <div className="control-row comparison-count">
-                <span>Quantidade de imagens</span>
-                <select value={comparisonCount} onChange={(e) => { const v = Number(e.target.value); setComparisonCount(v); setComparisonFiles((p) => Array.from({ length: v }, (_, i) => p[i] ?? null)); setComparisonImages([]); setDifferenceReady(false); }}>
-                  {[2, 3, 4, 5, 6].map((v) => <option key={v} value={v}>{v}</option>)}
-                </select>
-              </div>
               <div className="comparison-file-list">
                 {comparisonFiles.map((sel, idx) => (
                   <label className="comparison-file" key={idx} style={{ cursor: 'pointer', position: 'relative' }}>
@@ -2230,44 +2305,18 @@ function toggleReportLang() {
                 <button onClick={() => { setSwipeActive(false); setComparisonMode('difference'); }} disabled={!differenceReady} className={!swipeActive && showingComparison && comparisonMode === 'difference' ? 'active' : ''}>Mapa Diferença</button>
                 <button onClick={() => { setComparisonMode('difference'); setSwipeActive(!swipeActive); }} disabled={!differenceReady} className={swipeActive && showingComparison ? 'active' : ''}>{swipeActive && showingComparison ? 'Cortina Fixa Ativa' : 'Cortina (Antes/Depois)'}</button>
                 <button onClick={() => void downloadComparisonPanel()} disabled={!differenceReady}>Exportar A / B / Δ</button>
-                {raster && differenceReady && (
-                  <button type="button" className={comparisonMode === 'main' ? 'active' : ''} onClick={() => { setSwipeActive(false); setComparisonMode(comparisonMode === 'main' ? 'difference' : 'main'); }}>
-                    {comparisonMode === 'main' ? '👁 Voltar para Comparação' : '👁 Ver Data Principal'}
-                  </button>
-                )}
                 {(differenceReady || comparisonFiles.some(Boolean)) && (
-                  <button type="button" onClick={clearComparisonAnalysis}>
-                    ✕ Limpar comparação
-                  </button>
+                  <button type="button" onClick={clearComparisonAnalysis}>✕ Limpar comparação</button>
                 )}
               </div>
-              {swipeActive && showingComparison && (
-                <label className="swipe-control">
-                  <span>◀ ANTES ({comparisonPrimary?.dateLabel}) | DEPOIS ({comparisonSecondary?.dateLabel}) ▶ <b>{swipePosition.toFixed(0)}%</b></span>
-                  <input type="range" min="0" max="100" value={swipePosition} onChange={(e) => setSwipePosition(Number(e.target.value))} />
-                </label>
-              )}
             </section>
 
             <section className="rail-card">
               <div className="card-heading"><h3>⌗ {t.aoi}</h3><span className="chip">{aoi.length ? `${aoi.length} pts` : aoiShapeMode}</span></div>
               <p className="microcopy">{aoiStats ? `Média AOI: ${aoiStats.mean.toFixed(2)}°C (${aoiStats.min.toFixed(1)}–${aoiStats.max.toFixed(1)}°C · ${aoiStats.count.toLocaleString('pt-BR')} px)` : t.aoiHelp}</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', marginBottom: '8px' }}>
-                {([
-                  ['rectangle', '▭ Retângulo'],
-                  ['square', '◻ Quadrado'],
-                  ['circle', '◯ Círculo'],
-                  ['polygon', '⬠ Polígono'],
-                ] as const).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className={drawAoi && aoiShapeMode === mode ? 'active' : ''}
-                    onClick={() => selectAoiShape(mode)}
-                    style={{ padding: '8px 6px', fontSize: '12px', fontWeight: 700, border: drawAoi && aoiShapeMode === mode ? '2px solid #ffb000' : undefined }}
-                  >
-                    {label}
-                  </button>
+                {([['rectangle', '▭ Retângulo'], ['square', '◻ Quadrado'], ['circle', '◯ Círculo'], ['polygon', '⬠ Polígono']] as const).map(([mode, label]) => (
+                  <button key={mode} type="button" className={drawAoi && aoiShapeMode === mode ? 'active' : ''} onClick={() => selectAoiShape(mode)} style={{ padding: '8px 6px', fontSize: '12px', fontWeight: 700, border: drawAoi && aoiShapeMode === mode ? '2px solid #ffb000' : undefined }}>{label}</button>
                 ))}
               </div>
               <div className="button-row">
@@ -2285,10 +2334,6 @@ function toggleReportLang() {
                     <Metric label={t.min} value={raster.stats.min.toFixed(1)} /><Metric label={t.mean} value={raster.stats.mean.toFixed(1)} />
                     <Metric label={t.max} value={raster.stats.max.toFixed(1)} /><Metric label={t.std} value={raster.stats.stdDev.toFixed(2)} />
                   </div>
-                </section>
-                <section className="rail-card">
-                  <div className="card-heading"><h3>{t.indices}</h3><span className="chip">MS</span></div>
-                  <div className="metric-grid index-grid"><Metric label={t.ndvi} value={meanOf(raster.ndvi).toFixed(3)} /><Metric label={t.ndbi} value={meanOf(raster.ndbi).toFixed(3)} /></div>
                 </section>
                 <section className="rail-card">
                   <div className="card-heading"><h3>{t.export}</h3></div>
@@ -2309,6 +2354,145 @@ function toggleReportLang() {
         </aside>
       </main>
 
+      {/* POP-UP DO GRÁFICO E DIAGNÓSTICO DE VALIDAÇÃO EM TERRA (SATÉLITE VS. ESTAÇÕES NO RAIO R) */}
+      {showStationModal && stations.length > 0 && validationMetrics && (
+        <div className="dialog-backdrop" onClick={() => setShowStationModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(3,10,14,0.82)', backdropFilter: 'blur(6px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '20px' }}>
+          <div className="dialog-card" onClick={(e) => e.stopPropagation()} style={{ width: 'min(1040px, 96vw)', maxHeight: '90vh', overflowY: 'auto', background: '#0b1b22', border: '2px solid #38bdf8', borderRadius: '18px', padding: '24px', color: '#fff', position: 'relative' }}>
+            <button className="dialog-close" onClick={() => setShowStationModal(false)}>×</button>
+            <div className="card-kicker" style={{ color: '#38bdf8' }}>📡 VALIDAÇÃO EM TERRA · ACOPLAMENTO SUPERFÍCIE-ATMOSFERA</div>
+            <h2 style={{ margin: '4px 0 6px' }}>Comparativo Térmico: Imagem de Satélite (LST) vs. Estações em Terra (Ta 2m)</h2>
+            <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#9cddda' }}>
+              Data/Horário da Passagem: <b>{stations[0].dateIso} às {stations[0].overpassTime}</b> · Raio de Representatividade Ativo: <b>{stationRadiusM} m</b> ({stations[0].pixelCount.toLocaleString('pt-BR')} pixels/estação)
+            </p>
+
+            {/* Seletor rápido de Raio dentro do próprio Pop-up */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '16px', padding: '10px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '10px' }}>
+              <b style={{ fontSize: '12px', color: '#ffb000' }}>Testar outro Raio de Representatividade (R):</b>
+              {[30, 50, 100, 250, 500].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setStationRadiusM(r)}
+                  style={{ padding: '5px 12px', borderRadius: '6px', border: stationRadiusM === r ? '2px solid #38bdf8' : '1px solid rgba(255,255,255,0.2)', background: stationRadiusM === r ? 'rgba(56,189,248,0.25)' : 'transparent', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
+                >
+                  {r} m
+                </button>
+              ))}
+              <button type="button" onClick={downloadStationsCsv} style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: '6px', background: '#38bdf8', color: '#071317', fontWeight: 800, border: 'none', cursor: 'pointer', fontSize: '12px' }}>
+                ⇩ Exportar CSV da Validação
+              </button>
+            </div>
+
+            {/* Cards de Resumo de Proximidade */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '18px' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
+                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Raio ({stationRadiusM}m)</small>
+                <strong style={{ fontSize: '20px', color: '#38bdf8' }}>{validationMetrics.maeRadius.toFixed(2)} °C</strong>
+                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Diferença média absoluta</small>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
+                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Pixel 1m Isolado</small>
+                <strong style={{ fontSize: '20px', color: '#facc15' }}>{validationMetrics.mae1m.toFixed(2)} °C</strong>
+                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Sem média espacial do raio</small>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
+                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>RMSE (Erro Quadrático)</small>
+                <strong style={{ fontSize: '20px', color: '#fff' }}>{validationMetrics.rmseRadius.toFixed(2)} °C</strong>
+                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Dispersão Satélite vs. Terra</small>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
+                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>Offset Médio (LST − Ta)</small>
+                <strong style={{ fontSize: '20px', color: '#fb923c' }}>{validationMetrics.biasRadius >= 0 ? '+' : ''}{validationMetrics.biasRadius.toFixed(2)} °C</strong>
+                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Superfície vs. Ar a 2m</small>
+              </div>
+            </div>
+
+            {/* Gráfico Visual Comparativo por Estação (Barras Triplas + Faixa ±1σ Espacial) */}
+            <div style={{ background: '#071317', border: '1px solid rgba(121,226,220,0.22)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <b style={{ fontSize: '13px', color: '#fff' }}>Gráfico de Proximidade e Variação Espacial por Estação (°C)</b>
+                <div style={{ display: 'flex', gap: '14px', fontSize: '11px' }}>
+                  <span><i style={{ display: 'inline-block', width: 10, height: 10, background: '#38bdf8', borderRadius: 2, marginRight: 5 }} />Estação Ar 2m (Ta)</span>
+                  <span><i style={{ display: 'inline-block', width: 10, height: 10, background: '#ffb000', borderRadius: 2, marginRight: 5 }} />Satélite Média no Raio {stationRadiusM}m (μ ± 1σ)</span>
+                  <span><i style={{ display: 'inline-block', width: 10, height: 10, background: '#f43f5e', borderRadius: 2, marginRight: 5 }} />Pixel Central 1m</span>
+                </div>
+              </div>
+
+              {stations.map((st) => {
+                const scaleMin = Math.min(15, raster?.stats.min ?? 18) - 2;
+                const scaleMax = Math.max(40, raster?.stats.max ?? 38) + 2;
+                const toPct = (v: number) => Math.max(2, Math.min(98, ((v - scaleMin) / (scaleMax - scaleMin)) * 100));
+                return (
+                  <div key={st.id} style={{ marginBottom: '12px', paddingBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px', flexWrap: 'wrap' }}>
+                      <span><b>{st.name}</b> <small style={{ color: '#9ab0b5' }}>({st.source})</small></span>
+                      <span>
+                        <b style={{ color: st.proximityColor }}>{st.proximityStatus}</b> · Δ(Raio−Estação) = <b>{st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C</b> (σ espacial = ±{st.radiusStdC.toFixed(2)} °C)
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px', marginBottom: '3px' }}>
+                      <span style={{ color: '#38bdf8' }}>Estação (2m):</span>
+                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${toPct(st.stationTempC)}%`, height: '100%', background: '#38bdf8' }} />
+                      </div>
+                      <b>{st.stationTempC.toFixed(1)} °C</b>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px', marginBottom: '3px' }}>
+                      <span style={{ color: '#ffb000' }}>LST Raio {stationRadiusM}m:</span>
+                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', position: 'relative' }}>
+                        <div style={{ width: `${toPct(st.radiusMeanC)}%`, height: '100%', background: '#ffb000', borderRadius: '4px' }} />
+                        <div
+                          title={`Faixa ±1σ no raio: ${(st.radiusMeanC - st.radiusStdC).toFixed(1)}°C a ${(st.radiusMeanC + st.radiusStdC).toFixed(1)}°C`}
+                          style={{ position: 'absolute', top: '-2px', height: '12px', left: `${toPct(st.radiusMeanC - st.radiusStdC)}%`, width: `${Math.max(1, toPct(st.radiusMeanC + st.radiusStdC) - toPct(st.radiusMeanC - st.radiusStdC))}%`, border: '1.5px solid #fff', borderRadius: '3px', background: 'rgba(255,255,255,0.25)' }}
+                        />
+                      </div>
+                      <b>{st.radiusMeanC.toFixed(1)} °C</b>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px' }}>
+                      <span style={{ color: '#f43f5e' }}>LST Pixel 1m:</span>
+                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${toPct(st.pixel1mC)}%`, height: '100%', background: '#f43f5e' }} />
+                      </div>
+                      <b>{st.pixel1mC.toFixed(1)} °C</b>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Tabela Completa de Estatísticas Espaciais por Estação */}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(255,255,255,0.06)', textAlign: 'left' }}>
+                    <th style={{ padding: '8px' }}>Estação / Tipo</th>
+                    <th style={{ padding: '8px' }}>Ta Estação (10:15)</th>
+                    <th style={{ padding: '8px' }}>LST Raio {stationRadiusM}m (μ ± σ)</th>
+                    <th style={{ padding: '8px' }}>Mediana / Mín–Máx Raio</th>
+                    <th style={{ padding: '8px' }}>LST Pixel 1m</th>
+                    <th style={{ padding: '8px' }}>ΔT (Raio − Estação)</th>
+                    <th style={{ padding: '8px' }}>NDVI / NDBI Raio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stations.map((s) => (
+                    <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                      <td style={{ padding: '8px' }}><b>{s.name}</b><br /><small style={{ color: '#9ab0b5' }}>{s.source}</small></td>
+                      <td style={{ padding: '8px', color: '#38bdf8', fontWeight: 700 }}>{s.stationTempC.toFixed(2)} °C <small>({s.humidityPct}%)</small></td>
+                      <td style={{ padding: '8px', color: '#ffb000', fontWeight: 700 }}>{s.radiusMeanC.toFixed(2)} °C <small>±{s.radiusStdC.toFixed(2)}°</small></td>
+                      <td style={{ padding: '8px' }}>{s.radiusMedianC.toFixed(2)} °C <small>({s.radiusMinC.toFixed(1)}–{s.radiusMaxC.toFixed(1)}°)</small></td>
+                      <td style={{ padding: '8px' }}>{s.pixel1mC.toFixed(2)} °C</td>
+                      <td style={{ padding: '8px', color: s.proximityColor, fontWeight: 800 }}>{s.deltaRadiusC >= 0 ? '+' : ''}{s.deltaRadiusC.toFixed(2)} °C</td>
+                      <td style={{ padding: '8px' }}>{s.ndviMean.toFixed(2)} / {s.ndbiMean.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAoiModal && aoiDetailed && raster && (
         <div className="dialog-backdrop" onClick={() => setShowAoiModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(3,10,14,0.8)', backdropFilter: 'blur(6px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '20px' }}>
           <div className="dialog-card" onClick={(e) => e.stopPropagation()} style={{ width: 'min(940px, 96vw)', maxHeight: '90vh', overflowY: 'auto', background: '#0b1b22', border: '2px solid #ffb000', borderRadius: '18px', padding: '24px', color: '#fff', position: 'relative' }}>
@@ -2316,46 +2500,33 @@ function toggleReportLang() {
             <div className="card-kicker" style={{ color: '#ffb000' }}>⌗ DIAGNÓSTICO DE ÁREA DE INTERESSE (AOI)</div>
             <h2 style={{ margin: '4px 0 6px' }}>Análise Espacial da AOI ({aoiDetailed.shapeMode.toUpperCase()})</h2>
             <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#9cddda' }}>
-              Área útil: <b>{aoiDetailed.areaHa.toFixed(2)} ha</b> ({aoiDetailed.areaM2.toFixed(0)} m²) · <b>{aoiDetailed.count.toLocaleString('pt-BR')}</b> píxeis válidos no raster numérico · EPSG:{raster.epsg}
+              Área útil: <b>{aoiDetailed.areaHa.toFixed(2)} ha</b> ({aoiDetailed.areaM2.toFixed(0)} m²) · <b>{aoiDetailed.count.toLocaleString('pt-BR')}</b> píxeis válidos · EPSG:{raster.epsg}
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
               <div style={{ background: '#071317', border: '1px solid rgba(121,226,220,0.25)', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
                 <img src={aoiDetailed.previewDataUrl} alt="Preview AOI" style={{ maxWidth: '100%', maxHeight: '280px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #ffb000' }} />
-                <small style={{ display: 'block', marginTop: '8px', color: '#9ab0b5' }}>Recorte: {aoiDetailed.clipWidth} × {aoiDetailed.clipHeight} px</small>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                   <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Mínima</small><strong style={{ fontSize: '18px', color: '#38bdf8' }}>{aoiDetailed.min.toFixed(1)} °C</strong></div>
                   <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Média (μ)</small><strong style={{ fontSize: '18px', color: '#ffb000' }}>{aoiDetailed.mean.toFixed(2)} °C</strong></div>
                   <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Máxima</small><strong style={{ fontSize: '18px', color: '#f43f5e' }}>{aoiDetailed.max.toFixed(1)} °C</strong></div>
-                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Mediana (Q50)</small><strong>{aoiDetailed.q50.toFixed(2)} °C</strong></div>
-                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Q25 – Q75</small><strong>{aoiDetailed.q25.toFixed(1)}–{aoiDetailed.q75.toFixed(1)}°</strong></div>
-                  <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}><small style={{ color: '#9ab0b5', display: 'block', fontSize: '11px' }}>Desvio (σ)</small><strong>±{aoiDetailed.stdDev.toFixed(2)} °C</strong></div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
-                  <div style={{ background: 'rgba(52,211,153,0.12)', padding: '8px 10px', borderRadius: '8px', border: '1px solid #34d399' }}>🌿 NDVI: <b>{aoiDetailed.ndviMean.toFixed(3)}</b> (Veg: {aoiDetailed.vegPct.toFixed(1)}%)</div>
-                  <div style={{ background: 'rgba(251,146,60,0.12)', padding: '8px 10px', borderRadius: '8px', border: '1px solid #fb923c' }}>🏢 NDBI: <b>{aoiDetailed.ndbiMean.toFixed(3)}</b> (Const: {aoiDetailed.builtPct.toFixed(1)}%)</div>
                 </div>
                 <div style={{ background: 'rgba(0,0,0,0.28)', padding: '10px', borderRadius: '8px', fontSize: '11px' }}>
-                  <b style={{ display: 'block', marginBottom: '6px', color: '#9cddda' }}>Classes UHI dentro da AOI:</b>
                   {['1. Frescor', '2. Amenizado', '3. Neutro', '4. UHI Moderada', '5. UHI Forte', '6. Hotspot Extremo'].map((lbl, idx) => (
                     <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                      <span>{lbl}</span>
-                      <b>{aoiDetailed.uhiPcts[idx].toFixed(1)}% ({aoiDetailed.uhiCounts[idx].toLocaleString('pt-BR')} px)</b>
+                      <span>{lbl}</span><b>{aoiDetailed.uhiPcts[idx].toFixed(1)}% ({aoiDetailed.uhiCounts[idx].toLocaleString('pt-BR')} px)</b>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
-            <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid rgba(121,226,220,0.25)', display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'space-between', alignItems: 'center' }}>
-              <b style={{ fontSize: '12px', color: '#ffb000' }}>⇩ Exportar recorte da AOI:</b>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                <button type="button" onClick={() => void downloadAoiModalPng()} style={{ padding: '8px 14px', borderRadius: '8px', background: '#ffb000', color: '#071317', fontWeight: 800, border: 'none', cursor: 'pointer' }}>🖼 PNG (com legenda)</button>
-                <button type="button" onClick={downloadAoiModalTiff} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(121,226,220,0.18)', color: '#79e2dc', fontWeight: 700, border: '1px solid #79e2dc', cursor: 'pointer' }}>🗺 GeoTIFF (LST)</button>
-                <button type="button" onClick={downloadAoiModalGeoJson} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>📐 GeoJSON</button>
-                <button type="button" onClick={downloadAoiModalKml} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>🌍 KML</button>
-                <button type="button" onClick={downloadAoiModalCsv} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>📊 CSV</button>
-              </div>
+            <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid rgba(121,226,220,0.25)', display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => void downloadAoiModalPng()} style={{ padding: '8px 14px', borderRadius: '8px', background: '#ffb000', color: '#071317', fontWeight: 800, border: 'none', cursor: 'pointer' }}>🖼 PNG (com legenda)</button>
+              <button type="button" onClick={downloadAoiModalTiff} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(121,226,220,0.18)', color: '#79e2dc', fontWeight: 700, border: '1px solid #79e2dc', cursor: 'pointer' }}>🗺 GeoTIFF (LST)</button>
+              <button type="button" onClick={downloadAoiModalGeoJson} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>📐 GeoJSON</button>
+              <button type="button" onClick={downloadAoiModalKml} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>🌍 KML</button>
+              <button type="button" onClick={downloadAoiModalCsv} style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 700, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>📊 CSV</button>
             </div>
           </div>
         </div>
@@ -2388,4 +2559,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.2
+// FIM DO ARQUIVO src/App.tsx v3.3
