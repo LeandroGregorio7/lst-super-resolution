@@ -114,7 +114,7 @@ function bringOverlaysToFront(map: MapLibreMap) {
 
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.3', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.4', title: 'SR2D4 / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
     colab: 'Abrir Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
     bands: 'Bandas ópticas do SR2D4', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
@@ -136,7 +136,7 @@ const copy = {
     limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Valide com estações em terra.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.3', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.4', title: 'SR2D4 / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
     colab: 'Open Colab', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
     bands: 'SR2D4 optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
@@ -440,7 +440,6 @@ function pointInPolygon(point: [number, number], polygon: [number, number][]) {
   return inside;
 }
 
-// Estatística espacial do raster numérico dentro do Raio de Representatividade (R metros) da Estação
 function sampleRasterInRadiusMeters(raster: RasterState, lng: number, lat: number, radiusMeters: number) {
   const ext = boundsExtent(raster.bounds);
   const cx = Math.floor(((lng - ext.west) / (ext.east - ext.west)) * raster.width);
@@ -493,7 +492,6 @@ function sampleRasterInRadiusMeters(raster: RasterState, lng: number, lat: numbe
   };
 }
 
-// Busca estações dentro do BBOX do GeoTIFF + temperatura horária da passagem do satélite (~10:15 local / 13:15 UTC)
 async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: number): Promise<StationValidationPoint[]> {
   const ext = boundsExtent(raster.bounds);
   const m = raster.fileName.match(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/);
@@ -503,7 +501,6 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
 
   const candidates: Array<{ id: string; name: string; source: StationValidationPoint['source']; lng: number; lat: number; tempC?: number; hum?: number }> = [];
 
-  // 1. OpenSenseMap (Rede Cidadã / Amadora dentro do BBOX)
   try {
     const r = await fetch(`https://api.opensensemap.org/boxes?bbox=${ext.west},${ext.south},${ext.east},${ext.north}&format=json`);
     if (r.ok) {
@@ -526,7 +523,6 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
     }
   } catch { /* ignore */ }
 
-  // 2. OpenStreetMap Overpass (Aeródromos METAR, Estações Oficiais e Pontos de Monitoramento no BBOX)
   try {
     const q = `[out:json][timeout:6];(node["man_made"="monitoring_station"](${ext.south},${ext.west},${ext.north},${ext.east});node["monitoring:weather"="yes"](${ext.south},${ext.west},${ext.north},${ext.east});way["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["place"~"suburb|neighbourhood"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 25;`;
     const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`);
@@ -550,7 +546,6 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
     }
   } catch { /* ignore */ }
 
-  // 3. Garante pelo menos 5 pontos bem distribuídos na cena caso a área tenha poucas estações cadastradas
   if (candidates.length < 5) {
     const fallbackGrid = [
       ['Estação Setor Central', 0.5, 0.5],
@@ -568,7 +563,6 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
     }
   }
 
-  // 4. Consulta Temperatura do Ar (2m) e Umidade às 10:00 locais (horário da passagem Landsat/Sentinel) via Open-Meteo
   let synopticTa = raster.stats.mean - 2.4;
   let synopticRh = 58;
   try {
@@ -583,13 +577,12 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
       if (Number.isFinite(t10)) synopticTa = t10;
       if (Number.isFinite(h10)) synopticRh = h10;
     }
-  } catch { /* fallback to physical canopy offset */ }
+  } catch { /* fallback */ }
 
   const results: StationValidationPoint[] = [];
   for (const cand of candidates.slice(0, 10)) {
     const sp = sampleRasterInRadiusMeters(raster, cand.lng, cand.lat, radiusMeters);
     if (!sp) continue;
-    // Modulação micrometeorológica de dossel (2m) quando a estação usa grade sinótica + efeito local NDVI/NDBI
     const canopyEffect = sp.ndbiMean * 1.8 - sp.ndviMean * 2.1;
     const stationTempC = cand.tempC !== undefined ? cand.tempC : Number((synopticTa + canopyEffect).toFixed(2));
     const humidityPct = cand.hum !== undefined ? cand.hum : Math.round(Math.max(25, Math.min(95, synopticRh - canopyEffect * 3.5)));
@@ -1076,7 +1069,6 @@ export default function App() {
   const [aoiDetailed, setAoiDetailed] = useState<AoiDetailedStats | null>(null);
   const [showAoiModal, setShowAoiModal] = useState(false);
 
-  // Estados de Validação com Estações Meteorológicas em Terra
   const [stationRadiusM, setStationRadiusM] = useState<number>(100);
   const [stations, setStations] = useState<StationValidationPoint[]>([]);
   const [stationsBusy, setStationsBusy] = useState(false);
@@ -1387,7 +1379,6 @@ export default function App() {
     }
   }, [comparisonPrimary, extent, raster]);
 
-  // Camada da AOI sempre no topo
   useEffect(() => {
     const map = mapInstance.current; if (!map) return;
     const updateAoiLayer = () => {
@@ -1421,7 +1412,6 @@ export default function App() {
     if (map.isStyleLoaded()) updateAoiLayer(); else map.once('load', updateAoiLayer);
   }, [aoi, aoiAnchor, aoiCursorPt, aoiShapeMode, drawAoi]);
 
-  // Camada das Estações em Terra + Círculo do Raio de Representatividade (R metros)
   useEffect(() => {
     const map = mapInstance.current; if (!map) return;
     const updateStationsLayer = () => {
@@ -1455,7 +1445,6 @@ export default function App() {
     if (map.isStyleLoaded()) updateStationsLayer(); else map.once('load', updateStationsLayer);
   }, [stations, stationRadiusM, showStationsLayer]);
 
-  // Recalcula estatísticas espaciais das estações se o usuário alterar o Raio de Representatividade (R)
   useEffect(() => {
     if (!raster || stations.length === 0) return;
     setStations((prev) =>
@@ -1809,6 +1798,8 @@ export default function App() {
     const pct = (n: number, d = valid) => (d > 0 ? ((n / d) * 100).toFixed(1) : '0.0');
     const ha = (n: number) => ((n * pxM2) / 10000).toFixed(2);
     const strongExtPct = (((uhiCnt[4] + uhiCnt[5]) / Math.max(1, valid)) * 100).toFixed(1);
+    const meanNdviVal = meanOf(raster.ndvi).toFixed(3);
+    const meanNdbiVal = meanOf(raster.ndbi).toFixed(3);
 
     const dateMatches = Array.from(raster.fileName.matchAll(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/g)).map((m) => `${m[1]}-${m[2]}-${m[3]}`);
     const uniqueDates = [...new Set(dateMatches)];
@@ -1859,17 +1850,17 @@ export default function App() {
 .callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
 @media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
 </style></head><body><div class="page">
-  <div class="topline"><span>SR2D4 · GEOSPATIAL INTELLIGENCE (v3.3)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
+  <div class="topline"><span>SR2D4 · GEOSPATIAL INTELLIGENCE (v3.4)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
   <header class="hero">
     <h1 data-pt="Temperatura de superfície, ilhas de calor e validação em terra" data-en="Land surface temperature, heat islands and ground validation">Temperatura de superfície, ilhas de calor e validação em terra</h1>
-    <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px), with LST and UHI maps, NDVI/NDBI spectral analysis, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas.</p>
+    <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px, ${noData.toLocaleString('pt-BR')} NoData), with LST and UHI maps, NDVI/NDBI spectral analysis, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas.</p>
     <div class="hero-meta"><span>CRS: EPSG:${raster.epsg}</span><span>Resolução: ${resX.toFixed(2)} m</span><span>Área útil: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)</span><span>Datas: ${dateOpt} / ${dateTherm} ${daysGap !== null ? `(Δ=${daysGap}d)` : ''}</span><span>Emissão: ${issueDate}</span></div>
   </header>
   <section class="section"><div class="grid-4">
     <article class="card"><small>LST Média / Mediana</small><div class="metric-value">${raster.stats.mean.toFixed(1)} °C</div><small>Mediana: ${raster.stats.q50.toFixed(1)} °C · σ=${raster.stats.stdDev.toFixed(2)} °C</small></article>
-    <article class="card"><small>Mínima / Máxima</small><div class="metric-value">${raster.stats.max.toFixed(1)} °C</div><small>Mín: ${raster.stats.min.toFixed(1)} °C · Limiar Hotspot: ${hotspotLim.toFixed(1)} °C</small></article>
+    <article class="card"><small>Mínima / Máxima</small><div class="metric-value">${raster.stats.max.toFixed(1)} °C</div><small>Mín: ${raster.stats.min.toFixed(1)} °C · Limiar Hotspot (${hotspotLim.toFixed(1)}°C): ${pct(aboveHot)}%</small></article>
     <article class="card"><small>UHI Forte + Extrema</small><div class="metric-value">${strongExtPct}%</div><small>${ha(uhiCnt[4] + uhiCnt[5])} ha (&gt; +0,85σ) · &gt;31°C: ${pct(above31)}%</small></article>
-    <article class="card"><small>Vegetação (NDVI &gt; 0,3)</small><div class="metric-value">${pct(veg, specValid)}%</div><small>Construído (NDBI &gt; 0,1): ${pct(built, specValid)}% · Sobreposição: ${pct(overlapVB, specValid)}%</small></article>
+    <article class="card"><small>Vegetação (NDVI &gt; 0,3)</small><div class="metric-value">${pct(veg, specValid)}%</div><small>NDVI μ=${meanNdviVal} · NDBI μ=${meanNdbiVal}</small></article>
   </div></section>
   <section class="section"><div class="grid-2">
     <div class="card"><h3>Mapa 01 · Temperatura de Superfície (LST °C)</h3><div class="map-frame"><img src="${lstMapImg}" alt="Mapa LST"></div></div>
@@ -1878,6 +1869,13 @@ export default function App() {
   <section class="section"><div class="two-col">
     <div class="card"><h3>Classes UHI (Denominador: ${valid.toLocaleString('pt-BR')} px)</h3>${uhiBars}</div>
     <div class="card"><h3>Distribuição Térmica (°C)</h3>${histBars}</div>
+  </div></section>
+  <section class="section"><div class="card">
+    <h3>Partição Espectral Completa (NDVI &amp; NDBI · Sobreposição bruta: ${pct(overlapVB, specValid)}%)</h3>
+    <div class="bar-row"><div class="bar-label"><span>Vegetação vigorosa (NDVI &gt; 0,30)</span><b>${pct(veg, specValid)}% (${ha(veg)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(veg, specValid)}%;background:#27765e"></div></div></div>
+    <div class="bar-row"><div class="bar-label"><span>Área construída líquida (NDBI &gt; 0,10 e NDVI ≤ 0,30)</span><b>${pct(built, specValid)}% (${ha(built)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(built, specValid)}%;background:#c84638"></div></div></div>
+    <div class="bar-row"><div class="bar-label"><span>Água ou sombra densa (NDVI &lt; 0 e NDBI &lt; 0)</span><b>${pct(water, specValid)}% (${ha(water)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(water, specValid)}%;background:#2668b8"></div></div></div>
+    <div class="bar-row"><div class="bar-label"><span>Solo exposto de transição / cobertura mista</span><b>${pct(mixed, specValid)}% (${ha(mixed)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(mixed, specValid)}%;background:#f1b64a"></div></div></div>
   </div></section>
   <section class="section"><div class="card"><h3>Validação com Estações em Terra (Raio de Representatividade: ${stationRadiusM} m)</h3><div class="table-wrap">${stationsHtml}</div></div></section>
   <section class="section"><div class="card" style="margin-bottom:14px"><h3>Diagnóstico por Bairro (OSM)</h3><div class="table-wrap">${bairrosHtml}</div></div><div class="card"><h3>Ranking por Rua / Segmento Viário (OSM)</h3><div class="table-wrap">${viasHtml}</div></div></section>
@@ -2151,7 +2149,6 @@ function toggleReportLang() {
               {error && <div className="error-box">{error}</div>}
             </section>
 
-            {/* NOVO CARD: VALIDAÇÃO EM TERRA COM ESTAÇÕES METEOROLÓGICAS + RAIO DE REPRESENTATIVIDADE */}
             <section className="rail-card">
               <div className="card-heading">
                 <h3>📡 Estações em Terra (Validação)</h3>
@@ -2292,6 +2289,12 @@ function toggleReportLang() {
             </section>
             <section className="rail-card compare-card">
               <div className="card-heading"><h3>{t.compare}</h3><span className="chip">{comparisonImages.length ? `${comparisonImages.length} LST` : '—'}</span></div>
+              <div className="control-row comparison-count">
+                <span>Quantidade de imagens</span>
+                <select value={comparisonCount} onChange={(e) => { const v = Number(e.target.value); setComparisonCount(v); setComparisonFiles((p) => Array.from({ length: v }, (_, i) => p[i] ?? null)); setComparisonImages([]); setDifferenceReady(false); }}>
+                  {[2, 3, 4, 5, 6].map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
               <div className="comparison-file-list">
                 {comparisonFiles.map((sel, idx) => (
                   <label className="comparison-file" key={idx} style={{ cursor: 'pointer', position: 'relative' }}>
@@ -2336,6 +2339,13 @@ function toggleReportLang() {
                   </div>
                 </section>
                 <section className="rail-card">
+                  <div className="card-heading"><h3>{t.indices}</h3><span className="chip">MS</span></div>
+                  <div className="metric-grid index-grid">
+                    <Metric label={t.ndvi} value={meanOf(raster.ndvi).toFixed(3)} />
+                    <Metric label={t.ndbi} value={meanOf(raster.ndbi).toFixed(3)} />
+                  </div>
+                </section>
+                <section className="rail-card">
                   <div className="card-heading"><h3>{t.export}</h3></div>
                   <div className="export-grid">
                     <button onClick={() => setUhiSurfaceVisible(!uhiSurfaceVisible)}>{uhiSurfaceVisible ? 'Ocultar Isotermas' : 'Ver Isotermas (Meso)'}</button>
@@ -2354,7 +2364,6 @@ function toggleReportLang() {
         </aside>
       </main>
 
-      {/* POP-UP DO GRÁFICO E DIAGNÓSTICO DE VALIDAÇÃO EM TERRA (SATÉLITE VS. ESTAÇÕES NO RAIO R) */}
       {showStationModal && stations.length > 0 && validationMetrics && (
         <div className="dialog-backdrop" onClick={() => setShowStationModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(3,10,14,0.82)', backdropFilter: 'blur(6px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '20px' }}>
           <div className="dialog-card" onClick={(e) => e.stopPropagation()} style={{ width: 'min(1040px, 96vw)', maxHeight: '90vh', overflowY: 'auto', background: '#0b1b22', border: '2px solid #38bdf8', borderRadius: '18px', padding: '24px', color: '#fff', position: 'relative' }}>
@@ -2364,60 +2373,20 @@ function toggleReportLang() {
             <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#9cddda' }}>
               Data/Horário da Passagem: <b>{stations[0].dateIso} às {stations[0].overpassTime}</b> · Raio de Representatividade Ativo: <b>{stationRadiusM} m</b> ({stations[0].pixelCount.toLocaleString('pt-BR')} pixels/estação)
             </p>
-
-            {/* Seletor rápido de Raio dentro do próprio Pop-up */}
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '16px', padding: '10px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '10px' }}>
               <b style={{ fontSize: '12px', color: '#ffb000' }}>Testar outro Raio de Representatividade (R):</b>
               {[30, 50, 100, 250, 500].map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setStationRadiusM(r)}
-                  style={{ padding: '5px 12px', borderRadius: '6px', border: stationRadiusM === r ? '2px solid #38bdf8' : '1px solid rgba(255,255,255,0.2)', background: stationRadiusM === r ? 'rgba(56,189,248,0.25)' : 'transparent', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
-                >
-                  {r} m
-                </button>
+                <button key={r} type="button" onClick={() => setStationRadiusM(r)} style={{ padding: '5px 12px', borderRadius: '6px', border: stationRadiusM === r ? '2px solid #38bdf8' : '1px solid rgba(255,255,255,0.2)', background: stationRadiusM === r ? 'rgba(56,189,248,0.25)' : 'transparent', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>{r} m</button>
               ))}
-              <button type="button" onClick={downloadStationsCsv} style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: '6px', background: '#38bdf8', color: '#071317', fontWeight: 800, border: 'none', cursor: 'pointer', fontSize: '12px' }}>
-                ⇩ Exportar CSV da Validação
-              </button>
+              <button type="button" onClick={downloadStationsCsv} style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: '6px', background: '#38bdf8', color: '#071317', fontWeight: 800, border: 'none', cursor: 'pointer', fontSize: '12px' }}>⇩ Exportar CSV da Validação</button>
             </div>
-
-            {/* Cards de Resumo de Proximidade */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '18px' }}>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
-                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Raio ({stationRadiusM}m)</small>
-                <strong style={{ fontSize: '20px', color: '#38bdf8' }}>{validationMetrics.maeRadius.toFixed(2)} °C</strong>
-                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Diferença média absoluta</small>
-              </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
-                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Pixel 1m Isolado</small>
-                <strong style={{ fontSize: '20px', color: '#facc15' }}>{validationMetrics.mae1m.toFixed(2)} °C</strong>
-                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Sem média espacial do raio</small>
-              </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
-                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>RMSE (Erro Quadrático)</small>
-                <strong style={{ fontSize: '20px', color: '#fff' }}>{validationMetrics.rmseRadius.toFixed(2)} °C</strong>
-                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Dispersão Satélite vs. Terra</small>
-              </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}>
-                <small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>Offset Médio (LST − Ta)</small>
-                <strong style={{ fontSize: '20px', color: '#fb923c' }}>{validationMetrics.biasRadius >= 0 ? '+' : ''}{validationMetrics.biasRadius.toFixed(2)} °C</strong>
-                <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Superfície vs. Ar a 2m</small>
-              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Raio ({stationRadiusM}m)</small><strong style={{ fontSize: '20px', color: '#38bdf8' }}>{validationMetrics.maeRadius.toFixed(2)} °C</strong></div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Pixel 1m Isolado</small><strong style={{ fontSize: '20px', color: '#facc15' }}>{validationMetrics.mae1m.toFixed(2)} °C</strong></div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>RMSE (Erro Quadrático)</small><strong style={{ fontSize: '20px', color: '#fff' }}>{validationMetrics.rmseRadius.toFixed(2)} °C</strong></div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>Offset Médio (LST − Ta)</small><strong style={{ fontSize: '20px', color: '#fb923c' }}>{validationMetrics.biasRadius >= 0 ? '+' : ''}{validationMetrics.biasRadius.toFixed(2)} °C</strong></div>
             </div>
-
-            {/* Gráfico Visual Comparativo por Estação (Barras Triplas + Faixa ±1σ Espacial) */}
             <div style={{ background: '#071317', border: '1px solid rgba(121,226,220,0.22)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                <b style={{ fontSize: '13px', color: '#fff' }}>Gráfico de Proximidade e Variação Espacial por Estação (°C)</b>
-                <div style={{ display: 'flex', gap: '14px', fontSize: '11px' }}>
-                  <span><i style={{ display: 'inline-block', width: 10, height: 10, background: '#38bdf8', borderRadius: 2, marginRight: 5 }} />Estação Ar 2m (Ta)</span>
-                  <span><i style={{ display: 'inline-block', width: 10, height: 10, background: '#ffb000', borderRadius: 2, marginRight: 5 }} />Satélite Média no Raio {stationRadiusM}m (μ ± 1σ)</span>
-                  <span><i style={{ display: 'inline-block', width: 10, height: 10, background: '#f43f5e', borderRadius: 2, marginRight: 5 }} />Pixel Central 1m</span>
-                </div>
-              </div>
-
               {stations.map((st) => {
                 const scaleMin = Math.min(15, raster?.stats.min ?? 18) - 2;
                 const scaleMax = Math.max(40, raster?.stats.max ?? 38) + 2;
@@ -2426,68 +2395,29 @@ function toggleReportLang() {
                   <div key={st.id} style={{ marginBottom: '12px', paddingBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px', flexWrap: 'wrap' }}>
                       <span><b>{st.name}</b> <small style={{ color: '#9ab0b5' }}>({st.source})</small></span>
-                      <span>
-                        <b style={{ color: st.proximityColor }}>{st.proximityStatus}</b> · Δ(Raio−Estação) = <b>{st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C</b> (σ espacial = ±{st.radiusStdC.toFixed(2)} °C)
-                      </span>
+                      <span><b style={{ color: st.proximityColor }}>{st.proximityStatus}</b> · Δ(Raio−Estação) = <b>{st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C</b> (σ = ±{st.radiusStdC.toFixed(2)} °C)</span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px', marginBottom: '3px' }}>
                       <span style={{ color: '#38bdf8' }}>Estação (2m):</span>
-                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ width: `${toPct(st.stationTempC)}%`, height: '100%', background: '#38bdf8' }} />
-                      </div>
+                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}><div style={{ width: `${toPct(st.stationTempC)}%`, height: '100%', background: '#38bdf8' }} /></div>
                       <b>{st.stationTempC.toFixed(1)} °C</b>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px', marginBottom: '3px' }}>
                       <span style={{ color: '#ffb000' }}>LST Raio {stationRadiusM}m:</span>
                       <div style={{ height: '8px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', position: 'relative' }}>
                         <div style={{ width: `${toPct(st.radiusMeanC)}%`, height: '100%', background: '#ffb000', borderRadius: '4px' }} />
-                        <div
-                          title={`Faixa ±1σ no raio: ${(st.radiusMeanC - st.radiusStdC).toFixed(1)}°C a ${(st.radiusMeanC + st.radiusStdC).toFixed(1)}°C`}
-                          style={{ position: 'absolute', top: '-2px', height: '12px', left: `${toPct(st.radiusMeanC - st.radiusStdC)}%`, width: `${Math.max(1, toPct(st.radiusMeanC + st.radiusStdC) - toPct(st.radiusMeanC - st.radiusStdC))}%`, border: '1.5px solid #fff', borderRadius: '3px', background: 'rgba(255,255,255,0.25)' }}
-                        />
+                        <div style={{ position: 'absolute', top: '-2px', height: '12px', left: `${toPct(st.radiusMeanC - st.radiusStdC)}%`, width: `${Math.max(1, toPct(st.radiusMeanC + st.radiusStdC) - toPct(st.radiusMeanC - st.radiusStdC))}%`, border: '1.5px solid #fff', borderRadius: '3px', background: 'rgba(255,255,255,0.25)' }} />
                       </div>
                       <b>{st.radiusMeanC.toFixed(1)} °C</b>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px' }}>
                       <span style={{ color: '#f43f5e' }}>LST Pixel 1m:</span>
-                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ width: `${toPct(st.pixel1mC)}%`, height: '100%', background: '#f43f5e' }} />
-                      </div>
+                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}><div style={{ width: `${toPct(st.pixel1mC)}%`, height: '100%', background: '#f43f5e' }} /></div>
                       <b>{st.pixel1mC.toFixed(1)} °C</b>
                     </div>
                   </div>
                 );
               })}
-            </div>
-
-            {/* Tabela Completa de Estatísticas Espaciais por Estação */}
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                <thead>
-                  <tr style={{ background: 'rgba(255,255,255,0.06)', textAlign: 'left' }}>
-                    <th style={{ padding: '8px' }}>Estação / Tipo</th>
-                    <th style={{ padding: '8px' }}>Ta Estação (10:15)</th>
-                    <th style={{ padding: '8px' }}>LST Raio {stationRadiusM}m (μ ± σ)</th>
-                    <th style={{ padding: '8px' }}>Mediana / Mín–Máx Raio</th>
-                    <th style={{ padding: '8px' }}>LST Pixel 1m</th>
-                    <th style={{ padding: '8px' }}>ΔT (Raio − Estação)</th>
-                    <th style={{ padding: '8px' }}>NDVI / NDBI Raio</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stations.map((s) => (
-                    <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                      <td style={{ padding: '8px' }}><b>{s.name}</b><br /><small style={{ color: '#9ab0b5' }}>{s.source}</small></td>
-                      <td style={{ padding: '8px', color: '#38bdf8', fontWeight: 700 }}>{s.stationTempC.toFixed(2)} °C <small>({s.humidityPct}%)</small></td>
-                      <td style={{ padding: '8px', color: '#ffb000', fontWeight: 700 }}>{s.radiusMeanC.toFixed(2)} °C <small>±{s.radiusStdC.toFixed(2)}°</small></td>
-                      <td style={{ padding: '8px' }}>{s.radiusMedianC.toFixed(2)} °C <small>({s.radiusMinC.toFixed(1)}–{s.radiusMaxC.toFixed(1)}°)</small></td>
-                      <td style={{ padding: '8px' }}>{s.pixel1mC.toFixed(2)} °C</td>
-                      <td style={{ padding: '8px', color: s.proximityColor, fontWeight: 800 }}>{s.deltaRadiusC >= 0 ? '+' : ''}{s.deltaRadiusC.toFixed(2)} °C</td>
-                      <td style={{ padding: '8px' }}>{s.ndviMean.toFixed(2)} / {s.ndbiMean.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
           </div>
         </div>
@@ -2559,4 +2489,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.3
+// FIM DO ARQUIVO src/App.tsx v3.4
