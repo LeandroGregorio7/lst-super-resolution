@@ -26,7 +26,6 @@ export interface StationPoint {
   proximityColor: string;
 }
 
-// CSS que aplica transparência de 55% nas caixas de Busca e Legenda sobre o mapa e estiliza os ícones e pop-ups das estações
 export const STATION_AND_MAP_UI_CSS = `
   .map-search, .map-legend {
     background: rgba(7, 19, 23, 0.55) !important;
@@ -124,7 +123,6 @@ export function StationValidationDock({
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
 
-  // Cria os ícones modernos de Estação Meteorológica no mapa + Pop-up dinâmico ao clicar/passar o mouse
   useEffect(() => {
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
@@ -202,7 +200,6 @@ export function StationValidationDock({
     };
   }, [map, stations, stationRadiusM]);
 
-  // Reajusta o mapa e o zoom quando o Docker retrátil abre/recolhe para nunca cobrir as estações
   useEffect(() => {
     if (!map || !open || stations.length === 0) return;
     const timer = window.setTimeout(() => {
@@ -236,7 +233,6 @@ export function StationValidationDock({
   const rmseRadius = Math.sqrt(stations.reduce((acc, s) => acc + s.deltaRadiusC ** 2, 0) / n);
   const biasRadius = stations.reduce((acc, s) => acc + s.deltaRadiusC, 0) / n;
 
-  // Exporta o Gráfico Comparativo em PNG de Alta Resolução
   const downloadChartPng = () => {
     const rowH = 92;
     const headH = 195;
@@ -267,7 +263,6 @@ export function StationValidationDock({
       92,
     );
 
-    // Legenda das barras no PNG
     ctx.fillStyle = '#38bdf8'; ctx.fillRect(28, 114, 14, 14);
     ctx.fillStyle = '#e8f4f2'; ctx.font = '700 13px Arial'; ctx.fillText('Estação em Terra (Ta 2m)', 48, 126);
     ctx.fillStyle = '#ffb000'; ctx.fillRect(250, 114, 14, 14);
@@ -296,17 +291,14 @@ export function StationValidationDock({
       ctx.fillText(`Erro ΔT: ${st.deltaRadiusC >= 0 ? '+' : ''}${st.deltaRadiusC.toFixed(2)} °C (σ = ±${st.radiusStdC.toFixed(2)}°C) · ${st.proximityStatus}`, w - 36, y);
       ctx.textAlign = 'left';
 
-      // Barra Estação
       ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('Estação 2m:', 36, y + 22);
       ctx.fillStyle = '#38bdf8'; ctx.fillRect(135, y + 12, toW(st.stationTempC), 10);
       ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.stationTempC.toFixed(1)} °C`, 145 + toW(st.stationTempC), y + 22);
 
-      // Barra Raio
       ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText(`LST Raio ${stationRadiusM}m:`, 36, y + 40);
       ctx.fillStyle = '#ffb000'; ctx.fillRect(135, y + 30, toW(st.radiusMeanC), 10);
       ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.radiusMeanC.toFixed(1)} °C`, 145 + toW(st.radiusMeanC), y + 40);
 
-      // Barra Pixel 1m
       ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('LST Pixel 1m:', 36, y + 56);
       ctx.fillStyle = '#f43f5e'; ctx.fillRect(135, y + 47, toW(st.pixel1mC), 8);
       ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.pixel1mC.toFixed(1)} °C`, 145 + toW(st.pixel1mC), y + 56);
@@ -339,7 +331,6 @@ export function StationValidationDock({
         color: '#e8f4f2',
       }}
     >
-      {/* Cabeçalho do Docker Retrátil */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderBottom: '1px solid rgba(121,226,220,0.18)', background: 'rgba(5,14,18,0.65)' }}>
         <button
           type="button"
@@ -369,7 +360,6 @@ export function StationValidationDock({
 
       {!collapsed && (
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {/* Botões de Raio + Exportação PNG e CSV */}
           <div style={{ background: 'rgba(255,255,255,0.04)', padding: '9px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', marginBottom: '6px' }}>
               <b style={{ color: '#ffb000' }}>Raio de Representatividade (R):</b>
@@ -405,7 +395,6 @@ export function StationValidationDock({
             </div>
           </div>
 
-          {/* Métricas Globais */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '7px' }}>
             <div style={{ background: 'rgba(255,255,255,0.04)', padding: '8px 10px', borderRadius: '8px' }}>
               <small style={{ color: '#9ab0b5', fontSize: '10px', display: 'block' }}>MAE no Raio ({stationRadiusM}m)</small>
@@ -419,7 +408,6 @@ export function StationValidationDock({
             </div>
           </div>
 
-          {/* Lista Interativa de Estações (Clicar foca a estação no mapa e abre o pop-up) */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <small style={{ color: '#9cddda', fontSize: '11px' }}>
               💡 Clique em qualquer estação abaixo (ou no ícone no mapa) para focar o zoom e abrir os detalhes:
@@ -438,4 +426,14 @@ export function StationValidationDock({
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
                     <strong style={{ fontSize: '12px', color: '#fff' }}>#{idx + 1} · {st.name}</strong>
-                    <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '99px', background: 'rgba(56,189,248,0.16)', color: '#79e2dc'
+                    <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '99px', background: 'rgba(56,189,248,0.16)', color: '#79e2dc', fontWeight: 700 }}>
+                      {meta.sector.split(' / ')[0]}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ab0b5', marginBottom: '6px' }}>
+                    <span>{meta.stationType}</span>
+                    <b style={{ color: st.proximityColor }}>Erro ΔT: {st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C (±{st.radiusStdC.toFixed(2)}°)</b>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '78px 1fr 48px', alignItems: 'center', gap: '6px', fontSize: '10px', marginBottom: '3px' }}>
+                    <span style={{ colo
