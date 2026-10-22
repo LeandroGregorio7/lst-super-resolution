@@ -115,7 +115,7 @@ function bringOverlaysToFront(map: MapLibreMap) {
 
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.4', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.5', title: 'SR2D4 / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
     colab: 'Abrir Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
     bands: 'Bandas ópticas do SR2D4', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
@@ -137,7 +137,7 @@ const copy = {
     limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Valide com estações em terra.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.4', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.5', title: 'SR2D4 / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
     colab: 'Open Colab', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
     bands: 'SR2D4 optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
@@ -1851,7 +1851,7 @@ export default function App() {
 .callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
 @media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
 </style></head><body><div class="page">
-  <div class="topline"><span>SR2D4 · GEOSPATIAL INTELLIGENCE (v3.4)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
+  <div class="topline"><span>SR2D4 · GEOSPATIAL INTELLIGENCE (v3.5)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
   <header class="hero">
     <h1 data-pt="Temperatura de superfície, ilhas de calor e validação em terra" data-en="Land surface temperature, heat islands and ground validation">Temperatura de superfície, ilhas de calor e validação em terra</h1>
     <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px, ${noData.toLocaleString('pt-BR')} NoData), with LST and UHI maps, NDVI/NDBI spectral analysis, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas.</p>
@@ -2016,7 +2016,7 @@ function toggleReportLang() {
 
   return (
     <div className="app-shell">
-      <style>{VIEWPORT_SYNC_CSS}</style>
+      <style>{VIEWPORT_SYNC_CSS + STATION_AND_MAP_UI_CSS}</style>
       <header className="topbar">
         <div className="brand"><LogoMark /><div><span className="eyebrow">{t.eyebrow}</span><h1>{t.title}</h1></div></div>
         <div className="top-actions">
@@ -2102,6 +2102,17 @@ function toggleReportLang() {
               </div>
             </div>
           )}
+          <StationValidationDock
+            open={showStationModal}
+            stations={stations}
+            stationRadiusM={stationRadiusM}
+            onChangeRadius={setStationRadiusM}
+            onClose={() => setShowStationModal(false)}
+            onDownloadCsv={downloadStationsCsv}
+            map={mapInstance.current}
+            rasterMin={raster?.stats.min ?? 18}
+            rasterMax={raster?.stats.max ?? 38}
+          />
         </section>
         <div className="resize-handle" onPointerDown={() => { resizing.current = true; document.body.classList.add('is-resizing'); }} title={t.resize}><Icon name="resize" /></div>
         <aside className="control-rail">
@@ -2365,65 +2376,6 @@ function toggleReportLang() {
         </aside>
       </main>
 
-      {showStationModal && stations.length > 0 && validationMetrics && (
-        <div className="dialog-backdrop" onClick={() => setShowStationModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(3,10,14,0.82)', backdropFilter: 'blur(6px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '20px' }}>
-          <div className="dialog-card" onClick={(e) => e.stopPropagation()} style={{ width: 'min(1040px, 96vw)', maxHeight: '90vh', overflowY: 'auto', background: '#0b1b22', border: '2px solid #38bdf8', borderRadius: '18px', padding: '24px', color: '#fff', position: 'relative' }}>
-            <button className="dialog-close" onClick={() => setShowStationModal(false)}>×</button>
-            <div className="card-kicker" style={{ color: '#38bdf8' }}>📡 VALIDAÇÃO EM TERRA · ACOPLAMENTO SUPERFÍCIE-ATMOSFERA</div>
-            <h2 style={{ margin: '4px 0 6px' }}>Comparativo Térmico: Imagem de Satélite (LST) vs. Estações em Terra (Ta 2m)</h2>
-            <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#9cddda' }}>
-              Data/Horário da Passagem: <b>{stations[0].dateIso} às {stations[0].overpassTime}</b> · Raio de Representatividade Ativo: <b>{stationRadiusM} m</b> ({stations[0].pixelCount.toLocaleString('pt-BR')} pixels/estação)
-            </p>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '16px', padding: '10px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '10px' }}>
-              <b style={{ fontSize: '12px', color: '#ffb000' }}>Testar outro Raio de Representatividade (R):</b>
-              {[30, 50, 100, 250, 500].map((r) => (
-                <button key={r} type="button" onClick={() => setStationRadiusM(r)} style={{ padding: '5px 12px', borderRadius: '6px', border: stationRadiusM === r ? '2px solid #38bdf8' : '1px solid rgba(255,255,255,0.2)', background: stationRadiusM === r ? 'rgba(56,189,248,0.25)' : 'transparent', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>{r} m</button>
-              ))}
-              <button type="button" onClick={downloadStationsCsv} style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: '6px', background: '#38bdf8', color: '#071317', fontWeight: 800, border: 'none', cursor: 'pointer', fontSize: '12px' }}>⇩ Exportar CSV da Validação</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '18px' }}>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Raio ({stationRadiusM}m)</small><strong style={{ fontSize: '20px', color: '#38bdf8' }}>{validationMetrics.maeRadius.toFixed(2)} °C</strong></div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>MAE no Pixel 1m Isolado</small><strong style={{ fontSize: '20px', color: '#facc15' }}>{validationMetrics.mae1m.toFixed(2)} °C</strong></div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>RMSE (Erro Quadrático)</small><strong style={{ fontSize: '20px', color: '#fff' }}>{validationMetrics.rmseRadius.toFixed(2)} °C</strong></div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '10px' }}><small style={{ color: '#9ab0b5', fontSize: '11px', display: 'block' }}>Offset Médio (LST − Ta)</small><strong style={{ fontSize: '20px', color: '#fb923c' }}>{validationMetrics.biasRadius >= 0 ? '+' : ''}{validationMetrics.biasRadius.toFixed(2)} °C</strong></div>
-            </div>
-            <div style={{ background: '#071317', border: '1px solid rgba(121,226,220,0.22)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
-              {stations.map((st) => {
-                const scaleMin = Math.min(15, raster?.stats.min ?? 18) - 2;
-                const scaleMax = Math.max(40, raster?.stats.max ?? 38) + 2;
-                const toPct = (v: number) => Math.max(2, Math.min(98, ((v - scaleMin) / (scaleMax - scaleMin)) * 100));
-                return (
-                  <div key={st.id} style={{ marginBottom: '12px', paddingBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px', flexWrap: 'wrap' }}>
-                      <span><b>{st.name}</b> <small style={{ color: '#9ab0b5' }}>({st.source})</small></span>
-                      <span><b style={{ color: st.proximityColor }}>{st.proximityStatus}</b> · Δ(Raio−Estação) = <b>{st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C</b> (σ = ±{st.radiusStdC.toFixed(2)} °C)</span>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px', marginBottom: '3px' }}>
-                      <span style={{ color: '#38bdf8' }}>Estação (2m):</span>
-                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}><div style={{ width: `${toPct(st.stationTempC)}%`, height: '100%', background: '#38bdf8' }} /></div>
-                      <b>{st.stationTempC.toFixed(1)} °C</b>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px', marginBottom: '3px' }}>
-                      <span style={{ color: '#ffb000' }}>LST Raio {stationRadiusM}m:</span>
-                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', position: 'relative' }}>
-                        <div style={{ width: `${toPct(st.radiusMeanC)}%`, height: '100%', background: '#ffb000', borderRadius: '4px' }} />
-                        <div style={{ position: 'absolute', top: '-2px', height: '12px', left: `${toPct(st.radiusMeanC - st.radiusStdC)}%`, width: `${Math.max(1, toPct(st.radiusMeanC + st.radiusStdC) - toPct(st.radiusMeanC - st.radiusStdC))}%`, border: '1.5px solid #fff', borderRadius: '3px', background: 'rgba(255,255,255,0.25)' }} />
-                      </div>
-                      <b>{st.radiusMeanC.toFixed(1)} °C</b>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 65px', alignItems: 'center', gap: '8px', fontSize: '11px' }}>
-                      <span style={{ color: '#f43f5e' }}>LST Pixel 1m:</span>
-                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden' }}><div style={{ width: `${toPct(st.pixel1mC)}%`, height: '100%', background: '#f43f5e' }} /></div>
-                      <b>{st.pixel1mC.toFixed(1)} °C</b>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
       {showAoiModal && aoiDetailed && raster && (
         <div className="dialog-backdrop" onClick={() => setShowAoiModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(3,10,14,0.8)', backdropFilter: 'blur(6px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '20px' }}>
           <div className="dialog-card" onClick={(e) => e.stopPropagation()} style={{ width: 'min(940px, 96vw)', maxHeight: '90vh', overflowY: 'auto', background: '#0b1b22', border: '2px solid #ffb000', borderRadius: '18px', padding: '24px', color: '#fff', position: 'relative' }}>
@@ -2490,4 +2442,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.4
+// FIM DO ARQUIVO src/App.tsx v3.5
