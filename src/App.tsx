@@ -9,6 +9,7 @@ import { renderRGBBasemapToCanvas, type PaletteType } from './colorMapper';
 import { downloadFloat32Tiff, downloadUhiTiff } from './exportTiff';
 import { boundsExtent, rasterBoundsToWgs84, type RasterBounds } from './rasterGeo';
 import { buildUhiSurface, downloadUhiSurface, type UhiSurface } from './uhiSurface';
+import { STATION_AND_MAP_UI_CSS, StationValidationDock } from './StationDock';
 
 type Lang = 'pt' | 'en';
 type Theme = 'light' | 'dark';
