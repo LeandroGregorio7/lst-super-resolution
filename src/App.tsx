@@ -2917,25 +2917,245 @@ function toggleReportLang() {
       )}
 
       {(showMethod || showHelp || showMeta || showLimits) && (
-        <div className="dialog-backdrop" onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); setShowLimits(false); }}>
-          <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
-            <button className="dialog-close" onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); setShowLimits(false); }}>×</button>
-            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
-            <h2>{showMethod ? t.method : showHelp ? t.help : showLimits ? t.limitation : t.metadata}</h2>
-            {showMethod && <p>{t.methodText}</p>}{showHelp && <p>{t.helpText}</p>}{showLimits && <p>{t.limitationText}</p>}
-            {showMeta && raster && <div className="meta-list"><span><b>File</b>{raster.fileName}</span><span><b>Dimensions</b>{raster.width} × {raster.height}</span><span><b>EPSG</b>{raster.epsg}</span></div>}
+        <div
+          className="dialog-backdrop"
+          onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); setShowLimits(false); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(3,10,14,0.82)', backdropFilter: 'blur(8px)', zIndex: 9999, display: 'grid', placeItems: 'center', padding: '18px' }}
+        >
+          <div
+            className="dialog-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 'min(960px, 96vw)', maxHeight: '90vh', overflowY: 'auto', background: '#0b1b22', border: '1.5px solid #38bdf8', borderRadius: '18px', padding: '24px', color: '#e8f4f2', position: 'relative', boxShadow: '0 20px 50px rgba(0,0,0,0.75)', lineHeight: 1.6 }}
+          >
+            <button
+              className="dialog-close"
+              onClick={() => { setShowMethod(false); setShowHelp(false); setShowMeta(false); setShowLimits(false); }}
+              style={{ position: 'sticky', top: 0, float: 'right', background: 'rgba(244,63,94,0.2)', border: '1px solid #f43f5e', color: '#fda4af', borderRadius: '8px', width: '32px', height: '32px', fontSize: '18px', fontWeight: 800, cursor: 'pointer' }}
+            >
+              ×
+            </button>
+            <div className="card-kicker" style={{ color: '#38bdf8', fontWeight: 800, letterSpacing: '0.08em' }}>
+              SR2D4 / LST EXPLORER · DOCUMENTAÇÃO CIENTÍFICA & GUIA OPERACIONAL
+            </div>
+            <h2 style={{ margin: '6px 0 14px', fontSize: '22px', color: '#fff' }}>
+              {showMethod ? t.method : showHelp ? t.help : showLimits ? t.limitation : t.metadata}
+            </h2>
+
+            {/* Abas de navegação rápida dentro do Pop-up + Alternador PT/EN */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '18px', paddingBottom: '12px', borderBottom: '1px solid rgba(121,226,220,0.2)' }}>
+              <button type="button" onClick={() => { setShowMethod(true); setShowHelp(false); setShowLimits(false); setShowMeta(false); }} style={{ padding: '7px 13px', borderRadius: '8px', border: showMethod ? '1.5px solid #38bdf8' : '1px solid rgba(255,255,255,0.18)', background: showMethod ? 'rgba(56,189,248,0.22)' : 'rgba(255,255,255,0.04)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>◈ {t.method}</button>
+              <button type="button" onClick={() => { setShowMethod(false); setShowHelp(true); setShowLimits(false); setShowMeta(false); }} style={{ padding: '7px 13px', borderRadius: '8px', border: showHelp ? '1.5px solid #ffb000' : '1px solid rgba(255,255,255,0.18)', background: showHelp ? 'rgba(255,176,0,0.22)' : 'rgba(255,255,255,0.04)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>？ {t.help}</button>
+              <button type="button" onClick={() => { setShowMethod(false); setShowHelp(false); setShowLimits(true); setShowMeta(false); }} style={{ padding: '7px 13px', borderRadius: '8px', border: showLimits ? '1.5px solid #f43f5e' : '1px solid rgba(255,255,255,0.18)', background: showLimits ? 'rgba(244,63,94,0.22)' : 'rgba(255,255,255,0.04)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>△ {t.limitation}</button>
+              {raster && (
+                <button type="button" onClick={() => { setShowMethod(false); setShowHelp(false); setShowLimits(false); setShowMeta(true); }} style={{ padding: '7px 13px', borderRadius: '8px', border: showMeta ? '1.5px solid #34d399' : '1px solid rgba(255,255,255,0.18)', background: showMeta ? 'rgba(52,211,153,0.22)' : 'rgba(255,255,255,0.04)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>⌁ {t.metadata}</button>
+              )}
+              <button type="button" onClick={() => setLang(lang === 'pt' ? 'en' : 'pt')} style={{ marginLeft: 'auto', padding: '7px 13px', borderRadius: '99px', border: '1px solid #79e2dc', background: 'rgba(121,226,220,0.14)', color: '#79e2dc', fontWeight: 800, fontSize: '11px', cursor: 'pointer' }}>
+                {lang === 'pt' ? '🇬🇧 Read in English (EN)' : '🇧🇷 Ler em Português (PT)'}
+              </button>
+            </div>
+
+            {/* 1. METODOLOGIA (PT / EN) */}
+            {showMethod && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13.5px' }}>
+                <div style={{ background: 'rgba(56,189,248,0.1)', borderLeft: '4px solid #38bdf8', padding: '12px 16px', borderRadius: '0 10px 10px 0' }}>
+                  <strong style={{ color: '#38bdf8', display: 'block', marginBottom: '4px' }}>
+                    {lang === 'pt' ? '💡 Explicação Simples (Para Não-Especialistas)' : '💡 Layperson Overview (How It Works in Plain Language)'}
+                  </strong>
+                  {lang === 'pt'
+                    ? 'Satélites térmicos gratuitos (como o Landsat da NASA/USGS) medem o calor da Terra, mas enxergam em blocos grandes de 100 metros — misturando o calor de um telhado quente com a sombra fresca de uma árvore vizinha. Já a imagem óptica super-resolvida (SR2D4) enxerga detalhes de 1 metro (cada árvore, rua e telhado), mas não possui sensor de calor. Este laboratório funde as duas imagens: ele aprende matematicamente como a vegetação resfria e como o concreto aquece a superfície na cena do satélite e projeta a temperatura em alta definição (1 metro), preservando o balanço real de energia medido no espaço.'
+                    : 'Free thermal satellites (like NASA/USGS Landsat) measure Earth’s heat, but their thermal sensor sees in coarse 100-meter blocks—mixing a hot metal roof with a cool neighboring tree canopy. Conversely, the super-resolved optical image (SR2D4) resolves 1-meter details (individual trees, streets, and roofs) but lacks a thermal sensor. This lab fuses both: it mathematically learns how vegetation cools and concrete heats the surface within the satellite scene, projecting temperature at 1-meter resolution while strictly conserving the total thermal energy measured from space.'}
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '14px 16px' }}>
+                  <strong style={{ color: '#ffb000', display: 'block', marginBottom: '8px', fontSize: '14px' }}>
+                    {lang === 'pt' ? '🔬 Pipeline Físico-Matemático (TsHARP Multi-Índice HD 1m)' : '🔬 Physical & Mathematical Pipeline (Multi-Index TsHARP HD 1m)'}
+                  </strong>
+                  <ol style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <li>
+                      <b>{lang === 'pt' ? 'Sincronização STAC & Filtragem Radiométrica:' : 'STAC Synchronization & Radiometric Filtering:'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'O algoritmo extrai a data (AAAAMMDD) e a caixa envolvente (WGS84) do GeoTIFF SR2D4 e consulta via API STAC a passagem mais próxima do Landsat 8/9 Collection 2 Level-2 (banda térmica ST_B10 convertida para Celsius via fatores de escala radiométricos oficiais USGS, aplicando máscara de bits QA_PIXEL contra nuvens e sombras).'
+                        : 'The algorithm extracts the date (YYYYMMDD) and bounding box (WGS84) from the SR2D4 GeoTIFF, querying the STAC API for the closest Landsat 8/9 Collection 2 Level-2 overpass (ST_B10 surface temperature band converted to Celsius via official USGS scaling factors, applying QA_PIXEL bitmasking for clouds and shadows).'}
+                    </li>
+                    <li>
+                      <b>{lang === 'pt' ? 'Preditores Biofísicos Espectrais (1 m):' : 'High-Resolution Biophysical Predictors (1 m):'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'Nas bandas Red, NIR e SWIR de 1 m, calculam-se três descritores físicos de cobertura: NDVI = (NIR − Red)/(NIR + Red) para fração de cobertura vegetal e evapotranspiração; NDBI = (SWIR − NIR)/(SWIR + NIR) para superfícies impermeáveis e inércia térmica construída; e NDWI = (Red − SWIR)/(Red + SWIR) para teor de água e corpos hídricos.'
+                        : 'From the 1 m Red, NIR, and SWIR bands, three physical descriptors are computed: NDVI = (NIR − Red)/(NIR + Red) for fractional vegetation cover and evapotranspiration; NDBI = (SWIR − NIR)/(SWIR + NIR) for impervious built-up surfaces; and NDWI = (Red − SWIR)/(Red + SWIR) for surface moisture and water bodies.'}
+                    </li>
+                    <li>
+                      <b>{lang === 'pt' ? 'Regressão TsHARP & Conservação de Resíduo (ΔT_res):' : 'TsHARP Regression & Residual Energy Conservation (ΔT_res):'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'Ajusta-se um modelo de Mínimos Quadrados Ordinários (OLS) multivariado na resolução agregada do satélite: LST_coarse = β0 + β1·NDVI + β2·NDBI + β3·NDWI + ΔT_res. O resíduo espacial ΔT_res = LST_Landsat − LST_estimado(coarse) é interpolado bilinearmente e somado à predição fina de 1 m, garantindo que a média dos pixels de 1 m reproduza fielmente a energia medida pelo sensor TIRS.'
+                        : 'A multivariate Ordinary Least Squares (OLS) regression is fitted at the aggregated coarse scale: LST_coarse = β0 + β1·NDVI + β2·NDBI + β3·NDWI + ΔT_res. The coarse residual ΔT_res = LST_Landsat − LST_estimated(coarse) is bilinearly interpolated and added to the 1 m prediction, ensuring energy conservation relative to the original TIRS sensor.'}
+                    </li>
+                    <li>
+                      <b>{lang === 'pt' ? 'Modelagem de Ilha de Calor Urbana de Superfície (SUHI):' : 'Surface Urban Heat Island (SUHI) Clustering:'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'A anomalia térmica é classificada em 6 níveis padronizados (de Ilha de Frescor < −0,95σ a Hotspot Extremo > +1,40σ) com suporte a Z-Score paramétrico, Quantis Adaptativos (IQR), Quebras Naturais (Jenks-Otsu) e Kernel Espacial (Getis-Ord Gi*).'
+                        : 'Thermal anomalies are stratified into 6 standardized classes (from Cool Island < −0.95σ to Extreme Hotspot > +1.40σ) supporting parametric Z-Score, Adaptive Quantiles (IQR), Natural Breaks (Jenks-Otsu), and Spatial Kernel (Getis-Ord Gi*).'}
+                    </li>
+                  </ol>
+                </div>
+
+                <div style={{ background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(121,226,220,0.2)', borderRadius: '12px', padding: '12px 16px', fontSize: '12px' }}>
+                  <strong style={{ color: '#79e2dc', display: 'block', marginBottom: '6px' }}>
+                    📚 {lang === 'pt' ? 'Referências Bibliográficas Fundamentais' : 'Key Peer-Reviewed References'}
+                  </strong>
+                  <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '5px', color: '#cbd5e1' }}>
+                    <li><b>Kustas, W. P. et al. (2003).</b> Estimating subpixel surface temperatures and energy fluxes from the vegetation index–radiometric temperature relationship. <i>Remote Sensing of Environment</i>, 85(4), 429–440. <a href="https://doi.org/10.1016/S0034-4257(03)00036-1" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>doi:10.1016/S0034-4257(03)00036-1</a></li>
+                    <li><b>Agam, N. et al. (2007).</b> A vegetation index based technique for spatial sharpening of thermal imagery (TsHARP). <i>Remote Sensing of Environment</i>, 107(4), 545–558. <a href="https://doi.org/10.1016/j.rse.2006.10.006" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>doi:10.1016/j.rse.2006.10.006</a></li>
+                    <li><b>Gao, F., Kustas, W. P., &amp; Anderson, M. C. (2012).</b> A Data Mining Approach for Sharpening Thermal Satellite Imagery over Land. <i>Remote Sensing</i>, 4(11), 3287–3319. <a href="https://doi.org/10.3390/rs4113287" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>doi:10.3390/rs4113287</a></li>
+                    <li><b>Stewart, I. D., &amp; Oke, T. R. (2012).</b> Local Climate Zones for Urban Temperature Studies. <i>Bulletin of the American Meteorological Society</i>, 93(12), 1879–1900. <a href="https://doi.org/10.1175/BAMS-D-11-00019.1" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>doi:10.1175/BAMS-D-11-00019.1</a></li>
+                    <li><b>Pu, R., &amp; Bonafoni, S. (2023).</b> Thermal infrared remote sensing data downscaling investigations: An overview on current status and perspectives. <i>Remote Sensing Applications: Society and Environment</i>, 29, 100921. <a href="https://doi.org/10.1016/j.rsase.2022.100921" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>doi:10.1016/j.rsase.2022.100921</a></li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* 2. COMO USAR / GUIA OPERACIONAL (PT / EN) */}
+            {showHelp && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13.5px' }}>
+                <div style={{ background: 'rgba(255,176,0,0.1)', borderLeft: '4px solid #ffb000', padding: '12px 16px', borderRadius: '0 10px 10px 0' }}>
+                  <strong style={{ color: '#ffb000', display: 'block', marginBottom: '4px' }}>
+                    {lang === 'pt' ? '🚀 Fluxo de Trabalho Passo a Passo (100% no Navegador)' : '🚀 Step-by-Step Operational Workflow (100% Browser-Based)'}
+                  </strong>
+                  {lang === 'pt'
+                    ? 'Todo o processamento ocorre localmente na memória do seu dispositivo (WebGL / Float32Array). Nenhum arquivo GeoTIFF confidencial é enviado para servidores externos.'
+                    : 'All processing runs locally in your device memory (WebGL / Float32Array). No confidential GeoTIFF files are uploaded to external servers.'}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <b style={{ color: '#38bdf8', display: 'block', marginBottom: '4px' }}>{lang === 'pt' ? '1. Carregar GeoTIFF & Bandas' : '1. Load GeoTIFF & Optical Bands'}</b>
+                    <small style={{ color: '#cbd5e1' }}>
+                      {lang === 'pt'
+                        ? 'Gere o recorte multiespectral no notebook Google Colab (botão no topo) ou carregue um GeoTIFF contendo as bandas Vermelho (Red), Infravermelho Próximo (NIR) e Ondas Curtas (SWIR). Produtos Sentinel-2 super-resolvidos de 10 bandas são mapeados automaticamente (B04, B08, B11).'
+                        : 'Generate the multispectral clip in Google Colab (top button) or load a GeoTIFF containing Red, Near-Infrared (NIR), and Short-Wave Infrared (SWIR) bands. 10-band super-resolved Sentinel-2 products are auto-mapped (B04, B08, B11).'}
+                    </small>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <b style={{ color: '#ffb000', display: 'block', marginBottom: '4px' }}>{lang === 'pt' ? '2. Calcular Mapa & Inspecionar' : '2. Compute Map & Inspect Pixels'}</b>
+                    <small style={{ color: '#cbd5e1' }}>
+                      {lang === 'pt'
+                        ? 'Clique em "Calcular mapa térmico". Ative a ferramenta ⓘ (Identify) para ler a temperatura exata em cada telhado, via ou parque. Alterne entre Temperatura (°C) e Ilha de Calor (UHI) ou ative as Isotermas vetoriais.'
+                        : 'Click "Calculate thermal map". Enable the ⓘ (Identify) tool to inspect exact temperatures over roofs, streets, or parks. Switch between Temperature (°C) and Urban Heat Island (UHI) or overlay vector Isotherms.'}
+                    </small>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <b style={{ color: '#34d399', display: 'block', marginBottom: '4px' }}>{lang === 'pt' ? '3. Recortar AOI & Comparar Datas' : '3. Draw AOI & Compare Dates'}</b>
+                    <small style={{ color: '#cbd5e1' }}>
+                      {lang === 'pt'
+                        ? 'Use a ferramenta ⌗ para desenhar Retângulos, Quadrados, Círculos ou Polígonos e abrir o Pop-up estatístico da área (com exportação em PNG, GeoTIFF, KML, GeoJSON e CSV). No card "Comparar antes/depois", carregue duas datas para mapear onde o calor aumentou ou diminuiu acima de ±1σ.'
+                        : 'Use the ⌗ tool to draw Rectangles, Squares, Circles, or Polygons and open the spatial statistics Pop-up (exportable to PNG, GeoTIFF, KML, GeoJSON, and CSV). In "Compare before/after", load two dates to map warming or cooling beyond ±1σ.'}
+                    </small>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <b style={{ color: '#a855f7', display: 'block', marginBottom: '4px' }}>{lang === 'pt' ? '4. Validar com Estações & Relatório' : '4. Ground Validation & Report'}</b>
+                    <small style={{ color: '#cbd5e1' }}>
+                      {lang === 'pt'
+                        ? 'Clique em "📡 Buscar Estações na Cena" para abrir o Docker retrátil à direita, comparar a temperatura do ar (2m) com a média do satélite no raio de representatividade (30m a 500m) e exporte o Relatório Técnico Expandido bilíngue (HTML/PDF).'
+                        : 'Click "📡 Fetch Scene Stations" to open the right-hand retractable Dock, compare 2m air temperature against satellite mean LST within the footprint radius (30m to 500m), and export the bilingual Expanded Technical Report.'}
+                    </small>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. LIMITAÇÕES E INCERTEZAS DO TsHARP (PT / EN) */}
+            {showLimits && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13.5px' }}>
+                <div style={{ background: 'rgba(244,63,94,0.12)', borderLeft: '4px solid #f43f5e', padding: '12px 16px', borderRadius: '0 10px 10px 0' }}>
+                  <strong style={{ color: '#fda4af', display: 'block', marginBottom: '4px' }}>
+                    {lang === 'pt' ? '⚠️ O que o usuário leigo e o gestor precisam saber antes de tomar decisões:' : '⚠️ What Laypersons and Decision-Makers Must Know:'}
+                  </strong>
+                  {lang === 'pt'
+                    ? 'A super-resolução térmica de 1 metro NÃO é uma câmera termográfica de drone voando baixo, mas sim uma desagregação física de dados orbitais. Além disso, "Temperatura de Superfície" (LST — o quão quente está o asfalto ou a telha ao toque) é fisicamente diferente da "Temperatura do Ar" (Ta — medida pelos termômetros de rua a 2 metros de altura).'
+                    : '1-meter thermal super-resolution is NOT a low-flying drone thermal camera, but a physical disaggregation of orbital data. Furthermore, "Land Surface Temperature" (LST—how hot asphalt or a roof feels to the touch) is physically distinct from "Air Temperature" (Ta—measured by street thermometers at 2 meters height).'}
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '14px 16px' }}>
+                  <strong style={{ color: '#ffb000', display: 'block', marginBottom: '8px' }}>
+                    {lang === 'pt' ? '🔬 Principais Limitações Físicas na Literatura Científica' : '🔬 Core Physical & Methodological Limitations in Literature'}
+                  </strong>
+                  <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <li>
+                      <b>{lang === 'pt' ? '1. Desacoplamento Superfície–Atmosfera (LST ≠ Ta):' : '1. Surface–Atmosphere Decoupling (LST ≠ Ta):'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'Às 10h15 da manhã (horário de passagem do Landsat/Sentinel), telhados metálicos, fibrocimento e asfalto escuro absorvem radiação de ondas curtas e frequentemente ficam de +4 °C a +12 °C mais quentes que o ar a 2 m de altura. Por isso, a validação com estações meteorológicas deve avaliar a estatística espacial num raio de representatividade (ex.: 100 m, padrão OMM) e não um único pixel isolado de 1 m.'
+                        : 'At 10:15 AM local solar time (Landsat/Sentinel overpass), metal roofs and dark asphalt absorb shortwave radiation and are typically +4 °C to +12 °C warmer than the air at 2 m height. Ground validation must therefore use a micrometeorological footprint radius (e.g., 100 m WMO urban standard) rather than an isolated 1 m pixel.'}
+                    </li>
+                    <li>
+                      <b>{lang === 'pt' ? '2. Invariância de Escala e Materiais de Alto Albedo (Telhados Brancos/Frios):' : '2. Scale Invariance & High-Albedo Materials (Cool/White Roofs):'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'O modelo TsHARP assume que a relação estatística entre índices ópticos (NDVI/NDBI) e temperatura observada a 100 m permanece constante a 1 m. Embora adicionemos termos de brilho e resíduo (ΔT_res), coberturas sintéticas especiais, painéis solares ou sombras estreitas de edifícios altos (cânions urbanos) podem apresentar desvios locais de ±1,5 °C a ±2,5 °C.'
+                        : 'TsHARP assumes that the statistical relationship between optical indices (NDVI/NDBI) and temperature at 100 m holds at 1 m. Even with albedo adjustments and residual injection (ΔT_res), synthetic cool roofs, solar panels, or narrow high-rise shadow canyons may exhibit local deviations of ±1.5 °C to ±2.5 °C.'}
+                    </li>
+                    <li>
+                      <b>{lang === 'pt' ? '3. Defasagem Temporal entre Mosaico Óptico e Passagem Térmica:' : '3. Temporal Gap Between Optical Mosaic & Thermal Overpass:'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'Quando a cena óptica de alta resolução e a cena térmica livre de nuvens do Landsat foram adquiridas em dias distintos, variações de umidade antecedente do solo (chuvas) ou velocidade do vento afetam o contraste térmico absoluto.'
+                        : 'When the high-resolution optical product and the cloud-free Landsat thermal scene are acquired on different dates, antecedent soil moisture (rainfall) or wind speed variations can shift absolute thermal contrast.'}
+                    </li>
+                    <li>
+                      <b>{lang === 'pt' ? '4. Efeitos de Emissividade (ε) e Anisotropia Direcional:' : '4. Surface Emissivity (ε) & Directional Anisotropy:'}</b>{' '}
+                      {lang === 'pt'
+                        ? 'Materiais metálicos não oxidados possuem emissividade termal muito baixa, podendo aparentar temperaturas radiométricas subestimadas no infravermelho térmico orbital.'
+                        : 'Unoxidized metal roofs have low thermal emissivity, which can cause orbital thermal infrared sensors to underestimate their kinetic temperature.'}
+                    </li>
+                  </ul>
+                </div>
+
+                <div style={{ background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(121,226,220,0.2)', borderRadius: '12px', padding: '12px 16px', fontSize: '12px' }}>
+                  <strong style={{ color: '#79e2dc', display: 'block', marginBottom: '6px' }}>
+                    📚 {lang === 'pt' ? 'Referências sobre Incertezas e Validação Térmica' : 'References on Thermal Uncertainties & Validation'}
+                  </strong>
+                  <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '5px', color: '#cbd5e1' }}>
+                    <li><b>Zhou, D. et al. (2019).</b> Satellite Remote Sensing of Surface Urban Heat Islands: Progress, Challenges, and Perspectives. <i>Remote Sensing</i>, 11(1), 48. <a href="https://doi.org/10.3390/rs11010048" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>doi:10.3390/rs11010048</a></li>
+                    <li><b>Li, Z.-L. et al. (2023).</b> Satellite remote sensing of global land surface temperature: Definition, methods, products, and applications. <i>Reviews of Geophysics</i>, 61(1), e2022RG000777. <a href="https://doi.org/10.1029/2022RG000777" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>doi:10.1029/2022RG000777</a></li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* 4. METADADOS DA CENA CARREGADA */}
+            {showMeta && raster && (
+              <div className="meta-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginTop: '8px' }}>
+                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Arquivo / Par STAC' : 'File / STAC Pair'}</b><br />{raster.fileName}</span>
+                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Dimensões da Matriz' : 'Grid Dimensions'}</b><br />{raster.width.toLocaleString()} × {raster.height.toLocaleString()} px ({(raster.width * raster.height).toLocaleString()} px)</span>
+                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Sistema de Referência (CRS)' : 'Coordinate System (CRS)'}</b><br />EPSG:{raster.epsg} ({raster.isProjected ? 'Projetado / Métrico' : 'Geográfico / Graus'})</span>
+                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Resolução Espacial' : 'Spatial Resolution'}</b><br />{Math.abs(raster.resolution[0] || 1).toFixed(2)} × {Math.abs(raster.resolution[1] || 1).toFixed(2)} {raster.isProjected ? 'm/px' : 'deg/px'}</span>
+                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Estatística Térmica (LST)' : 'Thermal Statistics (LST)'}</b><br />Mín: {raster.stats.min.toFixed(1)}°C · Média: {raster.stats.mean.toFixed(2)}°C · Máx: {raster.stats.max.toFixed(1)}°C (σ={raster.stats.stdDev.toFixed(2)}°C)</span>
+                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Quartis da Cena' : 'Scene Quartiles'}</b><br />Q25: {raster.stats.q25.toFixed(1)}°C · Mediana (Q50): {raster.stats.q50.toFixed(1)}°C · Q75: {raster.stats.q75.toFixed(1)}°C</span>
+              </div>
+            )}
           </div>
         </div>
       )}
+
       {showTutorial && (
         <div className="tutorial-backdrop">
-          <div className="tutorial-card">
-            <div className="card-kicker">SR2D4 / LST EXPLORER</div>
-            <h2>{['Explore o mapa', 'Carregue suas bandas', 'Calcule a temperatura', 'Compare e exporte'][tutorialStep]}</h2>
-            <p>{[t.helpText, t.methodText, t.uhiText, t.limitationText][tutorialStep]}</p>
+          <div className="tutorial-card" style={{ maxWidth: '580px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="card-kicker">SR2D4 / LST EXPLORER · PASSO {tutorialStep + 1}/4</div>
+              <button type="button" onClick={() => setLang(lang === 'pt' ? 'en' : 'pt')} style={{ background: 'transparent', border: '1px solid #79e2dc', color: '#79e2dc', borderRadius: '99px', padding: '3px 10px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                {lang === 'pt' ? 'EN' : 'PT'}
+              </button>
+            </div>
+            <h2>
+              {(lang === 'pt'
+                ? ['1. Como funciona o Laboratório', '2. Metodologia TsHARP HD 1m', '3. Ilhas de Calor & AOI', '4. Validação em Terra & Limitações']
+                : ['1. How the Lab Works', '2. TsHARP HD 1m Methodology', '3. Urban Heat Islands & AOI', '4. Ground Validation & Limitations'])[tutorialStep]}
+            </h2>
+            <p style={{ fontSize: '13.5px', lineHeight: 1.55 }}>{[t.helpText, t.methodText, t.uhiText, t.limitationText][tutorialStep]}</p>
             <div className="tutorial-actions">
-              <button onClick={closeTutorial}>Pular</button>
-              {tutorialStep < 3 ? <button className="primary-button" onClick={() => setTutorialStep((s) => s + 1)}>Próximo →</button> : <button className="primary-button" onClick={closeTutorial}>Começar →</button>}
+              <button onClick={closeTutorial}>{lang === 'pt' ? 'Pular' : 'Skip'}</button>
+              {tutorialStep > 0 && <button onClick={() => setTutorialStep((s) => s - 1)}>← {lang === 'pt' ? 'Anterior' : 'Back'}</button>}
+              {tutorialStep < 3 ? (
+                <button className="primary-button" onClick={() => setTutorialStep((s) => s + 1)}>{lang === 'pt' ? 'Próximo →' : 'Next →'}</button>
+              ) : (
+                <button className="primary-button" onClick={closeTutorial}>{lang === 'pt' ? 'Começar →' : 'Start →'}</button>
+              )}
             </div>
           </div>
         </div>
@@ -2943,4 +3163,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.6
+// FIM DO ARQUIVO src/App.tsx v3.7
