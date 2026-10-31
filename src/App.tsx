@@ -614,7 +614,7 @@ function bringOverlaysToFront(map: MapLibreMap) {
 
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.8', title: 'Synapse SR / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.9', title: 'Synapse SR / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
     colab: 'Abrir Colab', upload: 'Carregar produto Synapse SR/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
     bands: 'Bandas ópticas do Synapse SR', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
@@ -636,7 +636,7 @@ const copy = {
     limitationText: 'A LST detalhada (2m) é uma estimativa guiada por índices ópticos do Synapse SR e reflectância de 2m. Valide com estações em terra.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.8', title: 'Synapse SR / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.9', title: 'Synapse SR / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
     colab: 'Open Colab', upload: 'Load Synapse SR/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
     bands: 'Synapse SR optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
@@ -1240,14 +1240,257 @@ function meanOf(data: Float32Array) {
 }
 const yieldUi = () => new Promise<void>((resolve) => setTimeout(resolve, 16));
 
+
+function inferOpticalBandConfig(
+  rasters: Float32Array[],
+  rawLabels: string[],
+): { labels: string[]; defaultBands: [string, string, string]; profileName: string } {
+  const count = rasters.length;
+  const hasRealLabels = rawLabels.some(
+    (lbl) => lbl && !lbl.toLowerCase().includes('nome ausente') && !/^camada\s*\d+$/i.test(lbl.trim()),
+  );
+
+  if (hasRealLabels && rawLabels.length === count) {
+    const findIdx = (patterns: RegExp[], fallback: number) => {
+      for (const pat of patterns) {
+        const idx = rawLabels.findIndex((l) => pat.test(l));
+        if (idx !== -1) return idx;
+      }
+      return Math.min(Math.max(0, fallback), count - 1);
+    };
+    const rIdx = findIdx([/\bb0?4\b/i, /\bred\b/i, /vermelho/i], count >= 3 ? 2 : 0);
+    const nIdx = findIdx([/\bb0?8\b/i, /\bnir\b/i, /infravermelho\s*pr[oó]ximo/i, /\bb8a\b/i], count >= 7 ? 6 : Math.min(count - 1, 1));
+    const sIdx = findIdx([/\bb11\b/i, /\bswir\s*1?\b/i, /ondas\s*curtas/i, /\bb12\b/i], count >= 9 ? 7 : Math.min(count - 1, 2));
+    return {
+      labels: rawLabels,
+      defaultBands: [String(rIdx), String(nIdx), String(sIdx)],
+      profileName: 'Metadados GDAL detectados',
+    };
+  }
+
+  // Amostragem radiométrica rápida para distinguir layouts de 9 bandas do Synapse SR / Sentinel-2
+  if (count === 9) {
+    const nPx = rasters[0]?.length ?? 0;
+    const step = Math.max(1, Math.floor(nPx / 2500));
+    const diffs: Array<{ idx: number; vegScore: number }> = [];
+    for (let i = 0; i < nPx; i += step) {
+      const r = rasters[2]?.[i];
+      const n3 = rasters[3]?.[i];
+      const n6 = rasters[6]?.[i];
+      const bestNir = Math.max(Number.isFinite(n3) ? n3 : -Infinity, Number.isFinite(n6) ? n6 : -Infinity);
+      if (Number.isFinite(r) && Number.isFinite(bestNir) && bestNir + r > 0) {
+        diffs.push({ idx: i, vegScore: (bestNir - r) / (bestNir + r) });
+      }
+    }
+    diffs.sort((a, b) => b.vegScore - a.vegScore);
+    const topVeg = diffs.slice(0, Math.max(10, Math.floor(diffs.length * 0.15)));
+    const vegMeans = Array.from({ length: 9 }, (_, b) => {
+      if (!topVeg.length) return 0;
+      let s = 0; let c = 0;
+      for (const pt of topVeg) {
+        const v = rasters[b]?.[pt.idx];
+        if (Number.isFinite(v)) { s += v; c += 1; }
+      }
+      return c > 0 ? s / c : 0;
+    });
+
+    const corr = (bA: number, bB: number) => {
+      let sA = 0; let sB = 0; let n = 0;
+      for (let i = 0; i < nPx; i += step) {
+        const a = rasters[bA]?.[i]; const b = rasters[bB]?.[i];
+        if (Number.isFinite(a) && Number.isFinite(b)) { sA += a; sB += b; n += 1; }
+      }
+      if (n < 5) return 0;
+      const mA = sA / n; const mB = sB / n;
+      let num = 0; let dA = 0; let dB = 0;
+      for (let i = 0; i < nPx; i += step) {
+        const a = rasters[bA]?.[i]; const b = rasters[bB]?.[i];
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          num += (a - mA) * (b - mB);
+          dA += (a - mA) ** 2;
+          dB += (b - mB) ** 2;
+        }
+      }
+      return dA > 0 && dB > 0 ? num / Math.sqrt(dA * dB) : 0;
+    };
+
+    const corr67 = corr(6, 7);
+
+    // Caso C: Bandas de 10m primeiro [B02, B03, B04, B08, B05, B06, B07, B11, B12]
+    if (vegMeans[3] > vegMeans[4] * 1.25 && vegMeans[3] > vegMeans[2] * 1.6) {
+      return {
+        labels: [
+          'Camada 01 - B02 · Azul (Blue 490nm)',
+          'Camada 02 - B03 · Verde (Green 560nm)',
+          'Camada 03 - B04 · Vermelho (Red 665nm) ★',
+          'Camada 04 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+          'Camada 05 - B05 · Red Edge 1 (705nm)',
+          'Camada 06 - B06 · Red Edge 2 (740nm)',
+          'Camada 07 - B07 · Red Edge 3 (783nm)',
+          'Camada 08 - B11 · Ondas Curtas (SWIR 1 · 1610nm) ★',
+          'Camada 09 - B12 · Ondas Curtas (SWIR 2 · 2190nm)',
+        ],
+        defaultBands: ['2', '3', '7'],
+        profileName: 'Synapse SR 9 Bandas (10m + 20m)',
+      };
+    }
+
+    // Caso B: [B02, B03, B04, B05, B06, B07, B08, B8A, B11] (B8A na camada 08 e B11 na camada 09)
+    if (corr67 > 0.96 && vegMeans[7] > vegMeans[6] * 0.85 && vegMeans[8] < vegMeans[7] * 0.82) {
+      return {
+        labels: [
+          'Camada 01 - B02 · Azul (Blue 490nm)',
+          'Camada 02 - B03 · Verde (Green 560nm)',
+          'Camada 03 - B04 · Vermelho (Red 665nm) ★',
+          'Camada 04 - B05 · Red Edge 1 (705nm)',
+          'Camada 05 - B06 · Red Edge 2 (740nm)',
+          'Camada 06 - B07 · Red Edge 3 (783nm)',
+          'Camada 07 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+          'Camada 08 - B8A · NIR Estreito (865nm)',
+          'Camada 09 - B11 · Ondas Curtas (SWIR 1 · 1610nm) ★',
+        ],
+        defaultBands: ['2', '6', '8'],
+        profileName: 'Synapse SR 9 Bandas (B02–B11)',
+      };
+    }
+
+    // Caso A (Padrão Synapse SR 9 bandas sem B8A): [B02, B03, B04, B05, B06, B07, B08, B11, B12]
+    return {
+      labels: [
+        'Camada 01 - B02 · Azul (Blue 490nm)',
+        'Camada 02 - B03 · Verde (Green 560nm)',
+        'Camada 03 - B04 · Vermelho (Red 665nm) ★',
+        'Camada 04 - B05 · Red Edge 1 (705nm)',
+        'Camada 05 - B06 · Red Edge 2 (740nm)',
+        'Camada 06 - B07 · Red Edge 3 (783nm)',
+        'Camada 07 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+        'Camada 08 - B11 · Ondas Curtas (SWIR 1 · 1610nm) ★',
+        'Camada 09 - B12 · Ondas Curtas (SWIR 2 · 2190nm)',
+      ],
+      defaultBands: ['2', '6', '7'],
+      profileName: 'Synapse SR 9 Bandas (B02–B12)',
+    };
+  }
+
+  if (count === 10) {
+    return {
+      labels: [
+        'Camada 01 - B02 · Azul (Blue 490nm)',
+        'Camada 02 - B03 · Verde (Green 560nm)',
+        'Camada 03 - B04 · Vermelho (Red 665nm) ★',
+        'Camada 04 - B05 · Red Edge 1 (705nm)',
+        'Camada 05 - B06 · Red Edge 2 (740nm)',
+        'Camada 06 - B07 · Red Edge 3 (783nm)',
+        'Camada 07 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+        'Camada 08 - B8A · NIR Estreito (865nm)',
+        'Camada 09 - B11 · Ondas Curtas (SWIR 1 · 1610nm) ★',
+        'Camada 10 - B12 · Ondas Curtas (SWIR 2 · 2190nm)',
+      ],
+      defaultBands: ['2', '6', '8'],
+      profileName: 'Sentinel-2 / SR 10 Bandas',
+    };
+  }
+
+  if (count === 12) {
+    return {
+      labels: [
+        'Camada 01 - B01 · Aerossol Costeiro (443nm)',
+        'Camada 02 - B02 · Azul (Blue 490nm)',
+        'Camada 03 - B03 · Verde (Green 560nm)',
+        'Camada 04 - B04 · Vermelho (Red 665nm) ★',
+        'Camada 05 - B05 · Red Edge 1 (705nm)',
+        'Camada 06 - B06 · Red Edge 2 (740nm)',
+        'Camada 07 - B07 · Red Edge 3 (783nm)',
+        'Camada 08 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+        'Camada 09 - B8A · NIR Estreito (865nm)',
+        'Camada 10 - B09 · Vapor d’Água (945nm)',
+        'Camada 11 - B11 · Ondas Curtas (SWIR 1 · 1610nm) ★',
+        'Camada 12 - B12 · Ondas Curtas (SWIR 2 · 2190nm)',
+      ],
+      defaultBands: ['3', '7', '10'],
+      profileName: 'Sentinel-2 L2A 12 Bandas',
+    };
+  }
+
+  if (count === 8) {
+    return {
+      labels: [
+        'Camada 01 - B02 · Azul (Blue 490nm)',
+        'Camada 02 - B03 · Verde (Green 560nm)',
+        'Camada 03 - B04 · Vermelho (Red 665nm) ★',
+        'Camada 04 - B05 · Red Edge 1 (705nm)',
+        'Camada 05 - B06 · Red Edge 2 (740nm)',
+        'Camada 06 - B07 · Red Edge 3 (783nm)',
+        'Camada 07 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+        'Camada 08 - B11 · Ondas Curtas (SWIR 1 · 1610nm) ★',
+      ],
+      defaultBands: ['2', '6', '7'],
+      profileName: 'Multiespectral 8 Bandas',
+    };
+  }
+
+  if (count === 6) {
+    return {
+      labels: [
+        'Camada 01 - B02 · Azul (Blue 490nm)',
+        'Camada 02 - B03 · Verde (Green 560nm)',
+        'Camada 03 - B04 · Vermelho (Red 665nm) ★',
+        'Camada 04 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+        'Camada 05 - B11 · Ondas Curtas (SWIR 1 · 1610nm) ★',
+        'Camada 06 - B12 · Ondas Curtas (SWIR 2 · 2190nm)',
+      ],
+      defaultBands: ['2', '3', '4'],
+      profileName: 'Multiespectral 6 Bandas',
+    };
+  }
+
+  if (count === 4) {
+    return {
+      labels: [
+        'Camada 01 - B02 · Azul (Blue 490nm)',
+        'Camada 02 - B03 · Verde (Green 560nm)',
+        'Camada 03 - B04 · Vermelho (Red 665nm) ★',
+        'Camada 04 - B08 · Infravermelho Próximo (NIR 842nm) ★',
+      ],
+      defaultBands: ['2', '3', '2'],
+      profileName: 'RGB + NIR (4 Bandas)',
+    };
+  }
+
+  if (count === 3) {
+    return {
+      labels: [
+        'Camada 01 - B04 · Vermelho (Red) ★',
+        'Camada 02 - B08 · Infravermelho Próximo (NIR) ★',
+        'Camada 03 - B11 · Ondas Curtas (SWIR) ★',
+      ],
+      defaultBands: ['0', '1', '2'],
+      profileName: ' Composto 3 Bandas (Red/NIR/SWIR)',
+    };
+  }
+
+  const fallbackLabels = Array.from({ length: count }, (_, i) => `Camada ${String(i + 1).padStart(2, '0')} · Banda ${i + 1}`);
+  return {
+    labels: fallbackLabels,
+    defaultBands: ['0', String(Math.min(1, count - 1)), String(Math.min(2, count - 1))],
+    profileName: `${count} bandas`,
+  };
+}
+
 async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, number, number], onProgress?: ThermalProgress) {
   onProgress?.('Abrindo GeoTIFF Synapse SR e lendo metadata…');
   await yieldUi();
   const tiff = await readTiffPixels(file);
   if (tiff.rasters.length < 3) throw new Error('O GeoTIFF Synapse SR precisa conter Red, NIR e SWIR.');
-  const red = tiff.rasters[bandIndexes[0]] as Float32Array;
-  const nir = tiff.rasters[bandIndexes[1]] as Float32Array;
-  const swir = tiff.rasters[bandIndexes[2]] as Float32Array;
+  const autoCfg = inferOpticalBandConfig(tiff.rasters as Float32Array[], tiff.bandLabels);
+  const isUnconfiguredDefault = tiff.rasters.length >= 4 && bandIndexes[0] === 0 && bandIndexes[1] === 1 && bandIndexes[2] === 2;
+  const hasOutOfBounds = bandIndexes.some((idx) => idx < 0 || idx >= tiff.rasters.length);
+  const effectiveIndexes: [number, number, number] = isUnconfiguredDefault || hasOutOfBounds
+    ? [Number(autoCfg.defaultBands[0]), Number(autoCfg.defaultBands[1]), Number(autoCfg.defaultBands[2])]
+    : bandIndexes;
+  const red = tiff.rasters[effectiveIndexes[0]] as Float32Array;
+  const nir = tiff.rasters[effectiveIndexes[1]] as Float32Array;
+  const swir = tiff.rasters[effectiveIndexes[2]] as Float32Array;
   if (!red || !nir || !swir) throw new Error('As bandas ópticas selecionadas não existem no GeoTIFF Synapse SR.');
   const bounds = rasterBoundsToWgs84(tiff.origin, tiff.resolution, tiff.width, tiff.height, tiff.epsg);
   onProgress?.(`Synapse SR lido: ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · calculando extensão geográfica…`);
@@ -2004,14 +2247,16 @@ export default function App() {
 
   const handleFileChange = async (selected: File | null) => {
     setFile(selected); setError(''); setSearchResults([]); if (!selected) return;
-    setStatus(lang === 'pt' ? 'Lendo bandas e metadados…' : 'Reading bands and metadata…');
+    setStatus(lang === 'pt' ? 'Lendo bandas e identificando assinatura espectral…' : 'Reading bands and identifying spectral signature…');
     try {
       const preview = await readTiffPixels(selected);
       const count = preview.rasters.length;
-      setBandCount(count); setBandLabels(preview.bandLabels);
-      const std10 = preview.bandLabels.length === 10 && preview.bandLabels[2]?.includes('B04') && preview.bandLabels[6]?.includes('B08') && preview.bandLabels[8]?.includes('B11');
-      setBands(std10 ? ['2', '6', '8'] : (p) => p.map((v, i) => (Number(v) < count ? v : String(Math.max(0, count - 1 - i)))));
-      setStatus(`${count} bandas detectadas.`);
+      const cfg = inferOpticalBandConfig(preview.rasters as Float32Array[], preview.bandLabels);
+      setBandCount(count);
+      setBandLabels(cfg.labels);
+      setBands(cfg.defaultBands);
+      const [rI, nI, sI] = cfg.defaultBands.map(Number);
+      setStatus(`${count} bandas (${cfg.profileName}) · Auto-selecionado: Red=C${rI + 1}, NIR=C${nI + 1}, SWIR=C${sI + 1}`);
     } catch { setError('Não foi possível ler este GeoTIFF.'); setStatus(''); }
   };
 
@@ -2351,7 +2596,7 @@ export default function App() {
 .callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
 @media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
 </style></head><body><div class="page">
-  <div class="topline"><span>SYNAPSE SR · GEOSPATIAL INTELLIGENCE (v3.8)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
+  <div class="topline"><span>SYNAPSE SR · GEOSPATIAL INTELLIGENCE (v3.9)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
   <header class="hero">
     <h1 data-pt="Temperatura de superfície, ilhas de calor e validação em terra" data-en="Land surface temperature, heat islands and ground validation">Temperatura de superfície, ilhas de calor e validação em terra</h1>
     <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px, ${noData.toLocaleString('pt-BR')} NoData), with LST and UHI maps, NDVI/NDBI spectral analysis, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas.</p>
@@ -3158,4 +3403,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.8
+// FIM DO ARQUIVO src/App.tsx v3.9
