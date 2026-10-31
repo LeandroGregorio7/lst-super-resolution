@@ -291,7 +291,7 @@ export function StationValidationDock({
 
     ctx.fillStyle = '#38bdf8';
     ctx.font = '700 13px Arial';
-    ctx.fillText('📡 SR2D4 / LST EXPLORER · VALIDAÇÃO EM TERRA (ACOPLAMENTO SUPERFÍCIE-ATMOSFERA)', 28, 34);
+    ctx.fillText('📡 SYNAPSE SR / LST EXPLORER · VALIDAÇÃO EM TERRA (ACOPLAMENTO SUPERFÍCIE-ATMOSFERA)', 28, 34);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '700 22px Arial';
@@ -310,7 +310,7 @@ export function StationValidationDock({
     ctx.fillStyle = '#ffb000'; ctx.fillRect(250, 114, 14, 14);
     ctx.fillStyle = '#e8f4f2'; ctx.fillText(`LST Média no Raio ${stationRadiusM}m (com faixa ±1σ)`, 270, 126);
     ctx.fillStyle = '#f43f5e'; ctx.fillRect(590, 114, 14, 14);
-    ctx.fillStyle = '#e8f4f2'; ctx.fillText('LST Pixel Central 1m', 610, 126);
+    ctx.fillStyle = '#e8f4f2'; ctx.fillText('LST Pixel Central 2m', 610, 126);
 
     const scaleMin = Math.min(14, rasterMin) - 2;
     const scaleMax = Math.max(40, rasterMax) + 2;
@@ -341,14 +341,14 @@ export function StationValidationDock({
       ctx.fillStyle = '#ffb000'; ctx.fillRect(135, y + 30, toW(st.radiusMeanC), 10);
       ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.radiusMeanC.toFixed(1)} °C`, 145 + toW(st.radiusMeanC), y + 40);
 
-      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('LST Pixel 1m:', 36, y + 56);
+      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('LST Pixel 2m:', 36, y + 56);
       ctx.fillStyle = '#f43f5e'; ctx.fillRect(135, y + 47, toW(st.pixel1mC), 8);
       ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.pixel1mC.toFixed(1)} °C`, 145 + toW(st.pixel1mC), y + 56);
     });
 
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
-    a.download = `SR2D4-Grafico-Validacao-Estacoes-${stationRadiusM}m.png`;
+    a.download = `SynapseSR-Grafico-Validacao-Estacoes-${stationRadiusM}m.png`;
     a.click();
   };
 
@@ -441,7 +441,7 @@ export function StationValidationDock({
             <div style={{ background: 'rgba(255,255,255,0.04)', padding: '8px 10px', borderRadius: '8px' }}>
               <small style={{ color: '#9ab0b5', fontSize: '10px', display: 'block' }}>MAE no Raio ({stationRadiusM}m)</small>
               <strong style={{ fontSize: '17px', color: '#38bdf8' }}>{maeRadius.toFixed(2)} °C</strong>
-              <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Pixel 1m: {mae1m.toFixed(2)} °C</small>
+              <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Pixel 2m: {mae1m.toFixed(2)} °C</small>
             </div>
             <div style={{ background: 'rgba(255,255,255,0.04)', padding: '8px 10px', borderRadius: '8px' }}>
               <small style={{ color: '#9ab0b5', fontSize: '10px', display: 'block' }}>RMSE / Offset (LST − Ta)</small>
@@ -494,7 +494,7 @@ export function StationValidationDock({
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '78px 1fr 48px', alignItems: 'center', gap: '6px', fontSize: '10px' }}>
-                    <span style={{ color: '#f43f5e' }}>Pixel 1m:</span>
+                    <span style={{ color: '#f43f5e' }}>Pixel 2m:</span>
                     <div style={{ height: '5px', background: 'rgba(255,255,255,0.08)', borderRadius: '4px', overflow: 'hidden' }}>
                       <div style={{ width: `${toPct(st.pixel1mC)}%`, height: '100%', background: '#f43f5e' }} />
                     </div>
@@ -565,7 +565,7 @@ type IsothermFeature = {
 };
 type IsothermCollection = { type: 'FeatureCollection'; features: IsothermFeature[] };
 
-const COLAB_URL = 'https://colab.research.google.com/drive/1uKJohUXOqTmbNDZY7N8qVzyk1_laBKIg?usp=sharing';
+const COLAB_URL = 'https://colab.research.google.com/drive/1jZBz9GQfCF3dceCTSWatsGAleEisLAeA#scrollTo=I3qNdVpuSadC';
 const DEFAULT_CUSTOM_COLORS = ['#0b2c7a', '#167288', '#48b574', '#f5d547', '#e86825', '#b81424'];
 const TILE_URLS: Record<Provider, string> = {
   osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -614,45 +614,45 @@ function bringOverlaysToFront(map: MapLibreMap) {
 
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.6', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.8', title: 'Synapse SR / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
-    colab: 'Abrir Colab', upload: 'Carregar produto SR2D4/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
-    bands: 'Bandas ópticas do SR2D4', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
+    colab: 'Abrir Colab', upload: 'Carregar produto Synapse SR/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
+    bands: 'Bandas ópticas do Synapse SR', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
     calculate: 'Calcular mapa térmico', processing: 'Processando raster…', layers: 'Camadas', lst: 'LST / temperatura',
     optical: 'Imagem óptica', opacity: 'Transparência', contrast: 'Contraste', palette: 'Paleta', stats: 'Resumo estatístico',
     min: 'mínima', max: 'máxima', mean: 'média', std: 'desvio', histogram: 'Histograma de Cores & Temperatura',
     sample: 'Escala Térmica & Inspeção', aoi: 'Área de interesse (AOI)', draw: 'Desenhar AOI', clear: 'Limpar AOI', clip: 'Analisar AOI (Pop-up)',
     export: 'Exportar', png: 'PNG composto', tiff: 'GeoTIFF LST', uhi: 'GeoTIFF UHI', method: 'Metodologia', help: 'Como usar',
     metadata: 'Metadados', theme: 'Tema', basemap: 'Mapa-base', ready: 'Pronto',
-    error: 'Não foi possível processar. Carregue um GeoTIFF SR2D4 com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.',
-    methodText: 'O app extrai a data AAAAMMDD do nome do SR2D4, busca a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL e executa fusão física TsHARP HD 1m.',
-    helpText: '1. Gere o produto MS no Colab. 2. Carregue o GeoTIFF SR2D4. 3. Confirme Red/NIR/SWIR. 4. Desenhe AOIs, valide com Estações em Terra ou exporte o Relatório Expandido.',
+    error: 'Não foi possível processar. Carregue um GeoTIFF Synapse SR (2m) com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.',
+    methodText: 'O app extrai a data AAAAMMDD do nome do GeoTIFF Synapse SR (2m), busca a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL e executa fusão física TsHARP HD de 2 metros.',
+    helpText: '1. Gere o produto Synapse SR (2m) no Colab. 2. Carregue o GeoTIFF Synapse SR. 3. Confirme Red/NIR/SWIR. 4. Desenhe AOIs, valide com Estações em Terra ou exporte o Relatório Expandido.',
     noData: 'Carregue um GeoTIFF para começar', search: 'Buscar cidade, bairro ou lugar', coords: 'Longitude, latitude',
     locate: 'Minha localização', go: 'Ir', compare: 'Comparar antes/depois', indices: 'Índices espectrais',
     ndvi: 'NDVI vegetação', ndbi: 'NDBI construído', report: 'Relatório Expandido (PT/EN)', resize: 'Arraste para redimensionar o painel',
-    searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (1m): Frescor, Amenizado, Neutro, Moderada, Forte e Extrema.',
+    searchError: 'Local não encontrado.', uhiText: 'Níveis UHI (2m): Frescor, Amenizado, Neutro, Moderada, Forte e Extrema.',
     aoiHelp: 'Escolha Retângulo, Quadrado, Círculo ou Polígono abaixo, desenhe no mapa e veja o diagnóstico em Pop-up.',
     limitation: 'Limitações da super-resolução',
-    limitationText: 'A LST detalhada é uma estimativa guiada por índices ópticos e reflectância de 1m. Valide com estações em terra.',
+    limitationText: 'A LST detalhada (2m) é uma estimativa guiada por índices ópticos do Synapse SR e reflectância de 2m. Valide com estações em terra.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.6', title: 'SR2D4 / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v3.8', title: 'Synapse SR / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
-    colab: 'Open Colab', upload: 'Load SR2D4/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
-    bands: 'SR2D4 optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
+    colab: 'Open Colab', upload: 'Load Synapse SR/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
+    bands: 'Synapse SR optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
     calculate: 'Calculate thermal map', processing: 'Processing raster…', layers: 'Layers', lst: 'LST / temperature',
     optical: 'Optical image', opacity: 'Opacity', contrast: 'Contrast', palette: 'Palette', stats: 'Statistics',
     min: 'minimum', max: 'maximum', mean: 'mean', std: 'std dev', histogram: 'Color & Temperature Histogram',
     sample: 'Thermal Scale & Inspection', aoi: 'Area of interest (AOI)', draw: 'Draw AOI', clear: 'Clear AOI', clip: 'Analyze AOI (Pop-up)',
     export: 'Export', png: 'Composite PNG', tiff: 'LST GeoTIFF', uhi: 'UHI GeoTIFF', method: 'Methodology', help: 'How it works',
     metadata: 'Metadata', theme: 'Theme', basemap: 'Basemap', ready: 'Ready',
-    error: 'Processing failed. Load an SR2D4 GeoTIFF with Red, NIR and SWIR; thermal Landsat is fetched automatically.',
-    methodText: 'The workflow combines SR2D4 imagery with optical indices and TsHARP regression to estimate 1m spatial LST.',
+    error: 'Processing failed. Load a Synapse SR (2m) GeoTIFF with Red, NIR and SWIR; thermal Landsat is fetched automatically.',
+    methodText: 'The workflow combines 2m Synapse SR imagery with optical indices and TsHARP regression to estimate 2m spatial LST.',
     helpText: '1. Generate MS in Colab. 2. Load GeoTIFF. 3. Confirm Red/NIR/SWIR. 4. Draw AOIs, validate with Ground Stations or export the Expanded Report.',
     noData: 'Load a GeoTIFF to begin', search: 'Search city, neighborhood or place', coords: 'Longitude, latitude',
     locate: 'My location', go: 'Go', compare: 'Compare before/after', indices: 'Spectral indices',
     ndvi: 'NDVI vegetation', ndbi: 'NDBI built-up', report: 'Expanded Report (PT/EN)', resize: 'Drag to resize the panel',
-    searchError: 'Place not found.', uhiText: 'UHI levels (1m): Cool island, Mitigated, Neutral, Moderate, Strong and Extreme.',
+    searchError: 'Place not found.', uhiText: 'UHI levels (2m): Cool island, Mitigated, Neutral, Moderate, Strong and Extreme.',
     aoiHelp: 'Select Rectangle, Square, Circle or Polygon below, draw on map and open the Pop-up analysis.',
     limitation: 'Super-resolution limitations',
     limitationText: 'Detailed LST is an optical-guided estimate. Validate results with ground stations.',
@@ -945,7 +945,7 @@ function sampleRasterInRadiusMeters(raster: RasterState, lng: number, lat: numbe
   const cx = Math.floor(((lng - ext.west) / (ext.east - ext.west)) * raster.width);
   const cy = Math.floor(((ext.north - lat) / (ext.north - ext.south)) * raster.height);
   if (cx < 0 || cy < 0 || cx >= raster.width || cy >= raster.height) return null;
-  const pixelM = raster.isProjected ? Math.max(0.5, Math.abs(raster.resolution[0] || 1)) : 1.0;
+  const pixelM = raster.isProjected ? Math.max(0.5, Math.abs(raster.resolution[0] || 2)) : 2.0;
   const rPx = Math.max(1, Math.round(radiusMeters / pixelM));
   const rPxSq = rPx * rPx;
 
@@ -1207,7 +1207,7 @@ function analyzeAoiDetailed(
 
 function LogoMark() {
   return (
-    <svg className="logo-mark" viewBox="0 0 44 44" role="img" aria-label="SR2D4 LST Explorer logo">
+    <svg className="logo-mark" viewBox="0 0 44 44" role="img" aria-label="Synapse SR LST Explorer logo">
       <defs><linearGradient id="thermal-logo" x1="0" x2="1"><stop stopColor="#4324a8" /><stop offset=".52" stopColor="#f04435" /><stop offset="1" stopColor="#ffc400" /></linearGradient></defs>
       <path d="M22 3c8 0 15 5 18 12-6-2-11-1-16 3-5 4-8 10-8 18-6-4-10-10-10-17C6 10 13 3 22 3Z" fill="url(#thermal-logo)" />
       <path d="M10 31c5-4 11-6 18-5 4 1 7 3 10 6-4 6-10 9-17 9-4 0-8-1-11-3Z" fill="none" stroke="#79e2dc" strokeWidth="2" />
@@ -1241,22 +1241,22 @@ function meanOf(data: Float32Array) {
 const yieldUi = () => new Promise<void>((resolve) => setTimeout(resolve, 16));
 
 async function buildAutomaticThermalRaster(file: File, bandIndexes: [number, number, number], onProgress?: ThermalProgress) {
-  onProgress?.('Abrindo GeoTIFF SR2D4 e lendo metadata…');
+  onProgress?.('Abrindo GeoTIFF Synapse SR e lendo metadata…');
   await yieldUi();
   const tiff = await readTiffPixels(file);
-  if (tiff.rasters.length < 3) throw new Error('SR2D4 precisa conter Red, NIR e SWIR.');
+  if (tiff.rasters.length < 3) throw new Error('O GeoTIFF Synapse SR precisa conter Red, NIR e SWIR.');
   const red = tiff.rasters[bandIndexes[0]] as Float32Array;
   const nir = tiff.rasters[bandIndexes[1]] as Float32Array;
   const swir = tiff.rasters[bandIndexes[2]] as Float32Array;
-  if (!red || !nir || !swir) throw new Error('As bandas ópticas selecionadas não existem no SR2D4.');
+  if (!red || !nir || !swir) throw new Error('As bandas ópticas selecionadas não existem no GeoTIFF Synapse SR.');
   const bounds = rasterBoundsToWgs84(tiff.origin, tiff.resolution, tiff.width, tiff.height, tiff.epsg);
-  onProgress?.(`SR2D4 lido: ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · calculando extensão geográfica…`);
+  onProgress?.(`Synapse SR lido: ${tiff.width.toLocaleString()}×${tiff.height.toLocaleString()} px · calculando extensão geográfica…`);
   await yieldUi();
   const landsat = await fetchNearestLandsatThermal(file.name, bounds, onProgress);
   onProgress?.('Calculando NDVI, NDBI e NDWI nas bandas selecionadas…');
   await yieldUi();
   const indices = calculateOpticalIndices(red, nir, swir);
-  onProgress?.('Executando TsHARP HD 1m: separando telhados, ruas, pista e dossel arbóreo…');
+  onProgress?.('Executando TsHARP HD 2m (Synapse SR): separando telhados, ruas, pista e dossel arbóreo…');
   await yieldUi();
   const result = downscaleLandsatLST(
     landsat.lstCelsius, landsat.width, landsat.height, landsat.bounds,
@@ -1557,7 +1557,7 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showMeta, setShowMeta] = useState(false);
   const [showLimits, setShowLimits] = useState(false);
-  const [showTutorial, setShowTutorial] = useState(() => sessionStorage.getItem('sr2d4-tutorial-seen') !== '1');
+  const [showTutorial, setShowTutorial] = useState(() => sessionStorage.getItem('synapse-sr-tutorial-seen') !== '1');
   const [tutorialStep, setTutorialStep] = useState(0);
   const [showSearch, setShowSearch] = useState(true);
   const [aoi, setAoi] = useState<[number, number][]>([]);
@@ -2071,13 +2071,13 @@ export default function App() {
   const downloadStationsCsv = () => {
     if (!stations.length) return;
     const rows = [
-      'Estacao;Fonte;Data_Passagem;Horario;Lat;Lon;Raio_m;Pixels_No_Raio;Temp_Estacao_2m_C;LST_Media_Raio_C;LST_Mediana_Raio_C;LST_Desvio_Raio_C;LST_Pixel_1m_C;Diferenca_Raio_vs_Estacao_C;Diferenca_Pixel1m_vs_Estacao_C;NDVI_Raio;NDBI_Raio;Diagnostico_Proximidade',
+      'Estacao;Fonte;Data_Passagem;Horario;Lat;Lon;Raio_m;Pixels_No_Raio;Temp_Estacao_2m_C;LST_Media_Raio_C;LST_Mediana_Raio_C;LST_Desvio_Raio_C;LST_Pixel_2m_C;Diferenca_Raio_vs_Estacao_C;Diferenca_Pixel2m_vs_Estacao_C;NDVI_Raio;NDBI_Raio;Diagnostico_Proximidade',
       ...stations.map((s) =>
         `${s.name};${s.source};${s.dateIso};${s.overpassTime};${s.lat.toFixed(5)};${s.lng.toFixed(5)};${stationRadiusM};${s.pixelCount};${s.stationTempC.toFixed(2)};${s.radiusMeanC.toFixed(2)};${s.radiusMedianC.toFixed(2)};${s.radiusStdC.toFixed(2)};${s.pixel1mC.toFixed(2)};${s.deltaRadiusC.toFixed(2)};${s.deltaPixel1mC.toFixed(2)};${s.ndviMean.toFixed(3)};${s.ndbiMean.toFixed(3)};${s.proximityStatus}`,
       ),
     ].join('\n');
     const b = new Blob([rows], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-Validacao-Estacoes-${stationRadiusM}m.csv`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-Validacao-Estacoes-${stationRadiusM}m.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
 
   const calculateComparisons = async () => {
@@ -2108,7 +2108,7 @@ export default function App() {
     ctx.fillStyle = 'rgba(7,19,23,.96)'; ctx.fillRect(x, y, w, 180);
     ctx.strokeStyle = 'rgba(121,226,220,.7)'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, 180);
     ctx.fillStyle = '#fff'; ctx.font = '700 26px Arial';
-    ctx.fillText(displayMode === 'uhi' ? 'UHI · ILHA DE CALOR (1m)' : 'LST · TEMPERATURA (°C)', x + pad, y + 42);
+    ctx.fillText(displayMode === 'uhi' ? 'UHI · ILHA DE CALOR (2m)' : 'LST · TEMPERATURA (°C)', x + pad, y + 42);
     const grad = ctx.createLinearGradient(x + pad, y + 84, x + w - pad, y + 84);
     for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, displayMode === 'uhi'));
     ctx.fillStyle = grad; ctx.fillRect(x + pad, y + 66, w - pad * 2, 36);
@@ -2125,22 +2125,22 @@ export default function App() {
     ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
     ctx.drawImage(opticalCanvas.current, 0, 0); ctx.globalAlpha = opacity; ctx.drawImage(lstCanvas.current, 0, 0); ctx.globalAlpha = 1;
     drawLegend(ctx, 16, c.height - 190);
-    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SR2D4-${displayMode}-${palette}.png`; a.click();
+    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SynapseSR-${displayMode}-${palette}.png`; a.click();
   };
 
   const exportVectorIsotherms = (format: 'geojson' | 'kml') => {
     if (!isotherms) return;
     if (format === 'geojson') {
       const b = new Blob([JSON.stringify(isotherms, null, 2)], { type: 'application/geo+json' });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SR2D4-Isotermas-Meso.geojson'; a.click(); URL.revokeObjectURL(a.href);
+      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SynapseSR-Isotermas-Meso.geojson'; a.click(); URL.revokeObjectURL(a.href);
     } else {
       const pm = isotherms.features.map((f) => {
         const lns = f.geometry.coordinates.map((seg) => `<LineString><coordinates>${seg.map((c) => `${c[0]},${c[1]},0`).join(' ')}</coordinates></LineString>`).join('');
         return `<Placemark><name>${f.properties.label}</name><Style><LineStyle><color>${f.properties.kmlColor}</color><width>2.5</width></LineStyle></Style><MultiGeometry>${lns}</MultiGeometry></Placemark>`;
       }).join('');
-      const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>SR2D4 Isotermas</name>${pm}</Document></kml>`;
+      const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Synapse SR Isotermas</name>${pm}</Document></kml>`;
       const b = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SR2D4-Isotermas-Meso.kml'; a.click(); URL.revokeObjectURL(a.href);
+      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SynapseSR-Isotermas-Meso.kml'; a.click(); URL.revokeObjectURL(a.href);
     }
   };
 
@@ -2234,7 +2234,7 @@ export default function App() {
         ctx.fillText(`Variação: ${differenceStats.min.toFixed(1)}°C a +${differenceStats.max.toFixed(1)}°C · Destaque estatístico acima de ±1σ.`, lx + 16, ly + 124);
       }
     });
-    const lnk = document.createElement('a'); lnk.href = c.toDataURL('image/png'); lnk.download = `SR2D4-Comparacao-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`; lnk.click();
+    const lnk = document.createElement('a'); lnk.href = c.toDataURL('image/png'); lnk.download = `SynapseSR-Comparacao-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`; lnk.click();
   };
 
   const downloadReport = async () => {
@@ -2254,7 +2254,7 @@ export default function App() {
     );
     const uhiMapImg = renderMapWithFooterLegend(
       opticalCanvas.current, uhiCanvas, opacity,
-      `MAPA 02 · CLASSES DE ILHA DE CALOR URBANA (UHI 1m · MÉTODO ${uhiMethod.toUpperCase()}) · EPSG:${raster.epsg}`,
+      `MAPA 02 · CLASSES DE ILHA DE CALOR URBANA (UHI 2m · MÉTODO ${uhiMethod.toUpperCase()}) · EPSG:${raster.epsg}`,
       true, raster.stats, palette, customColors,
     );
 
@@ -2334,10 +2334,10 @@ export default function App() {
       : `<div class="callout red"><strong>Ruas — Não calculado:</strong> Nenhum segmento retornado na consulta atual.</div>`;
 
     const stationsHtml = stations.length
-      ? `<table><thead><tr><th>Estação / Fonte</th><th>Horário Passagem</th><th>Estação 2m (Ta)</th><th>LST Média no Raio (${stationRadiusM}m)</th><th>Desvio Espacial (σ)</th><th>LST Pixel 1m</th><th>Diferença ΔT (Raio − Estação)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => `<tr><td><strong>${s.name}</strong> (${s.source})</td><td>${s.dateIso} · ${s.overpassTime}</td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b></td><td>±${s.radiusStdC.toFixed(2)} °C (${s.pixelCount} px)</td><td>${s.pixel1mC.toFixed(2)} °C</td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`).join('')}</tbody></table>`
+      ? `<table><thead><tr><th>Estação / Fonte</th><th>Horário Passagem</th><th>Estação 2m (Ta)</th><th>LST Média no Raio (${stationRadiusM}m)</th><th>Desvio Espacial (σ)</th><th>LST Pixel 2m</th><th>Diferença ΔT (Raio − Estação)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => `<tr><td><strong>${s.name}</strong> (${s.source})</td><td>${s.dateIso} · ${s.overpassTime}</td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b></td><td>±${s.radiusStdC.toFixed(2)} °C (${s.pixelCount} px)</td><td>${s.pixel1mC.toFixed(2)} °C</td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`).join('')}</tbody></table>`
       : `<div class="callout">Clique em "📡 Buscar Estações na Cena" antes de exportar para incluir a tabela de validação de estações no relatório.</div>`;
 
-    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SR2D4 | Diagnóstico Térmico e Urbano (${raster.fileName})</title><style>
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synapse SR | Diagnóstico Térmico e Urbano (${raster.fileName})</title><style>
 :root{--navy:#10213b;--teal:#1d817e;--ink:#172b42;--muted:#65758a;--line:#dbe3ec;--paper:#ffffff;--bg:#eef2f7;--amber:#f1b64a;--red:#c84638;--radius:16px;--shadow:0 10px 32px rgba(16,33,59,.07)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.58 Inter,system-ui,Arial,sans-serif}.page{max-width:1240px;margin:0 auto;padding:26px 24px 60px}
 .topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;font-size:12px;font-weight:700}.lang-btn{border:2px solid #1d817e;background:#e7f3f1;color:#10213b;border-radius:999px;padding:7px 16px;font-weight:800;cursor:pointer}
@@ -2351,7 +2351,7 @@ export default function App() {
 .callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
 @media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
 </style></head><body><div class="page">
-  <div class="topline"><span>SR2D4 · GEOSPATIAL INTELLIGENCE (v3.6)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
+  <div class="topline"><span>SYNAPSE SR · GEOSPATIAL INTELLIGENCE (v3.8)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
   <header class="hero">
     <h1 data-pt="Temperatura de superfície, ilhas de calor e validação em terra" data-en="Land surface temperature, heat islands and ground validation">Temperatura de superfície, ilhas de calor e validação em terra</h1>
     <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px, ${noData.toLocaleString('pt-BR')} NoData), with LST and UHI maps, NDVI/NDBI spectral analysis, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas.</p>
@@ -2365,7 +2365,7 @@ export default function App() {
   </div></section>
   <section class="section"><div class="grid-2">
     <div class="card"><h3>Mapa 01 · Temperatura de Superfície (LST °C)</h3><div class="map-frame"><img src="${lstMapImg}" alt="Mapa LST"></div></div>
-    <div class="card"><h3>Mapa 02 · Ilha de Calor Urbana (UHI 1 m)</h3><div class="map-frame"><img src="${uhiMapImg}" alt="Mapa UHI"></div></div>
+    <div class="card"><h3>Mapa 02 · Ilha de Calor Urbana (UHI 2 m)</h3><div class="map-frame"><img src="${uhiMapImg}" alt="Mapa UHI"></div></div>
   </div></section>
   <section class="section"><div class="two-col">
     <div class="card"><h3>Classes UHI (Denominador: ${valid.toLocaleString('pt-BR')} px)</h3>${uhiBars}</div>
@@ -2394,7 +2394,7 @@ function toggleReportLang() {
 </script></body></html>`;
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SR2D4_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SynapseSR_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
     setStatus('Relatório técnico expandido exportado com sucesso.');
   };
 
@@ -2409,7 +2409,7 @@ function toggleReportLang() {
     const ctx = c.getContext('2d'); if (!ctx) return;
     ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
     ctx.fillStyle = '#ffb000'; ctx.font = '700 20px Arial';
-    ctx.fillText(`SR2D4 · RECORTE AOI (${aoiDetailed.shapeMode.toUpperCase()}) · ${aoiDetailed.areaHa.toFixed(2)} ha`, 28, 36);
+    ctx.fillText(`SYNAPSE SR · RECORTE AOI (${aoiDetailed.shapeMode.toUpperCase()}) · ${aoiDetailed.areaHa.toFixed(2)} ha`, 28, 36);
     const ix = Math.round((w - iW) / 2);
     ctx.drawImage(im, ix, 50, iW, iH);
     ctx.strokeStyle = '#ffb000'; ctx.lineWidth = 2; ctx.strokeRect(ix, 50, iW, iH);
@@ -2423,12 +2423,12 @@ function toggleReportLang() {
     const grad = ctx.createLinearGradient(40, fy + 84, w - 40, fy + 84);
     for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
     ctx.fillStyle = grad; ctx.fillRect(40, fy + 84, w - 80, 24);
-    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.png`; a.click();
+    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.png`; a.click();
   };
 
   const downloadAoiModalTiff = () => {
     if (!aoiDetailed || !raster) return;
-    downloadFloat32Tiff(aoiDetailed.clippedFloat32, aoiDetailed.clipWidth, aoiDetailed.clipHeight, `SR2D4-AOI-${aoiDetailed.shapeMode}.tif`, aoiDetailed.clipOrigin, raster.resolution, raster.epsg, raster.isProjected);
+    downloadFloat32Tiff(aoiDetailed.clippedFloat32, aoiDetailed.clipWidth, aoiDetailed.clipHeight, `SynapseSR-AOI-${aoiDetailed.shapeMode}.tif`, aoiDetailed.clipOrigin, raster.resolution, raster.epsg, raster.isProjected);
   };
 
   const downloadAoiModalGeoJson = () => {
@@ -2443,7 +2443,7 @@ function toggleReportLang() {
       }],
     };
     const b = new Blob([JSON.stringify(gj, null, 2)], { type: 'application/geo+json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.geojson`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.geojson`; a.click(); URL.revokeObjectURL(a.href);
   };
 
   const downloadAoiModalKml = () => {
@@ -2451,14 +2451,14 @@ function toggleReportLang() {
     const ring = [...aoiDetailed.vertices, aoiDetailed.vertices[0]].map(([lng, lat]) => `${lng},${lat},0`).join(' ');
     const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark><name>AOI (${aoiDetailed.shapeMode}) · Média ${aoiDetailed.mean.toFixed(2)}°C</name><Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Document></kml>`;
     const b = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.kml`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.kml`; a.click(); URL.revokeObjectURL(a.href);
   };
 
   const downloadAoiModalCsv = () => {
     if (!aoiDetailed) return;
     const csv = ['Parametro;Valor;Unidade', `Formato;${aoiDetailed.shapeMode};geometria`, `Pixels_Validos;${aoiDetailed.count};px`, `Area_ha;${aoiDetailed.areaHa.toFixed(4)};ha`, `LST_Min;${aoiDetailed.min.toFixed(2)};C`, `LST_Mediana;${aoiDetailed.q50.toFixed(2)};C`, `LST_Media;${aoiDetailed.mean.toFixed(2)};C`, `LST_Max;${aoiDetailed.max.toFixed(2)};C`].join('\n');
     const b = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SR2D4-AOI-${aoiDetailed.shapeMode}.csv`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
 
   const goTo = (lng: number, lat: number) => { if (Number.isFinite(lng) && Number.isFinite(lat)) mapInstance.current?.flyTo({ center: [lng, lat], zoom: 13, essential: true }); };
@@ -2510,7 +2510,7 @@ function toggleReportLang() {
     setPanEnabled(!n);
   };
 
-  const closeTutorial = () => { setShowTutorial(false); sessionStorage.setItem('sr2d4-tutorial-seen', '1'); };
+  const closeTutorial = () => { setShowTutorial(false); sessionStorage.setItem('synapse-sr-tutorial-seen', '1'); };
   const activeInspect = hoverSample || sample;
   const activeDiffInfo = activeInspect?.diffTemp !== undefined && differenceStats ? differenceClassLabel(activeInspect.diffTemp, differenceStats, lang) : null;
 
@@ -2527,7 +2527,7 @@ function toggleReportLang() {
         </div>
       </header>
       <div className="intro-strip">
-        <div><strong>{t.subtitle}</strong><span>{raster ? `${raster.fileName} · ${raster.width}×${raster.height} px · EPSG:${raster.epsg}` : 'Local-first analysis for SR2D4 multispectral products'}</span></div>
+        <div><strong>{t.subtitle}</strong><span>{raster ? `${raster.fileName} · ${raster.width}×${raster.height} px · EPSG:${raster.epsg}` : 'Local-first analysis for Synapse SR (2m) multispectral products'}</span></div>
         <a className="colab-button" href={COLAB_URL} target="_blank" rel="noreferrer">↗ {t.colab}</a>
       </div>
       <main className="workspace" style={{ '--rail-width': `${panelWidth}px` } as React.CSSProperties}>
@@ -2714,7 +2714,7 @@ function toggleReportLang() {
               <section className="rail-card inspector-rail-card">
                 <div className="card-heading">
                   <h3>ⓘ {t.sample}</h3>
-                  <span className="chip">{showingComparison && activeInspect?.diffTemp !== undefined ? 'Δ LST ±1σ' : displayMode === 'uhi' ? 'UHI 1m' : '°C'}</span>
+                  <span className="chip">{showingComparison && activeInspect?.diffTemp !== undefined ? 'Δ LST ±1σ' : displayMode === 'uhi' ? 'UHI 2m' : '°C'}</span>
                 </div>
                 <div className="inspector-split">
                   <div>
@@ -2755,7 +2755,7 @@ function toggleReportLang() {
                 <div className="control-row" style={{ marginTop: '10px' }}>
                   <span>Modo</span>
                   <select value={displayMode} onChange={(e) => setDisplayMode(e.target.value as 'temperature' | 'uhi')}>
-                    <option value="temperature">Temperatura (°C)</option><option value="uhi">UHI / ilhas de calor (1m)</option>
+                    <option value="temperature">Temperatura (°C)</option><option value="uhi">UHI / ilhas de calor (2m)</option>
                   </select>
                 </div>
                 {displayMode === 'temperature' ? (
@@ -2811,7 +2811,7 @@ function toggleReportLang() {
               <div className="comparison-file-list">
                 {comparisonFiles.map((sel, idx) => (
                   <label className="comparison-file" key={idx} style={{ cursor: 'pointer', position: 'relative' }}>
-                    <span><b>{idx === 0 ? 'Imagem 1 (ANTES)' : idx === 1 ? 'Imagem 2 (DEPOIS)' : `Imagem ${idx + 1}`}</b><small>{sel ? `${imageDateLabel(sel.name, idx)} · ${sel.name}` : 'Selecionar GeoTIFF SR2D4/MS'}</small></span>
+                    <span><b>{idx === 0 ? 'Imagem 1 (ANTES)' : idx === 1 ? 'Imagem 2 (DEPOIS)' : `Imagem ${idx + 1}`}</b><small>{sel ? `${imageDateLabel(sel.name, idx)} · ${sel.name}` : 'Selecionar GeoTIFF Synapse SR/MS'}</small></span>
                     <input type="file" accept=".tif,.tiff,image/tiff,application/geotiff,application/octet-stream" style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', zIndex: 12 }} onChange={(e) => { const sf = e.target.files?.[0] ?? null; setComparisonFiles((p) => p.map((it, i) => (i === idx ? sf : it))); setDifferenceReady(false); }} disabled={busy} />
                   </label>
                 ))}
@@ -2865,8 +2865,8 @@ function toggleReportLang() {
                     <button onClick={() => exportVectorIsotherms('geojson')}>Isotermas GeoJSON</button>
                     <button onClick={() => exportVectorIsotherms('kml')}>Isotermas KML</button>
                     <button onClick={exportPng}>{t.png}</button>
-                    <button onClick={() => downloadFloat32Tiff(raster.data, raster.width, raster.height, 'LST-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected)}>{t.tiff}</button>
-                    <button onClick={() => downloadUhiTiff(raster.data, raster.width, raster.height, 'UHI-SR2D4.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected, raster.stats.mean, raster.stats.stdDev)}>{t.uhi}</button>
+                    <button onClick={() => downloadFloat32Tiff(raster.data, raster.width, raster.height, 'LST-SynapseSR.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected)}>{t.tiff}</button>
+                    <button onClick={() => downloadUhiTiff(raster.data, raster.width, raster.height, 'UHI-SynapseSR.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected, raster.stats.mean, raster.stats.stdDev)}>{t.uhi}</button>
                     <button disabled={!uhiSurface} onClick={() => uhiSurface && downloadUhiSurface(uhiSurface)}>Grade UHI GeoJSON</button>
                     <button onClick={() => void downloadReport()}>{t.report}</button>
                   </div>
@@ -2935,13 +2935,12 @@ function toggleReportLang() {
               ×
             </button>
             <div className="card-kicker" style={{ color: '#38bdf8', fontWeight: 800, letterSpacing: '0.08em' }}>
-              SR2D4 / LST EXPLORER · DOCUMENTAÇÃO CIENTÍFICA & GUIA OPERACIONAL
+              SYNAPSE SR / LST EXPLORER · DOCUMENTAÇÃO CIENTÍFICA & GUIA OPERACIONAL
             </div>
             <h2 style={{ margin: '6px 0 14px', fontSize: '22px', color: '#fff' }}>
               {showMethod ? t.method : showHelp ? t.help : showLimits ? t.limitation : t.metadata}
             </h2>
 
-            {/* Abas de navegação rápida dentro do Pop-up + Alternador PT/EN */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '18px', paddingBottom: '12px', borderBottom: '1px solid rgba(121,226,220,0.2)' }}>
               <button type="button" onClick={() => { setShowMethod(true); setShowHelp(false); setShowLimits(false); setShowMeta(false); }} style={{ padding: '7px 13px', borderRadius: '8px', border: showMethod ? '1.5px solid #38bdf8' : '1px solid rgba(255,255,255,0.18)', background: showMethod ? 'rgba(56,189,248,0.22)' : 'rgba(255,255,255,0.04)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>◈ {t.method}</button>
               <button type="button" onClick={() => { setShowMethod(false); setShowHelp(true); setShowLimits(false); setShowMeta(false); }} style={{ padding: '7px 13px', borderRadius: '8px', border: showHelp ? '1.5px solid #ffb000' : '1px solid rgba(255,255,255,0.18)', background: showHelp ? 'rgba(255,176,0,0.22)' : 'rgba(255,255,255,0.04)', color: '#fff', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>？ {t.help}</button>
@@ -2954,7 +2953,6 @@ function toggleReportLang() {
               </button>
             </div>
 
-            {/* 1. METODOLOGIA (PT / EN) */}
             {showMethod && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13.5px' }}>
                 <div style={{ background: 'rgba(56,189,248,0.1)', borderLeft: '4px solid #38bdf8', padding: '12px 16px', borderRadius: '0 10px 10px 0' }}>
@@ -2962,32 +2960,32 @@ function toggleReportLang() {
                     {lang === 'pt' ? '💡 Explicação Simples (Para Não-Especialistas)' : '💡 Layperson Overview (How It Works in Plain Language)'}
                   </strong>
                   {lang === 'pt'
-                    ? 'Satélites térmicos gratuitos (como o Landsat da NASA/USGS) medem o calor da Terra, mas enxergam em blocos grandes de 100 metros — misturando o calor de um telhado quente com a sombra fresca de uma árvore vizinha. Já a imagem óptica super-resolvida (SR2D4) enxerga detalhes de 1 metro (cada árvore, rua e telhado), mas não possui sensor de calor. Este laboratório funde as duas imagens: ele aprende matematicamente como a vegetação resfria e como o concreto aquece a superfície na cena do satélite e projeta a temperatura em alta definição (1 metro), preservando o balanço real de energia medido no espaço.'
-                    : 'Free thermal satellites (like NASA/USGS Landsat) measure Earth’s heat, but their thermal sensor sees in coarse 100-meter blocks—mixing a hot metal roof with a cool neighboring tree canopy. Conversely, the super-resolved optical image (SR2D4) resolves 1-meter details (individual trees, streets, and roofs) but lacks a thermal sensor. This lab fuses both: it mathematically learns how vegetation cools and concrete heats the surface within the satellite scene, projecting temperature at 1-meter resolution while strictly conserving the total thermal energy measured from space.'}
+                    ? 'Satélites térmicos gratuitos (como o Landsat da NASA/USGS) medem o calor da Terra, mas enxergam em blocos grandes de 100 metros — misturando o calor de um telhado quente com a sombra fresca de uma árvore vizinha. Já a imagem óptica super-resolvida (Synapse SR) enxerga detalhes de 2 metros (árvores, ruas e telhados), mas não possui sensor de calor. Este laboratório funde as duas imagens: ele aprende matematicamente como a vegetação resfria e como o concreto aquece a superfície na cena do satélite e projeta a temperatura em alta definição (2 metros), preservando o balanço real de energia medido no espaço.'
+                    : 'Free thermal satellites (like NASA/USGS Landsat) measure Earth’s heat, but their thermal sensor sees in coarse 100-meter blocks—mixing a hot metal roof with a cool neighboring tree canopy. Conversely, the super-resolved optical image (Synapse SR) resolves 2-meter details (trees, streets, and roofs) but lacks a thermal sensor. This lab fuses both: it mathematically learns how vegetation cools and concrete heats the surface within the satellite scene, projecting temperature at 2-meter resolution while strictly conserving the total thermal energy measured from space.'}
                 </div>
 
                 <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '14px 16px' }}>
                   <strong style={{ color: '#ffb000', display: 'block', marginBottom: '8px', fontSize: '14px' }}>
-                    {lang === 'pt' ? '🔬 Pipeline Físico-Matemático (TsHARP Multi-Índice HD 1m)' : '🔬 Physical & Mathematical Pipeline (Multi-Index TsHARP HD 1m)'}
+                    {lang === 'pt' ? '🔬 Pipeline Físico-Matemático (TsHARP Multi-Índice HD 2m)' : '🔬 Physical & Mathematical Pipeline (Multi-Index TsHARP HD 2m)'}
                   </strong>
                   <ol style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <li>
                       <b>{lang === 'pt' ? 'Sincronização STAC & Filtragem Radiométrica:' : 'STAC Synchronization & Radiometric Filtering:'}</b>{' '}
                       {lang === 'pt'
-                        ? 'O algoritmo extrai a data (AAAAMMDD) e a caixa envolvente (WGS84) do GeoTIFF SR2D4 e consulta via API STAC a passagem mais próxima do Landsat 8/9 Collection 2 Level-2 (banda térmica ST_B10 convertida para Celsius via fatores de escala radiométricos oficiais USGS, aplicando máscara de bits QA_PIXEL contra nuvens e sombras).'
-                        : 'The algorithm extracts the date (YYYYMMDD) and bounding box (WGS84) from the SR2D4 GeoTIFF, querying the STAC API for the closest Landsat 8/9 Collection 2 Level-2 overpass (ST_B10 surface temperature band converted to Celsius via official USGS scaling factors, applying QA_PIXEL bitmasking for clouds and shadows).'}
+                        ? 'O algoritmo extrai a data (AAAAMMDD) e a caixa envolvente (WGS84) do GeoTIFF Synapse SR e consulta via API STAC a passagem mais próxima do Landsat 8/9 Collection 2 Level-2 (banda térmica ST_B10 convertida para Celsius via fatores de escala radiométricos oficiais USGS, aplicando máscara de bits QA_PIXEL contra nuvens e sombras).'
+                        : 'The algorithm extracts the date (YYYYMMDD) and bounding box (WGS84) from the Synapse SR GeoTIFF, querying the STAC API for the closest Landsat 8/9 Collection 2 Level-2 overpass (ST_B10 surface temperature band converted to Celsius via official USGS scaling factors, applying QA_PIXEL bitmasking for clouds and shadows).'}
                     </li>
                     <li>
-                      <b>{lang === 'pt' ? 'Preditores Biofísicos Espectrais (1 m):' : 'High-Resolution Biophysical Predictors (1 m):'}</b>{' '}
+                      <b>{lang === 'pt' ? 'Preditores Biofísicos Espectrais (2 m):' : 'High-Resolution Biophysical Predictors (2 m):'}</b>{' '}
                       {lang === 'pt'
-                        ? 'Nas bandas Red, NIR e SWIR de 1 m, calculam-se três descritores físicos de cobertura: NDVI = (NIR − Red)/(NIR + Red) para fração de cobertura vegetal e evapotranspiração; NDBI = (SWIR − NIR)/(SWIR + NIR) para superfícies impermeáveis e inércia térmica construída; e NDWI = (Red − SWIR)/(Red + SWIR) para teor de água e corpos hídricos.'
-                        : 'From the 1 m Red, NIR, and SWIR bands, three physical descriptors are computed: NDVI = (NIR − Red)/(NIR + Red) for fractional vegetation cover and evapotranspiration; NDBI = (SWIR − NIR)/(SWIR + NIR) for impervious built-up surfaces; and NDWI = (Red − SWIR)/(Red + SWIR) for surface moisture and water bodies.'}
+                        ? 'Nas bandas Red, NIR e SWIR de 2 m do Synapse SR, calculam-se três descritores físicos de cobertura: NDVI = (NIR − Red)/(NIR + Red) para fração de cobertura vegetal e evapotranspiração; NDBI = (SWIR − NIR)/(SWIR + NIR) para superfícies impermeáveis e inércia térmica construída; e NDWI = (Red − SWIR)/(Red + SWIR) para teor de água e corpos hídricos.'
+                        : 'From the 2 m Synapse SR Red, NIR, and SWIR bands, three physical descriptors are computed: NDVI = (NIR − Red)/(NIR + Red) for fractional vegetation cover and evapotranspiration; NDBI = (SWIR − NIR)/(SWIR + NIR) for impervious built-up surfaces; and NDWI = (Red − SWIR)/(Red + SWIR) for surface moisture and water bodies.'}
                     </li>
                     <li>
                       <b>{lang === 'pt' ? 'Regressão TsHARP & Conservação de Resíduo (ΔT_res):' : 'TsHARP Regression & Residual Energy Conservation (ΔT_res):'}</b>{' '}
                       {lang === 'pt'
-                        ? 'Ajusta-se um modelo de Mínimos Quadrados Ordinários (OLS) multivariado na resolução agregada do satélite: LST_coarse = β0 + β1·NDVI + β2·NDBI + β3·NDWI + ΔT_res. O resíduo espacial ΔT_res = LST_Landsat − LST_estimado(coarse) é interpolado bilinearmente e somado à predição fina de 1 m, garantindo que a média dos pixels de 1 m reproduza fielmente a energia medida pelo sensor TIRS.'
-                        : 'A multivariate Ordinary Least Squares (OLS) regression is fitted at the aggregated coarse scale: LST_coarse = β0 + β1·NDVI + β2·NDBI + β3·NDWI + ΔT_res. The coarse residual ΔT_res = LST_Landsat − LST_estimated(coarse) is bilinearly interpolated and added to the 1 m prediction, ensuring energy conservation relative to the original TIRS sensor.'}
+                        ? 'Ajusta-se um modelo de Mínimos Quadrados Ordinários (OLS) multivariado na resolução agregada do satélite: LST_coarse = β0 + β1·NDVI + β2·NDBI + β3·NDWI + ΔT_res. O resíduo espacial ΔT_res = LST_Landsat − LST_estimado(coarse) é interpolado bilinearmente e somado à predição fina de 2 m, garantindo que a média dos pixels de 2 m reproduza fielmente a energia medida pelo sensor TIRS.'
+                        : 'A multivariate Ordinary Least Squares (OLS) regression is fitted at the aggregated coarse scale: LST_coarse = β0 + β1·NDVI + β2·NDBI + β3·NDWI + ΔT_res. The coarse residual ΔT_res = LST_Landsat − LST_estimated(coarse) is bilinearly interpolated and added to the 2 m prediction, ensuring energy conservation relative to the original TIRS sensor.'}
                     </li>
                     <li>
                       <b>{lang === 'pt' ? 'Modelagem de Ilha de Calor Urbana de Superfície (SUHI):' : 'Surface Urban Heat Island (SUHI) Clustering:'}</b>{' '}
@@ -3013,7 +3011,6 @@ function toggleReportLang() {
               </div>
             )}
 
-            {/* 2. COMO USAR / GUIA OPERACIONAL (PT / EN) */}
             {showHelp && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13.5px' }}>
                 <div style={{ background: 'rgba(255,176,0,0.1)', borderLeft: '4px solid #ffb000', padding: '12px 16px', borderRadius: '0 10px 10px 0' }}>
@@ -3027,19 +3024,19 @@ function toggleReportLang() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
                   <div style={{ background: 'rgba(255,255,255,0.04)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <b style={{ color: '#38bdf8', display: 'block', marginBottom: '4px' }}>{lang === 'pt' ? '1. Carregar GeoTIFF & Bandas' : '1. Load GeoTIFF & Optical Bands'}</b>
+                    <b style={{ color: '#38bdf8', display: 'block', marginBottom: '4px' }}>{lang === 'pt' ? '1. Gerar Synapse SR (2m) & Carregar Bandas' : '1. Generate Synapse SR (2m) & Load Bands'}</b>
                     <small style={{ color: '#cbd5e1' }}>
                       {lang === 'pt'
-                        ? 'Gere o recorte multiespectral no notebook Google Colab (botão no topo) ou carregue um GeoTIFF contendo as bandas Vermelho (Red), Infravermelho Próximo (NIR) e Ondas Curtas (SWIR). Produtos Sentinel-2 super-resolvidos de 10 bandas são mapeados automaticamente (B04, B08, B11).'
-                        : 'Generate the multispectral clip in Google Colab (top button) or load a GeoTIFF containing Red, Near-Infrared (NIR), and Short-Wave Infrared (SWIR) bands. 10-band super-resolved Sentinel-2 products are auto-mapped (B04, B08, B11).'}
+                        ? 'Gere o recorte multiespectral Synapse SR (2 metros) no notebook Google Colab (botão "Abrir Colab" no topo) e carregue o GeoTIFF contendo as bandas Vermelho (Red), Infravermelho Próximo (NIR) e Ondas Curtas (SWIR). Produtos de 10 bandas são mapeados automaticamente (B04, B08, B11).'
+                        : 'Generate the 2-meter Synapse SR multispectral clip in Google Colab (top "Open Colab" button) and load the GeoTIFF containing Red, Near-Infrared (NIR), and Short-Wave Infrared (SWIR) bands. 10-band products are auto-mapped (B04, B08, B11).'}
                     </small>
                   </div>
                   <div style={{ background: 'rgba(255,255,255,0.04)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
                     <b style={{ color: '#ffb000', display: 'block', marginBottom: '4px' }}>{lang === 'pt' ? '2. Calcular Mapa & Inspecionar' : '2. Compute Map & Inspect Pixels'}</b>
                     <small style={{ color: '#cbd5e1' }}>
                       {lang === 'pt'
-                        ? 'Clique em "Calcular mapa térmico". Ative a ferramenta ⓘ (Identify) para ler a temperatura exata em cada telhado, via ou parque. Alterne entre Temperatura (°C) e Ilha de Calor (UHI) ou ative as Isotermas vetoriais.'
-                        : 'Click "Calculate thermal map". Enable the ⓘ (Identify) tool to inspect exact temperatures over roofs, streets, or parks. Switch between Temperature (°C) and Urban Heat Island (UHI) or overlay vector Isotherms.'}
+                        ? 'Clique em "Calcular mapa térmico". Ative a ferramenta ⓘ (Identify) para ler a temperatura exata em cada telhado, via ou parque. Alterne entre Temperatura (°C) e Ilha de Calor (UHI 2m) ou ative as Isotermas vetoriais.'
+                        : 'Click "Calculate thermal map". Enable the ⓘ (Identify) tool to inspect exact temperatures over roofs, streets, or parks. Switch between Temperature (°C) and Urban Heat Island (UHI 2m) or overlay vector Isotherms.'}
                     </small>
                   </div>
                   <div style={{ background: 'rgba(255,255,255,0.04)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -3062,7 +3059,6 @@ function toggleReportLang() {
               </div>
             )}
 
-            {/* 3. LIMITAÇÕES E INCERTEZAS DO TsHARP (PT / EN) */}
             {showLimits && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13.5px' }}>
                 <div style={{ background: 'rgba(244,63,94,0.12)', borderLeft: '4px solid #f43f5e', padding: '12px 16px', borderRadius: '0 10px 10px 0' }}>
@@ -3070,8 +3066,8 @@ function toggleReportLang() {
                     {lang === 'pt' ? '⚠️ O que o usuário leigo e o gestor precisam saber antes de tomar decisões:' : '⚠️ What Laypersons and Decision-Makers Must Know:'}
                   </strong>
                   {lang === 'pt'
-                    ? 'A super-resolução térmica de 1 metro NÃO é uma câmera termográfica de drone voando baixo, mas sim uma desagregação física de dados orbitais. Além disso, "Temperatura de Superfície" (LST — o quão quente está o asfalto ou a telha ao toque) é fisicamente diferente da "Temperatura do Ar" (Ta — medida pelos termômetros de rua a 2 metros de altura).'
-                    : '1-meter thermal super-resolution is NOT a low-flying drone thermal camera, but a physical disaggregation of orbital data. Furthermore, "Land Surface Temperature" (LST—how hot asphalt or a roof feels to the touch) is physically distinct from "Air Temperature" (Ta—measured by street thermometers at 2 meters height).'}
+                    ? 'A super-resolução térmica de 2 metros (Synapse SR + TsHARP) NÃO é uma câmera termográfica de drone voando baixo, mas sim uma desagregação física de dados orbitais. Além disso, "Temperatura de Superfície" (LST — o quão quente está o asfalto ou a telha ao toque) é fisicamente diferente da "Temperatura do Ar" (Ta — medida pelos termômetros de rua a 2 metros de altura).'
+                    : '2-meter thermal super-resolution (Synapse SR + TsHARP) is NOT a low-flying drone thermal camera, but a physical disaggregation of orbital data. Furthermore, "Land Surface Temperature" (LST—how hot asphalt or a roof feels to the touch) is physically distinct from "Air Temperature" (Ta—measured by street thermometers at 2 meters height).'}
                 </div>
 
                 <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '14px 16px' }}>
@@ -3082,20 +3078,20 @@ function toggleReportLang() {
                     <li>
                       <b>{lang === 'pt' ? '1. Desacoplamento Superfície–Atmosfera (LST ≠ Ta):' : '1. Surface–Atmosphere Decoupling (LST ≠ Ta):'}</b>{' '}
                       {lang === 'pt'
-                        ? 'Às 10h15 da manhã (horário de passagem do Landsat/Sentinel), telhados metálicos, fibrocimento e asfalto escuro absorvem radiação de ondas curtas e frequentemente ficam de +4 °C a +12 °C mais quentes que o ar a 2 m de altura. Por isso, a validação com estações meteorológicas deve avaliar a estatística espacial num raio de representatividade (ex.: 100 m, padrão OMM) e não um único pixel isolado de 1 m.'
-                        : 'At 10:15 AM local solar time (Landsat/Sentinel overpass), metal roofs and dark asphalt absorb shortwave radiation and are typically +4 °C to +12 °C warmer than the air at 2 m height. Ground validation must therefore use a micrometeorological footprint radius (e.g., 100 m WMO urban standard) rather than an isolated 1 m pixel.'}
+                        ? 'Às 10h15 da manhã (horário de passagem do Landsat/Sentinel), telhados metálicos, fibrocimento e asfalto escuro absorvem radiação de ondas curtas e frequentemente ficam de +4 °C a +12 °C mais quentes que o ar a 2 m de altura. Por isso, a validação com estações meteorológicas deve avaliar a estatística espacial num raio de representatividade (ex.: 100 m, padrão OMM) e não um único pixel isolado de 2 m.'
+                        : 'At 10:15 AM local solar time (Landsat/Sentinel overpass), metal roofs and dark asphalt absorb shortwave radiation and are typically +4 °C to +12 °C warmer than the air at 2 m height. Ground validation must therefore use a micrometeorological footprint radius (e.g., 100 m WMO urban standard) rather than an isolated 2 m pixel.'}
                     </li>
                     <li>
                       <b>{lang === 'pt' ? '2. Invariância de Escala e Materiais de Alto Albedo (Telhados Brancos/Frios):' : '2. Scale Invariance & High-Albedo Materials (Cool/White Roofs):'}</b>{' '}
                       {lang === 'pt'
-                        ? 'O modelo TsHARP assume que a relação estatística entre índices ópticos (NDVI/NDBI) e temperatura observada a 100 m permanece constante a 1 m. Embora adicionemos termos de brilho e resíduo (ΔT_res), coberturas sintéticas especiais, painéis solares ou sombras estreitas de edifícios altos (cânions urbanos) podem apresentar desvios locais de ±1,5 °C a ±2,5 °C.'
-                        : 'TsHARP assumes that the statistical relationship between optical indices (NDVI/NDBI) and temperature at 100 m holds at 1 m. Even with albedo adjustments and residual injection (ΔT_res), synthetic cool roofs, solar panels, or narrow high-rise shadow canyons may exhibit local deviations of ±1.5 °C to ±2.5 °C.'}
+                        ? 'O modelo TsHARP assume que a relação estatística entre índices ópticos (NDVI/NDBI) e temperatura observada a 100 m permanece constante a 2 m. Embora adicionemos termos de brilho e resíduo (ΔT_res), coberturas sintéticas especiais, painéis solares ou sombras estreitas de edifícios altos (cânions urbanos) podem apresentar desvios locais de ±1,5 °C a ±2,5 °C.'
+                        : 'TsHARP assumes that the statistical relationship between optical indices (NDVI/NDBI) and temperature at 100 m holds at 2 m. Even with albedo adjustments and residual injection (ΔT_res), synthetic cool roofs, solar panels, or narrow high-rise shadow canyons may exhibit local deviations of ±1.5 °C to ±2.5 °C.'}
                     </li>
                     <li>
                       <b>{lang === 'pt' ? '3. Defasagem Temporal entre Mosaico Óptico e Passagem Térmica:' : '3. Temporal Gap Between Optical Mosaic & Thermal Overpass:'}</b>{' '}
                       {lang === 'pt'
-                        ? 'Quando a cena óptica de alta resolução e a cena térmica livre de nuvens do Landsat foram adquiridas em dias distintos, variações de umidade antecedente do solo (chuvas) ou velocidade do vento afetam o contraste térmico absoluto.'
-                        : 'When the high-resolution optical product and the cloud-free Landsat thermal scene are acquired on different dates, antecedent soil moisture (rainfall) or wind speed variations can shift absolute thermal contrast.'}
+                        ? 'Quando a cena óptica de alta resolução (Synapse SR) e a cena térmica livre de nuvens do Landsat foram adquiridas em dias distintos, variações de umidade antecedente do solo (chuvas) ou velocidade do vento afetam o contraste térmico absoluto.'
+                        : 'When the high-resolution Synapse SR optical product and the cloud-free Landsat thermal scene are acquired on different dates, antecedent soil moisture (rainfall) or wind speed variations can shift absolute thermal contrast.'}
                     </li>
                     <li>
                       <b>{lang === 'pt' ? '4. Efeitos de Emissividade (ε) e Anisotropia Direcional:' : '4. Surface Emissivity (ε) & Directional Anisotropy:'}</b>{' '}
@@ -3118,13 +3114,12 @@ function toggleReportLang() {
               </div>
             )}
 
-            {/* 4. METADADOS DA CENA CARREGADA */}
             {showMeta && raster && (
               <div className="meta-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginTop: '8px' }}>
                 <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Arquivo / Par STAC' : 'File / STAC Pair'}</b><br />{raster.fileName}</span>
                 <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Dimensões da Matriz' : 'Grid Dimensions'}</b><br />{raster.width.toLocaleString()} × {raster.height.toLocaleString()} px ({(raster.width * raster.height).toLocaleString()} px)</span>
                 <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Sistema de Referência (CRS)' : 'Coordinate System (CRS)'}</b><br />EPSG:{raster.epsg} ({raster.isProjected ? 'Projetado / Métrico' : 'Geográfico / Graus'})</span>
-                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Resolução Espacial' : 'Spatial Resolution'}</b><br />{Math.abs(raster.resolution[0] || 1).toFixed(2)} × {Math.abs(raster.resolution[1] || 1).toFixed(2)} {raster.isProjected ? 'm/px' : 'deg/px'}</span>
+                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Resolução Espacial' : 'Spatial Resolution'}</b><br />{Math.abs(raster.resolution[0] || 2).toFixed(2)} × {Math.abs(raster.resolution[1] || 2).toFixed(2)} {raster.isProjected ? 'm/px' : 'deg/px'}</span>
                 <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Estatística Térmica (LST)' : 'Thermal Statistics (LST)'}</b><br />Mín: {raster.stats.min.toFixed(1)}°C · Média: {raster.stats.mean.toFixed(2)}°C · Máx: {raster.stats.max.toFixed(1)}°C (σ={raster.stats.stdDev.toFixed(2)}°C)</span>
                 <span style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}><b>{lang === 'pt' ? 'Quartis da Cena' : 'Scene Quartiles'}</b><br />Q25: {raster.stats.q25.toFixed(1)}°C · Mediana (Q50): {raster.stats.q50.toFixed(1)}°C · Q75: {raster.stats.q75.toFixed(1)}°C</span>
               </div>
@@ -3137,15 +3132,15 @@ function toggleReportLang() {
         <div className="tutorial-backdrop">
           <div className="tutorial-card" style={{ maxWidth: '580px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="card-kicker">SR2D4 / LST EXPLORER · PASSO {tutorialStep + 1}/4</div>
+              <div className="card-kicker">SYNAPSE SR / LST EXPLORER · PASSO {tutorialStep + 1}/4</div>
               <button type="button" onClick={() => setLang(lang === 'pt' ? 'en' : 'pt')} style={{ background: 'transparent', border: '1px solid #79e2dc', color: '#79e2dc', borderRadius: '99px', padding: '3px 10px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
                 {lang === 'pt' ? 'EN' : 'PT'}
               </button>
             </div>
             <h2>
               {(lang === 'pt'
-                ? ['1. Como funciona o Laboratório', '2. Metodologia TsHARP HD 1m', '3. Ilhas de Calor & AOI', '4. Validação em Terra & Limitações']
-                : ['1. How the Lab Works', '2. TsHARP HD 1m Methodology', '3. Urban Heat Islands & AOI', '4. Ground Validation & Limitations'])[tutorialStep]}
+                ? ['1. Como funciona o Laboratório', '2. Metodologia Synapse SR + TsHARP 2m', '3. Ilhas de Calor & AOI', '4. Validação em Terra & Limitações']
+                : ['1. How the Lab Works', '2. Synapse SR + TsHARP 2m Methodology', '3. Urban Heat Islands & AOI', '4. Ground Validation & Limitations'])[tutorialStep]}
             </h2>
             <p style={{ fontSize: '13.5px', lineHeight: 1.55 }}>{[t.helpText, t.methodText, t.uhiText, t.limitationText][tutorialStep]}</p>
             <div className="tutorial-actions">
@@ -3163,4 +3158,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.7
+// FIM DO ARQUIVO src/App.tsx v3.8
