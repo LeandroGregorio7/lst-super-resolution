@@ -128,6 +128,109 @@ function classifyStationMeta(source: string, name: string): {
   };
 }
 
+
+export type UhiLegendClassItem = {
+  idx: number;
+  shortPt: string;
+  shortEn: string;
+  fullPt: string;
+  fullEn: string;
+  sigmaLabel: string;
+  tempRange: string;
+  color: string;
+  kmlColor: string;
+};
+
+export function buildUhiClassLegendItems(
+  stats: { min: number; max: number; mean: number; stdDev: number; q25: number; q50: number; q75: number },
+  method: 'zscore' | 'quantiles' | 'natural' | 'kernel' = 'zscore',
+  power = 1.1,
+): UhiLegendClassItem[] {
+  const invPower = 1 / Math.max(0.5, power);
+  const centerRef = method === 'quantiles' ? stats.q50 : stats.mean;
+  const scaleRef =
+    method === 'quantiles'
+      ? Math.max(0.5, (stats.q75 - stats.q25) * 0.68)
+      : Math.max(0.6, stats.stdDev);
+  const zToTemp = (z: number) =>
+    centerRef + (z < 0 ? -1 : 1) * Math.pow(Math.abs(z), invPower) * scaleRef;
+
+  const t1 = zToTemp(-0.95);
+  const t2 = zToTemp(-0.30);
+  const t3 = zToTemp(0.25);
+  const t4 = zToTemp(0.85);
+  const t5 = zToTemp(1.40);
+
+  return [
+    {
+      idx: 1,
+      shortPt: '1. Frescor',
+      shortEn: '1. Cool Island',
+      fullPt: '1. Ilha de Frescor',
+      fullEn: '1. Cool Island',
+      sigmaLabel: '< -0,95σ',
+      tempRange: `< ${t1.toFixed(1)}°C`,
+      color: '#103e8a',
+      kmlColor: 'cc8a3e10',
+    },
+    {
+      idx: 2,
+      shortPt: '2. Amenizado',
+      shortEn: '2. Mitigated',
+      fullPt: '2. Zona Amenizada',
+      fullEn: '2. Mitigated Zone',
+      sigmaLabel: '-0,95 a -0,30σ',
+      tempRange: `${t1.toFixed(1)} a ${t2.toFixed(1)}°C`,
+      color: '#2ba198',
+      kmlColor: 'cc98a12b',
+    },
+    {
+      idx: 3,
+      shortPt: '3. Neutro',
+      shortEn: '3. Neutral',
+      fullPt: '3. Zona Neutra',
+      fullEn: '3. Neutral Zone',
+      sigmaLabel: '-0,30 a +0,25σ',
+      tempRange: `${t2.toFixed(1)} a ${t3.toFixed(1)}°C`,
+      color: '#68c96e',
+      kmlColor: 'cc6ec968',
+    },
+    {
+      idx: 4,
+      shortPt: '4. UHI Moderada',
+      shortEn: '4. Moderate UHI',
+      fullPt: '4. UHI Moderada',
+      fullEn: '4. Moderate UHI',
+      sigmaLabel: '+0,25 a +0,85σ',
+      tempRange: `${t3.toFixed(1)} a ${t4.toFixed(1)}°C`,
+      color: '#f8d668',
+      kmlColor: 'cc68d6f8',
+    },
+    {
+      idx: 5,
+      shortPt: '5. UHI Forte',
+      shortEn: '5. Strong UHI',
+      fullPt: '5. UHI Forte',
+      fullEn: '5. Strong UHI',
+      sigmaLabel: '+0,85 a +1,40σ',
+      tempRange: `${t4.toFixed(1)} a ${t5.toFixed(1)}°C`,
+      color: '#f47c30',
+      kmlColor: 'cc307cf4',
+    },
+    {
+      idx: 6,
+      shortPt: '6. UHI Extrema',
+      shortEn: '6. Extreme UHI',
+      fullPt: '6. Hotspot Extremo',
+      fullEn: '6. Extreme Hotspot',
+      sigmaLabel: '> +1,40σ',
+      tempRange: `> ${t5.toFixed(1)}°C`,
+      color: '#d42026',
+      kmlColor: 'cc2620d4',
+    },
+  ];
+}
+
 export function StationValidationDock({
   open,
   visibleOnMap,
@@ -139,6 +242,15 @@ export function StationValidationDock({
   map,
   rasterMin,
   rasterMax,
+  getCanvases,
+  rasterBounds,
+  rasterStats,
+  opacity,
+  displayMode,
+  palette,
+  customColors,
+  uhiMethod,
+  uhiPower,
 }: {
   open: boolean;
   visibleOnMap: boolean;
@@ -150,6 +262,15 @@ export function StationValidationDock({
   map: MapLibreMap | null;
   rasterMin: number;
   rasterMax: number;
+  getCanvases: () => { optical: HTMLCanvasElement | null; lst: HTMLCanvasElement | null };
+  rasterBounds: RasterBounds | null;
+  rasterStats: { min: number; max: number; mean: number; stdDev: number; q25: number; q50: number; q75: number } | null;
+  opacity: number;
+  displayMode: 'temperature' | 'uhi';
+  palette: string;
+  customColors: string[];
+  uhiMethod: 'zscore' | 'quantiles' | 'natural' | 'kernel';
+  uhiPower: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const markersRef = useRef<maplibregl.Marker[]>([]);
@@ -198,7 +319,7 @@ export function StationValidationDock({
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:rgba(255,255,255,0.05);padding:8px;border-radius:8px;margin-bottom:8px">
             <div><small style="color:#9ab0b5;display:block;font-size:10px">Estação (Ar 2m)</small><b style="color:#38bdf8;font-size:14px">${st.stationTempC.toFixed(2)} °C</b></div>
             <div><small style="color:#9ab0b5;display:block;font-size:10px">LST Raio ${stationRadiusM}m</small><b style="color:#ffb000;font-size:14px">${st.radiusMeanC.toFixed(2)} °C</b></div>
-            <div><small style="color:#9ab0b5;display:block;font-size:10px">Erro / ΔT (LST − Ta)</small><b style="color:${st.proximityColor};font-size:13px">${st.deltaRadiusC >= 0 ? '+' : ''}${st.deltaRadiusC.toFixed(2)} °C</b></div>
+            <div><small style="color:#9ab0b5;display:block;font-size:10px">Diferença ΔT (LST − Ta)</small><b style="color:${st.proximityColor};font-size:13px">${st.deltaRadiusC >= 0 ? '+' : ''}${st.deltaRadiusC.toFixed(2)} °C</b></div>
             <div><small style="color:#9ab0b5;display:block;font-size:10px">Desvio Espacial (σ)</small><b style="color:#fff;font-size:13px">±${st.radiusStdC.toFixed(2)} °C</b></div>
           </div>
           <div style="font-size:11px;color:${st.proximityColor};font-weight:700">${st.proximityStatus}</div>
@@ -276,10 +397,14 @@ export function StationValidationDock({
   const biasRadius = stations.reduce((acc, s) => acc + s.deltaRadiusC, 0) / n;
 
   const downloadChartPng = () => {
-    const rowH = 92;
-    const headH = 195;
-    const w = 980;
-    const h = headH + stations.length * rowH + 40;
+    const { optical, lst } = getCanvases();
+    const rowH = 114;
+    const headH = 175;
+    const mapPanelW = 810;
+    const chartX = 856;
+    const chartW = 936;
+    const w = 1820;
+    const h = Math.max(960, headH + stations.length * rowH + 46);
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -291,64 +416,250 @@ export function StationValidationDock({
 
     ctx.fillStyle = '#38bdf8';
     ctx.font = '700 13px Arial';
-    ctx.fillText('📡 SYNAPSE SR / LST EXPLORER · VALIDAÇÃO EM TERRA (ACOPLAMENTO SUPERFÍCIE-ATMOSFERA)', 28, 34);
+    ctx.fillText('📡 SYNAPSE SR / LST EXPLORER · VALIDAÇÃO EM TERRA (COMPARATIVO SATÉLITE vs. ESTAÇÕES METEOROLÓGICAS)', 28, 32);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '700 22px Arial';
-    ctx.fillText(`Comparativo Térmico: Satélite (Raio ${stationRadiusM}m) vs. Estações em Terra (Ta 2m)`, 28, 64);
+    ctx.fillText(`Mapa Térmico & Comparativo: Satélite (Raio ${stationRadiusM}m) vs. Estações em Terra (Ar 2m)`, 28, 62);
 
     ctx.fillStyle = '#9cddda';
     ctx.font = '14px Arial';
     ctx.fillText(
-      `Passagem: ${stations[0].dateIso} às ${stations[0].overpassTime}   |   MAE (${stationRadiusM}m): ${maeRadius.toFixed(2)} °C   |   RMSE: ${rmseRadius.toFixed(2)} °C   |   Offset (LST − Ta): ${biasRadius >= 0 ? '+' : ''}${biasRadius.toFixed(2)} °C`,
+      `Passagem: ${stations[0].dateIso} às ${stations[0].overpassTime}   |   MAE (${stationRadiusM}m): ${maeRadius.toFixed(2)} °C   |   RMSE: ${rmseRadius.toFixed(2)} °C   |   Diferença Média (Satélite − Estação): ${biasRadius >= 0 ? '+' : ''}${biasRadius.toFixed(2)} °C`,
       28,
-      92,
+      88,
     );
 
-    ctx.fillStyle = '#38bdf8'; ctx.fillRect(28, 114, 14, 14);
-    ctx.fillStyle = '#e8f4f2'; ctx.font = '700 13px Arial'; ctx.fillText('Estação em Terra (Ta 2m)', 48, 126);
-    ctx.fillStyle = '#ffb000'; ctx.fillRect(250, 114, 14, 14);
-    ctx.fillStyle = '#e8f4f2'; ctx.fillText(`LST Média no Raio ${stationRadiusM}m (com faixa ±1σ)`, 270, 126);
-    ctx.fillStyle = '#f43f5e'; ctx.fillRect(590, 114, 14, 14);
-    ctx.fillStyle = '#e8f4f2'; ctx.fillText('LST Pixel Central 2m', 610, 126);
+    const mapCardY = 108;
+    const mapCardH = h - mapCardY - 24;
+    ctx.fillStyle = '#0b1b22';
+    ctx.fillRect(28, mapCardY, mapPanelW, mapCardH);
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(28, mapCardY, mapPanelW, mapCardH);
+
+    ctx.fillStyle = '#ffb000';
+    ctx.font = '700 14px Arial';
+    ctx.fillText(
+      `🗺️ MAPA TÉRMICO DA CENA COM ESTAÇÕES EM TERRA (RAIO R = ${stationRadiusM}m)`,
+      46,
+      mapCardY + 28,
+    );
+
+    const availMapW = mapPanelW - 36;
+    const availMapH = Math.max(380, mapCardH - 220);
+    const mapBoxX = 46;
+    const mapBoxY = mapCardY + 42;
+
+    ctx.fillStyle = '#050e12';
+    ctx.fillRect(mapBoxX, mapBoxY, availMapW, availMapH);
+
+    if (optical && lst) {
+      const imgAspect = lst.width / Math.max(1, lst.height);
+      const boxAspect = availMapW / Math.max(1, availMapH);
+      const drawW = imgAspect > boxAspect ? availMapW : Math.round(availMapH * imgAspect);
+      const drawH = imgAspect > boxAspect ? Math.round(availMapW / imgAspect) : availMapH;
+      const drawX = mapBoxX + Math.round((availMapW - drawW) / 2);
+      const drawY = mapBoxY + Math.round((availMapH - drawH) / 2);
+
+      ctx.drawImage(optical, drawX, drawY, drawW, drawH);
+      ctx.globalAlpha = opacity;
+      ctx.drawImage(lst, drawX, drawY, drawW, drawH);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(121, 226, 220, 0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(drawX, drawY, drawW, drawH);
+
+      if (rasterBounds) {
+        const ext = boundsExtent(rasterBounds);
+        const spanLng = Math.max(1e-6, ext.east - ext.west);
+        const spanLat = Math.max(1e-6, ext.north - ext.south);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(drawX, drawY, drawW, drawH);
+        ctx.clip();
+
+        stations.forEach((st, idx) => {
+          const px = drawX + ((st.lng - ext.west) / spanLng) * drawW;
+          const py = drawY + ((ext.north - st.lat) / spanLat) * drawH;
+          const cosLat = Math.max(0.2, Math.cos((st.lat * Math.PI) / 180));
+          const rDegLng = stationRadiusM / (111320 * cosLat);
+          const rPx = Math.max(10, (rDegLng / spanLng) * drawW);
+
+          ctx.beginPath();
+          ctx.arc(px, py, rPx, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
+          ctx.fill();
+          ctx.setLineDash([5, 3]);
+          ctx.strokeStyle = st.proximityColor;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          ctx.beginPath();
+          ctx.arc(px, py, 9, 0, Math.PI * 2);
+          ctx.fillStyle = '#071317';
+          ctx.fill();
+          ctx.strokeStyle = st.proximityColor;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(px, py, 3.2, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffb000';
+          ctx.fill();
+
+          const badgeText = `#${idx + 1} ${st.name} (${st.stationTempC.toFixed(1)}°C)`;
+          ctx.font = '700 11px Arial';
+          const tw = Math.min(210, ctx.measureText(badgeText).width + 12);
+          const bx = Math.max(drawX + 4, Math.min(drawX + drawW - tw - 4, px - tw / 2));
+          const by = py - 26 > drawY + 4 ? py - 26 : py + 12;
+          ctx.fillStyle = 'rgba(7, 19, 23, 0.88)';
+          ctx.fillRect(bx, by, tw, 18);
+          ctx.strokeStyle = st.proximityColor;
+          ctx.lineWidth = 1.2;
+          ctx.strokeRect(bx, by, tw, 18);
+          ctx.fillStyle = '#ffffff';
+          ctx.textAlign = 'center';
+          ctx.fillText(badgeText, bx + tw / 2, by + 13, tw - 8);
+          ctx.textAlign = 'left';
+        });
+
+        ctx.restore();
+      }
+    }
+
+    const legBoxY = mapBoxY + availMapH + 14;
+    const legBoxH = mapCardY + mapCardH - legBoxY - 14;
+    ctx.fillStyle = '#071317';
+    ctx.fillRect(mapBoxX, legBoxY, availMapW, legBoxH);
+    ctx.strokeStyle = 'rgba(121, 226, 220, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(mapBoxX, legBoxY, availMapW, legBoxH);
+
+    if (displayMode === 'uhi' && rasterStats) {
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '700 12px Arial';
+      ctx.fillText(`LEGENDA UHI · CLASSES DE ILHA DE CALOR E TEMPERATURA (${uhiMethod.toUpperCase()})`, mapBoxX + 14, legBoxY + 22);
+      const uhiItems = buildUhiClassLegendItems(rasterStats, uhiMethod, uhiPower);
+      const colW = (availMapW - 28) / 3;
+      uhiItems.forEach((it, idx) => {
+        const col = idx % 3;
+        const row = Math.floor(idx / 3);
+        const ix = mapBoxX + 14 + col * colW;
+        const iy = legBoxY + 34 + row * 48;
+        ctx.fillStyle = it.color;
+        ctx.fillRect(ix, iy, 18, 34);
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.strokeRect(ix, iy, 18, 34);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 12px Arial';
+        ctx.fillText(it.shortPt, ix + 24, iy + 14, colW - 30);
+        ctx.fillStyle = '#ffb000';
+        ctx.font = '700 11px Arial';
+        ctx.fillText(`${it.tempRange} (${it.sigmaLabel})`, ix + 24, iy + 30, colW - 30);
+      });
+    } else {
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '700 12px Arial';
+      ctx.fillText(`LEGENDA LST · TEMPERATURA DE SUPERFÍCIE (°C · PALETA ${palette.toUpperCase()})`, mapBoxX + 14, legBoxY + 24);
+      const grad = ctx.createLinearGradient(mapBoxX + 14, legBoxY + 38, mapBoxX + availMapW - 14, legBoxY + 38);
+      for (let s = 0; s <= 16; s += 1) {
+        grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, customColors, false));
+      }
+      ctx.fillStyle = grad;
+      ctx.fillRect(mapBoxX + 14, legBoxY + 38, availMapW - 28, 22);
+      ctx.strokeStyle = '#ffffff';
+      ctx.strokeRect(mapBoxX + 14, legBoxY + 38, availMapW - 28, 22);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 12px Arial';
+      const minT = rasterStats?.min ?? rasterMin;
+      const meanT = rasterStats?.mean ?? (rasterMin + rasterMax) * 0.5;
+      const maxT = rasterStats?.max ?? rasterMax;
+      ctx.textAlign = 'left';
+      ctx.fillText(`Mín: ${minT.toFixed(1)} °C`, mapBoxX + 14, legBoxY + 82);
+      ctx.textAlign = 'center';
+      ctx.fillText(`Média da Cena: ${meanT.toFixed(1)} °C`, mapBoxX + availMapW / 2, legBoxY + 82);
+      ctx.textAlign = 'right';
+      ctx.fillText(`Máx: ${maxT.toFixed(1)} °C`, mapBoxX + availMapW - 14, legBoxY + 82);
+      ctx.textAlign = 'left';
+    }
+
+    ctx.fillStyle = '#38bdf8'; ctx.fillRect(chartX, 114, 14, 14);
+    ctx.fillStyle = '#e8f4f2'; ctx.font = '700 13px Arial'; ctx.fillText('Estação em Terra (Ar 2m)', chartX + 20, 126);
+    ctx.fillStyle = '#ffb000'; ctx.fillRect(chartX + 225, 114, 14, 14);
+    ctx.fillStyle = '#e8f4f2'; ctx.fillText(`LST Média no Raio ${stationRadiusM}m (com faixa ±1σ)`, chartX + 245, 126);
+    ctx.fillStyle = '#f43f5e'; ctx.fillRect(chartX + 565, 114, 14, 14);
+    ctx.fillStyle = '#e8f4f2'; ctx.fillText('LST Pixel Central 2m', chartX + 585, 126);
 
     const scaleMin = Math.min(14, rasterMin) - 2;
     const scaleMax = Math.max(40, rasterMax) + 2;
-    const toW = (val: number) => Math.max(10, Math.min(540, ((val - scaleMin) / (scaleMax - scaleMin)) * 540));
+    const maxBarW = chartW - 230;
+    const toW = (val: number) => Math.max(10, Math.min(maxBarW, ((val - scaleMin) / (scaleMax - scaleMin)) * maxBarW));
 
     stations.forEach((st, i) => {
       const y = headH + i * rowH;
       const meta = classifyStationMeta(st.source, st.name);
 
       ctx.fillStyle = 'rgba(255,255,255,0.04)';
-      ctx.fillRect(24, y - 22, w - 48, rowH - 10);
+      ctx.fillRect(chartX, y - 26, chartW, rowH - 10);
+      ctx.strokeStyle = 'rgba(121,226,220,0.16)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(chartX, y - 26, chartW, rowH - 10);
 
       ctx.fillStyle = '#ffffff';
       ctx.font = '700 15px Arial';
-      ctx.fillText(`#${i + 1} ${st.name} (${meta.sector} · ${meta.stationType})`, 36, y);
+      ctx.textAlign = 'left';
+      ctx.fillText(`#${i + 1} · ${st.name}`, chartX + 14, y - 6, chartW * 0.52);
 
       ctx.fillStyle = st.proximityColor;
       ctx.font = '700 13px Arial';
       ctx.textAlign = 'right';
-      ctx.fillText(`Erro ΔT: ${st.deltaRadiusC >= 0 ? '+' : ''}${st.deltaRadiusC.toFixed(2)} °C (σ = ±${st.radiusStdC.toFixed(2)}°C) · ${st.proximityStatus}`, w - 36, y);
+      ctx.fillText(
+        `Diferença ΔT: ${st.deltaRadiusC >= 0 ? '+' : ''}${st.deltaRadiusC.toFixed(2)} °C (σ = ±${st.radiusStdC.toFixed(2)}°C)`,
+        chartX + chartW - 14,
+        y - 6,
+        chartW * 0.44,
+      );
+
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${meta.sector} · ${meta.stationType}`, chartX + 14, y + 12, chartW * 0.48);
+
+      ctx.fillStyle = st.proximityColor;
+      ctx.font = '700 12px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText(st.proximityStatus, chartX + chartW - 14, y + 12, chartW * 0.48);
       ctx.textAlign = 'left';
 
-      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('Estação 2m:', 36, y + 22);
-      ctx.fillStyle = '#38bdf8'; ctx.fillRect(135, y + 12, toW(st.stationTempC), 10);
-      ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.stationTempC.toFixed(1)} °C`, 145 + toW(st.stationTempC), y + 22);
+      const barStartX = chartX + 128;
+      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('Estação (Ar 2m):', chartX + 14, y + 33);
+      ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(barStartX, y + 23, maxBarW, 10);
+      ctx.fillStyle = '#38bdf8'; ctx.fillRect(barStartX, y + 23, toW(st.stationTempC), 10);
+      ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.stationTempC.toFixed(1)} °C`, barStartX + toW(st.stationTempC) + 8, y + 33);
 
-      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText(`LST Raio ${stationRadiusM}m:`, 36, y + 40);
-      ctx.fillStyle = '#ffb000'; ctx.fillRect(135, y + 30, toW(st.radiusMeanC), 10);
-      ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.radiusMeanC.toFixed(1)} °C`, 145 + toW(st.radiusMeanC), y + 40);
+      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText(`LST Raio ${stationRadiusM}m:`, chartX + 14, y + 51);
+      ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(barStartX, y + 41, maxBarW, 10);
+      ctx.fillStyle = '#ffb000'; ctx.fillRect(barStartX, y + 41, toW(st.radiusMeanC), 10);
+      const stdX0 = barStartX + toW(st.radiusMeanC - st.radiusStdC);
+      const stdX1 = barStartX + toW(st.radiusMeanC + st.radiusStdC);
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      ctx.fillRect(stdX0, y + 39, Math.max(2, stdX1 - stdX0), 14);
+      ctx.strokeStyle = '#ffffff';
+      ctx.strokeRect(stdX0, y + 39, Math.max(2, stdX1 - stdX0), 14);
+      ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.radiusMeanC.toFixed(1)} °C`, Math.max(barStartX + toW(st.radiusMeanC), stdX1) + 8, y + 51);
 
-      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('LST Pixel 2m:', 36, y + 56);
-      ctx.fillStyle = '#f43f5e'; ctx.fillRect(135, y + 47, toW(st.pixel1mC), 8);
-      ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.pixel1mC.toFixed(1)} °C`, 145 + toW(st.pixel1mC), y + 56);
+      ctx.fillStyle = '#9ab0b5'; ctx.font = '12px Arial'; ctx.fillText('LST Pixel 2m:', chartX + 14, y + 68);
+      ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(barStartX, y + 59, maxBarW, 8);
+      ctx.fillStyle = '#f43f5e'; ctx.fillRect(barStartX, y + 59, toW(st.pixel1mC), 8);
+      ctx.fillStyle = '#fff'; ctx.font = '700 12px Arial'; ctx.fillText(`${st.pixel1mC.toFixed(1)} °C`, barStartX + toW(st.pixel1mC) + 8, y + 68);
     });
 
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
-    a.download = `SynapseSR-Grafico-Validacao-Estacoes-${stationRadiusM}m.png`;
+    a.download = `SynapseSR-Mapa-e-Grafico-Estacoes-${stationRadiusM}m.png`;
     a.click();
   };
 
@@ -425,7 +736,7 @@ export function StationValidationDock({
                 onClick={downloadChartPng}
                 style={{ padding: '7px 10px', borderRadius: '7px', background: '#ffb000', color: '#071317', fontWeight: 800, fontSize: '11px', border: 'none', cursor: 'pointer' }}
               >
-                🖼 Exportar Gráfico PNG
+                🖼 Mapa + Gráfico PNG
               </button>
               <button
                 type="button"
@@ -444,7 +755,7 @@ export function StationValidationDock({
               <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>Pixel 2m: {mae1m.toFixed(2)} °C</small>
             </div>
             <div style={{ background: 'rgba(255,255,255,0.04)', padding: '8px 10px', borderRadius: '8px' }}>
-              <small style={{ color: '#9ab0b5', fontSize: '10px', display: 'block' }}>RMSE / Offset (LST − Ta)</small>
+              <small style={{ color: '#9ab0b5', fontSize: '10px', display: 'block' }}>RMSE / Diferença (LST − Ta)</small>
               <strong style={{ fontSize: '17px', color: '#fb923c' }}>{biasRadius >= 0 ? '+' : ''}{biasRadius.toFixed(2)} °C</strong>
               <small style={{ display: 'block', fontSize: '10px', color: '#9cddda' }}>RMSE: {rmseRadius.toFixed(2)} °C</small>
             </div>
@@ -472,9 +783,12 @@ export function StationValidationDock({
                       {meta.sector.split(' / ')[0]}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ab0b5', marginBottom: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ab0b5', marginBottom: '3px' }}>
                     <span>{meta.stationType}</span>
-                    <b style={{ color: st.proximityColor }}>Erro ΔT: {st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C (±{st.radiusStdC.toFixed(2)}°)</b>
+                    <b style={{ color: st.proximityColor }}>ΔT: {st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C (±{st.radiusStdC.toFixed(2)}°)</b>
+                  </div>
+                  <div style={{ fontSize: '10px', color: st.proximityColor, fontWeight: 700, marginBottom: '6px' }}>
+                    {st.proximityStatus}
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '78px 1fr 48px', alignItems: 'center', gap: '6px', fontSize: '10px', marginBottom: '3px' }}>
@@ -614,7 +928,7 @@ function bringOverlaysToFront(map: MapLibreMap) {
 
 const copy = {
   pt: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.9', title: 'Synapse SR / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v4.0', title: 'Synapse SR / LST Explorer',
     subtitle: 'Laboratório térmico no navegador para transformar GeoTIFFs multiespectrais em evidência espacial.',
     colab: 'Abrir Colab', upload: 'Carregar produto Synapse SR/MS', uploadHint: 'GeoTIFF local • nada é enviado para um servidor',
     bands: 'Bandas ópticas do Synapse SR', red: 'Vermelho (Red)', nir: 'Infravermelho próximo (NIR)', swir: 'Infravermelho de ondas curtas (SWIR)',
@@ -622,7 +936,7 @@ const copy = {
     optical: 'Imagem óptica', opacity: 'Transparência', contrast: 'Contraste', palette: 'Paleta', stats: 'Resumo estatístico',
     min: 'mínima', max: 'máxima', mean: 'média', std: 'desvio', histogram: 'Histograma de Cores & Temperatura',
     sample: 'Escala Térmica & Inspeção', aoi: 'Área de interesse (AOI)', draw: 'Desenhar AOI', clear: 'Limpar AOI', clip: 'Analisar AOI (Pop-up)',
-    export: 'Exportar', png: 'PNG composto', tiff: 'GeoTIFF LST', uhi: 'GeoTIFF UHI', method: 'Metodologia', help: 'Como usar',
+    export: 'Exportar', png: 'PNG Composto (LST)', rgbPng: 'PNG Óptico (RGB)', tiff: 'GeoTIFF LST', uhi: 'GeoTIFF UHI', method: 'Metodologia', help: 'Como usar',
     metadata: 'Metadados', theme: 'Tema', basemap: 'Mapa-base', ready: 'Pronto',
     error: 'Não foi possível processar. Carregue um GeoTIFF Synapse SR (2m) com Red, NIR e SWIR; o Landsat térmico é buscado automaticamente.',
     methodText: 'O app extrai a data AAAAMMDD do nome do GeoTIFF Synapse SR (2m), busca a cena Landsat 8/9 Collection 2 Level-2 mais próxima, mascara nuvens com QA_PIXEL e executa fusão física TsHARP HD de 2 metros.',
@@ -636,7 +950,7 @@ const copy = {
     limitationText: 'A LST detalhada (2m) é uma estimativa guiada por índices ópticos do Synapse SR e reflectância de 2m. Valide com estações em terra.',
   },
   en: {
-    eyebrow: 'OPEN SOURCE • WEB GIS • v3.9', title: 'Synapse SR / LST Explorer',
+    eyebrow: 'OPEN SOURCE • WEB GIS • v4.0', title: 'Synapse SR / LST Explorer',
     subtitle: 'A browser-based thermal lab for turning multispectral GeoTIFFs into spatial evidence.',
     colab: 'Open Colab', upload: 'Load Synapse SR/MS product', uploadHint: 'Local GeoTIFF • nothing is uploaded to a server',
     bands: 'Synapse SR optical bands', red: 'Red', nir: 'Near infrared (NIR)', swir: 'Short-wave infrared (SWIR)',
@@ -644,7 +958,7 @@ const copy = {
     optical: 'Optical image', opacity: 'Opacity', contrast: 'Contrast', palette: 'Palette', stats: 'Statistics',
     min: 'minimum', max: 'maximum', mean: 'mean', std: 'std dev', histogram: 'Color & Temperature Histogram',
     sample: 'Thermal Scale & Inspection', aoi: 'Area of interest (AOI)', draw: 'Draw AOI', clear: 'Clear AOI', clip: 'Analyze AOI (Pop-up)',
-    export: 'Export', png: 'Composite PNG', tiff: 'LST GeoTIFF', uhi: 'UHI GeoTIFF', method: 'Methodology', help: 'How it works',
+    export: 'Export', png: 'Composite PNG (LST)', rgbPng: 'Optical RGB PNG', tiff: 'LST GeoTIFF', uhi: 'UHI GeoTIFF', method: 'Methodology', help: 'How it works',
     metadata: 'Metadata', theme: 'Theme', basemap: 'Basemap', ready: 'Ready',
     error: 'Processing failed. Load a Synapse SR (2m) GeoTIFF with Red, NIR and SWIR; thermal Landsat is fetched automatically.',
     methodText: 'The workflow combines 2m Synapse SR imagery with optical indices and TsHARP regression to estimate 2m spatial LST.',
@@ -1091,10 +1405,10 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
     const absD = Math.abs(deltaRadiusC);
     const proximityStatus =
       absD <= Math.max(1.8, sp.radiusStdC * 1.5)
-        ? 'Alta Proximidade (Acoplado)'
+        ? 'Temperaturas Próximas (Sombra / Vegetação)'
         : absD <= 4.2
-          ? 'Afastamento Moderado (Aquecimento Superficial)'
-          : 'Forte Desacoplamento (Superfície Hiperaquecida)';
+          ? 'Superfície Mais Quente que o Ar (+2 a +4°C)'
+          : 'Superfície Muito Mais Quente que o Ar (Piso / Telhado)';
     const proximityColor = absD <= Math.max(1.8, sp.radiusStdC * 1.5) ? '#34d399' : absD <= 4.2 ? '#facc15' : '#f43f5e';
 
     results.push({
@@ -1709,9 +2023,10 @@ async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{ bairros: Os
 function renderMapWithFooterLegend(
   baseOptical: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, opacity: number,
   title: string, isUhi: boolean, stats: RasterStats, palette: string, customColors: string[],
+  uhiMethod: UhiClusterMethod = 'zscore', uhiPower = 1.1,
 ): string {
   const w = overlayCanvas.width; const h = overlayCanvas.height;
-  const legH = Math.max(150, Math.round(h * 0.14));
+  const legH = isUhi ? Math.max(195, Math.round(h * 0.175)) : Math.max(155, Math.round(h * 0.145));
   const out = document.createElement('canvas');
   out.width = w; out.height = h + legH;
   const ctx = out.getContext('2d');
@@ -1725,11 +2040,11 @@ function renderMapWithFooterLegend(
   ctx.strokeStyle = 'rgba(156,221,218,0.4)'; ctx.lineWidth = 2;
   ctx.strokeRect(pad * 0.5, h + 8, w - pad, legH - 16);
   ctx.fillStyle = '#9cddda';
-  ctx.font = `700 ${Math.max(15, Math.round(w * 0.015))}px Inter, Arial, sans-serif`;
-  ctx.fillText(title, pad, h + Math.round(legH * 0.26));
+  ctx.font = `700 ${Math.max(14, Math.round(w * 0.0145))}px Inter, Arial, sans-serif`;
+  ctx.fillText(title, pad, h + Math.round(legH * 0.23), barW);
 
-  const barY = h + Math.round(legH * 0.38);
-  const barH = Math.max(22, Math.round(legH * 0.22));
+  const barY = h + Math.round(legH * 0.34);
+  const barH = Math.max(22, Math.round(legH * 0.20));
   const fSub = Math.max(12, Math.round(w * 0.0115));
 
   if (!isUhi) {
@@ -1747,22 +2062,33 @@ function renderMapWithFooterLegend(
     ctx.textAlign = 'right'; ctx.fillText(`Máx: ${stats.max.toFixed(1)} °C`, pad + barW, ly);
     ctx.textAlign = 'left';
   } else {
-    const cls = [
-      { n: '1. Frescor (< -0,95σ)', c: '#103e8a' },
-      { n: '2. Amenizado (-0,95 a -0,30σ)', c: '#2ba198' },
-      { n: '3. Neutro (-0,30 a +0,25σ)', c: '#bade76' },
-      { n: '4. UHI Moderada (+0,25 a +0,85σ)', c: '#f8d668' },
-      { n: '5. UHI Forte (+0,85 a +1,40σ)', c: '#f47c30' },
-      { n: '6. UHI Extrema (> +1,40σ)', c: '#d42026' },
-    ];
+    const cls = buildUhiClassLegendItems(stats, uhiMethod, uhiPower);
     const segW = barW / cls.length;
+    const fTitle = Math.max(11, Math.min(16, Math.round(segW * 0.11)));
+    const fTemp = Math.max(10, Math.min(14, Math.round(segW * 0.095)));
     cls.forEach((it, idx) => {
       const x = pad + idx * segW;
-      ctx.fillStyle = it.c; ctx.fillRect(x, barY, segW - 4, barH);
-      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.strokeRect(x, barY, segW - 4, barH);
-      ctx.fillStyle = '#fff'; ctx.font = `700 ${Math.max(11, fSub - 1)}px Inter, Arial, sans-serif`;
-      ctx.fillText(it.n, x + 2, barY + barH + Math.round(legH * 0.22));
+      const boxW = segW - 6;
+      const centerX = x + boxW / 2;
+      ctx.fillStyle = it.color;
+      ctx.fillRect(x, barY, boxW, barH);
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.strokeRect(x, barY, boxW, barH);
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `700 ${fTitle}px Inter, Arial, sans-serif`;
+      ctx.fillText(it.shortPt, centerX, barY + barH + Math.round(legH * 0.15), boxW - 6);
+
+      ctx.fillStyle = '#fde047';
+      ctx.font = `700 ${fTemp}px Inter, Arial, sans-serif`;
+      ctx.fillText(it.tempRange, centerX, barY + barH + Math.round(legH * 0.26), boxW - 6);
+
+      ctx.fillStyle = '#9cddda';
+      ctx.font = `600 ${Math.max(9, fTemp - 1)}px Inter, Arial, sans-serif`;
+      ctx.fillText(`(${it.sigmaLabel})`, centerX, barY + barH + Math.round(legH * 0.36), boxW - 6);
     });
+    ctx.textAlign = 'left';
   }
   return out.toDataURL('image/webp', 0.92);
 }
@@ -2200,10 +2526,10 @@ export default function App() {
         const absD = Math.abs(deltaRadiusC);
         const proximityStatus =
           absD <= Math.max(1.8, sp.radiusStdC * 1.5)
-            ? 'Alta Proximidade (Acoplado)'
+            ? 'Temperaturas Próximas (Sombra / Vegetação)'
             : absD <= 4.2
-              ? 'Afastamento Moderado (Aquecimento Superficial)'
-              : 'Forte Desacoplamento (Superfície Hiperaquecida)';
+              ? 'Superfície Mais Quente que o Ar (+2 a +4°C)'
+              : 'Superfície Muito Mais Quente que o Ar (Piso / Telhado)';
         const proximityColor = absD <= Math.max(1.8, sp.radiusStdC * 1.5) ? '#34d399' : absD <= 4.2 ? '#facc15' : '#f43f5e';
         return { ...st, ...sp, deltaRadiusC, deltaPixel1mC, proximityStatus, proximityColor };
       }),
@@ -2349,28 +2675,115 @@ export default function App() {
   };
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
-    const w = Math.min(760, Math.max(360, ctx.canvas.width - x - 24)); const pad = 26;
-    ctx.fillStyle = 'rgba(7,19,23,.96)'; ctx.fillRect(x, y, w, 180);
-    ctx.strokeStyle = 'rgba(121,226,220,.7)'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, 180);
-    ctx.fillStyle = '#fff'; ctx.font = '700 26px Arial';
-    ctx.fillText(displayMode === 'uhi' ? 'UHI · ILHA DE CALOR (2m)' : 'LST · TEMPERATURA (°C)', x + pad, y + 42);
-    const grad = ctx.createLinearGradient(x + pad, y + 84, x + w - pad, y + 84);
-    for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, displayMode === 'uhi'));
-    ctx.fillStyle = grad; ctx.fillRect(x + pad, y + 66, w - pad * 2, 36);
-    ctx.fillStyle = '#fff'; ctx.font = '600 19px Arial';
-    ctx.fillText(`${raster?.stats.min.toFixed(1) ?? '—'} °C`, x + pad, y + 138);
-    ctx.textAlign = 'center'; ctx.fillText(`Média: ${raster?.stats.mean.toFixed(1) ?? '—'} °C`, x + w / 2, y + 138);
-    ctx.textAlign = 'right'; ctx.fillText(`${raster?.stats.max.toFixed(1) ?? '—'} °C`, x + w - pad, y + 138); ctx.textAlign = 'left';
+    const w = Math.min(980, Math.max(420, ctx.canvas.width - x * 2));
+    const pad = 24;
+    const boxH = displayMode === 'uhi' ? 210 : 180;
+    ctx.fillStyle = 'rgba(7,19,23,.96)';
+    ctx.fillRect(x, y, w, boxH);
+    ctx.strokeStyle = 'rgba(121,226,220,.7)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, w, boxH);
+
+    if (displayMode === 'uhi' && raster) {
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '700 21px Arial';
+      ctx.fillText(
+        `UHI · CLASSES DE ILHA DE CALOR E TEMPERATURA (2m · ${uhiMethod.toUpperCase()})`,
+        x + pad,
+        y + 36,
+        w - pad * 2,
+      );
+      const cls = buildUhiClassLegendItems(raster.stats, uhiMethod, uhiPower);
+      const barW = w - pad * 2;
+      const segW = barW / cls.length;
+      const barY = y + 54;
+      const barH = 34;
+      cls.forEach((it, idx) => {
+        const sx = x + pad + idx * segW;
+        const boxW = segW - 6;
+        const centerX = sx + boxW / 2;
+        ctx.fillStyle = it.color;
+        ctx.fillRect(sx, barY, boxW, barH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx, barY, boxW, barH);
+
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 15px Arial';
+        ctx.fillText(it.shortPt, centerX, barY + barH + 26, boxW - 6);
+
+        ctx.fillStyle = '#fde047';
+        ctx.font = '700 14px Arial';
+        ctx.fillText(it.tempRange, centerX, barY + barH + 48, boxW - 6);
+
+        ctx.fillStyle = '#9cddda';
+        ctx.font = '600 12px Arial';
+        ctx.fillText(`(${it.sigmaLabel})`, centerX, barY + barH + 68, boxW - 6);
+      });
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '600 14px Arial';
+      ctx.fillText(
+        `Resumo da Cena: Mín ${raster.stats.min.toFixed(1)}°C  |  Mediana ${raster.stats.q50.toFixed(1)}°C  |  Média ${raster.stats.mean.toFixed(1)}°C (σ = ${raster.stats.stdDev.toFixed(2)}°C)  |  Máx ${raster.stats.max.toFixed(1)}°C`,
+        x + pad,
+        y + boxH - 14,
+        w - pad * 2,
+      );
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 24px Arial';
+      ctx.fillText(`LST · TEMPERATURA DE SUPERFÍCIE (°C · PALETA ${palette.toUpperCase()})`, x + pad, y + 42, w - pad * 2);
+      const grad = ctx.createLinearGradient(x + pad, y + 84, x + w - pad, y + 84);
+      for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
+      ctx.fillStyle = grad;
+      ctx.fillRect(x + pad, y + 64, w - pad * 2, 36);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x + pad, y + 64, w - pad * 2, 36);
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 18px Arial';
+      ctx.fillText(`Mín: ${raster?.stats.min.toFixed(1) ?? '—'} °C`, x + pad, y + 136);
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `Mediana: ${raster?.stats.q50.toFixed(1) ?? '—'} °C  |  Média: ${raster?.stats.mean.toFixed(1) ?? '—'} °C (σ=${raster?.stats.stdDev.toFixed(2) ?? '—'}°C)`,
+        x + w / 2,
+        y + 136,
+      );
+      ctx.textAlign = 'right';
+      ctx.fillText(`Máx: ${raster?.stats.max.toFixed(1) ?? '—'} °C`, x + w - pad, y + 136);
+      ctx.textAlign = 'left';
+    }
   };
 
   const exportPng = () => {
     if (!lstCanvas.current || !opticalCanvas.current) return;
-    const c = document.createElement('canvas'); c.width = lstCanvas.current.width; c.height = lstCanvas.current.height + 200;
-    const ctx = c.getContext('2d'); if (!ctx) return;
-    ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
-    ctx.drawImage(opticalCanvas.current, 0, 0); ctx.globalAlpha = opacity; ctx.drawImage(lstCanvas.current, 0, 0); ctx.globalAlpha = 1;
-    drawLegend(ctx, 16, c.height - 190);
-    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SynapseSR-${displayMode}-${palette}.png`; a.click();
+    const footerH = displayMode === 'uhi' ? 234 : 204;
+    const c = document.createElement('canvas');
+    c.width = Math.max(640, lstCanvas.current.width);
+    c.height = lstCanvas.current.height + footerH;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#071317';
+    ctx.fillRect(0, 0, c.width, c.height);
+    const imgX = Math.round((c.width - lstCanvas.current.width) / 2);
+    ctx.drawImage(opticalCanvas.current, imgX, 0);
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(lstCanvas.current, imgX, 0);
+    ctx.globalAlpha = 1;
+    drawLegend(ctx, 16, lstCanvas.current.height + 12);
+    const a = document.createElement('a');
+    a.href = c.toDataURL('image/png');
+    a.download = `SynapseSR-${displayMode === 'uhi' ? `UHI-${uhiMethod}` : `LST-${palette}`}.png`;
+    a.click();
+  };
+
+  const exportOpticalRgbPng = () => {
+    if (!opticalCanvas.current) return;
+    const a = document.createElement('a');
+    a.href = opticalCanvas.current.toDataURL('image/png');
+    a.download = 'SynapseSR-Imagem-Optica-RGB-2m.png';
+    a.click();
   };
 
   const exportVectorIsotherms = (format: 'geojson' | 'kml') => {
@@ -2500,7 +2913,7 @@ export default function App() {
     const uhiMapImg = renderMapWithFooterLegend(
       opticalCanvas.current, uhiCanvas, opacity,
       `MAPA 02 · CLASSES DE ILHA DE CALOR URBANA (UHI 2m · MÉTODO ${uhiMethod.toUpperCase()}) · EPSG:${raster.epsg}`,
-      true, raster.stats, palette, customColors,
+      true, raster.stats, palette, customColors, uhiMethod, uhiPower,
     );
 
     let valid = 0; let noData = 0;
@@ -2554,14 +2967,12 @@ export default function App() {
     const daysGap = uniqueDates.length >= 2 ? Math.round(Math.abs(Date.parse(uniqueDates[1]) - Date.parse(uniqueDates[0])) / 86400000) : null;
     const issueDate = new Date().toLocaleDateString('pt-BR');
 
-    const uhiMeta = [
-      { pt: 'Ilha de frescor (< -0,95σ)', en: 'Cool island (< -0.95σ)', c: '#103e8a' },
-      { pt: 'Zona amenizada (-0,95σ a -0,30σ)', en: 'Mitigated zone (-0.95σ to -0.30σ)', c: '#2ba198' },
-      { pt: 'Zona neutra (-0,30σ a +0,25σ)', en: 'Neutral zone (-0.30σ to +0.25σ)', c: '#68c96e' },
-      { pt: 'UHI moderada (+0,25σ a +0,85σ)', en: 'Moderate UHI (+0.25σ to +0.85σ)', c: '#f1b64a' },
-      { pt: 'UHI forte (+0,85σ a +1,40σ)', en: 'Strong UHI (+0.85σ to +1.40σ)', c: '#e86825' },
-      { pt: 'Hotspot extremo (> +1,40σ)', en: 'Extreme hotspot (> +1.40σ)', c: '#c84638' },
-    ];
+    const uhiLegendItems = buildUhiClassLegendItems(raster.stats, uhiMethod, uhiPower);
+    const uhiMeta = uhiLegendItems.map((it) => ({
+      pt: `${it.fullPt} · ${it.tempRange} (${it.sigmaLabel})`,
+      en: `${it.fullEn} · ${it.tempRange} (${it.sigmaLabel})`,
+      c: it.color,
+    }));
 
     const uhiBars = uhiMeta.map((m, i) => `<div class="bar-row"><div class="bar-label"><span data-pt="${m.pt}" data-en="${m.en}">${m.pt}</span><b>${pct(uhiCnt[i])}% · ${ha(uhiCnt[i])} ha (${uhiCnt[i].toLocaleString('pt-BR')} px)</b></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(1.5, Number(pct(uhiCnt[i])))}%;background:${m.c}"></div></div></div>`).join('');
     const histBars = histBins.map((cnt, i) => {
@@ -2591,12 +3002,12 @@ export default function App() {
 .section{margin-top:26px}.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
 .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.grid-2,.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .metric-value{margin-top:8px;font-size:30px;color:var(--navy);font-weight:800}.map-frame{background:#0f2238;border-radius:14px;padding:10px}.map-frame img{width:100%;height:auto;border-radius:8px}
-.bar-row{margin:11px 0}.bar-label{display:flex;justify-content:space-between;font-size:13px;font-weight:700}.bar-track{height:10px;margin-top:5px;background:#edf1f5;border-radius:99px;overflow:hidden}.bar-fill{height:100%;border-radius:99px}
+.bar-row{margin:12px 0}.bar-label{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:13px;font-weight:700;line-height:1.4}.bar-track{height:10px;margin-top:5px;background:#edf1f5;border-radius:99px;overflow:hidden}.bar-fill{height:100%;border-radius:99px}
 .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{border-collapse:collapse;width:100%;font-size:12px}th{background:#f1f5f8;text-align:left;padding:10px}td{padding:10px;border-top:1px solid #e5ebf1}
 .callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
 @media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
 </style></head><body><div class="page">
-  <div class="topline"><span>SYNAPSE SR · GEOSPATIAL INTELLIGENCE (v3.9)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
+  <div class="topline"><span>SYNAPSE SR · GEOSPATIAL INTELLIGENCE (v4.0)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
   <header class="hero">
     <h1 data-pt="Temperatura de superfície, ilhas de calor e validação em terra" data-en="Land surface temperature, heat islands and ground validation">Temperatura de superfície, ilhas de calor e validação em terra</h1>
     <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px, ${noData.toLocaleString('pt-BR')} NoData), with LST and UHI maps, NDVI/NDBI spectral analysis, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise espectral NDVI/NDBI, bairros/ruas e validação com estações meteorológicas.</p>
@@ -2666,8 +3077,21 @@ function toggleReportLang() {
     ctx.fillStyle = '#9cddda'; ctx.font = '15px Arial';
     ctx.fillText(`Pixels: ${aoiDetailed.count.toLocaleString('pt-BR')} (${aoiDetailed.areaM2.toFixed(0)} m²) · NDVI: ${aoiDetailed.ndviMean.toFixed(3)} · NDBI: ${aoiDetailed.ndbiMean.toFixed(3)}`, 40, fy + 64);
     const grad = ctx.createLinearGradient(40, fy + 84, w - 40, fy + 84);
-    for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
-    ctx.fillStyle = grad; ctx.fillRect(40, fy + 84, w - 80, 24);
+    for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, displayMode === 'uhi'));
+    ctx.fillStyle = grad; ctx.fillRect(40, fy + 84, w - 80, 22);
+    if (displayMode === 'uhi') {
+      const uhiItems = buildUhiClassLegendItems(raster.stats, uhiMethod, uhiPower);
+      const segW = (w - 80) / uhiItems.length;
+      uhiItems.forEach((it, idx) => {
+        const cx = 40 + idx * segW + segW / 2;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff'; ctx.font = '700 11px Arial';
+        ctx.fillText(it.shortPt, cx, fy + 124, segW - 4);
+        ctx.fillStyle = '#fde047'; ctx.font = '700 11px Arial';
+        ctx.fillText(it.tempRange, cx, fy + 140, segW - 4);
+      });
+      ctx.textAlign = 'left';
+    }
     const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.png`; a.click();
   };
 
@@ -2692,9 +3116,57 @@ function toggleReportLang() {
   };
 
   const downloadAoiModalKml = () => {
-    if (!aoiDetailed) return;
+    if (!aoiDetailed || !raster) return;
+    let minLng = Infinity; let maxLng = -Infinity; let minLat = Infinity; let maxLat = -Infinity;
+    for (const [lng, lat] of aoiDetailed.vertices) {
+      if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+    }
+
+    const toKmlHex = (r: number, g: number, b: number, alphaHex = 'cc') =>
+      `${alphaHex}${Math.max(0, Math.min(255, Math.round(b))).toString(16).padStart(2, '0')}${Math.max(0, Math.min(255, Math.round(g))).toString(16).padStart(2, '0')}${Math.max(0, Math.min(255, Math.round(r))).toString(16).padStart(2, '0')}`;
+
+    const gridN = 24;
+    const stepX = Math.max(1, Math.ceil(aoiDetailed.clipWidth / gridN));
+    const stepY = Math.max(1, Math.ceil(aoiDetailed.clipHeight / gridN));
+    const cellPlacemarks: string[] = [];
+    const spanTemp = Math.max(1e-5, raster.stats.max - raster.stats.min);
+
+    for (let y = 0; y < aoiDetailed.clipHeight; y += stepY) {
+      for (let x = 0; x < aoiDetailed.clipWidth; x += stepX) {
+        let sum = 0; let cnt = 0;
+        for (let dy = 0; dy < stepY && y + dy < aoiDetailed.clipHeight; dy += 1) {
+          for (let dx = 0; dx < stepX && x + dx < aoiDetailed.clipWidth; dx += 1) {
+            const v = aoiDetailed.clippedFloat32[(y + dy) * aoiDetailed.clipWidth + (x + dx)];
+            if (Number.isFinite(v)) { sum += v; cnt += 1; }
+          }
+        }
+        if (!cnt) continue;
+        const val = sum / cnt;
+        const w0 = minLng + (x / aoiDetailed.clipWidth) * (maxLng - minLng);
+        const e0 = minLng + (Math.min(aoiDetailed.clipWidth, x + stepX) / aoiDetailed.clipWidth) * (maxLng - minLng);
+        const n0 = maxLat - (y / aoiDetailed.clipHeight) * (maxLat - minLat);
+        const s0 = maxLat - (Math.min(aoiDetailed.clipHeight, y + stepY) / aoiDetailed.clipHeight) * (maxLat - minLat);
+
+        let kmlCol = 'cc00b0ff';
+        if (displayMode === 'uhi') {
+          const z = computeClusteredZ(val, val, raster.stats, uhiMethod, uhiPower);
+          const [r, g, b] = sampleUhiColor(z);
+          kmlCol = toKmlHex(r, g, b, 'cc');
+        } else {
+          const css = sampleCssColorAt((val - raster.stats.min) / spanTemp, palette, draftCustomColors, false);
+          const m = css.match(/\d+/g);
+          if (m && m.length >= 3) kmlCol = toKmlHex(Number(m[0]), Number(m[1]), Number(m[2]), 'cc');
+        }
+        const cellRing = `${w0},${n0},0 ${e0},${n0},0 ${e0},${s0},0 ${w0},${s0},0 ${w0},${n0},0`;
+        cellPlacemarks.push(
+          `<Placemark><name>${val.toFixed(1)} °C</name><Style><LineStyle><color>${kmlCol}</color><width>0.6</width></LineStyle><PolyStyle><color>${kmlCol}</color><fill>1</fill><outline>1</outline></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><coordinates>${cellRing}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`,
+        );
+      }
+    }
+
     const ring = [...aoiDetailed.vertices, aoiDetailed.vertices[0]].map(([lng, lat]) => `${lng},${lat},0`).join(' ');
-    const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark><name>AOI (${aoiDetailed.shapeMode}) · Média ${aoiDetailed.mean.toFixed(2)}°C</name><Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Document></kml>`;
+    const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Synapse SR · AOI (${aoiDetailed.shapeMode}) · Média ${aoiDetailed.mean.toFixed(2)}°C</name><GroundOverlay><name>Imagem Renderizada da Tela (LST / UHI)</name><Icon><href>${aoiDetailed.previewDataUrl}</href></Icon><LatLonBox><north>${maxLat}</north><south>${minLat}</south><east>${maxLng}</east><west>${minLng}</west></LatLonBox></GroundOverlay><Placemark><name>Borda da AOI (${aoiDetailed.areaHa.toFixed(2)} ha · Média ${aoiDetailed.mean.toFixed(2)}°C)</name><Style><LineStyle><color>ff00b0ff</color><width>3.2</width></LineStyle><PolyStyle><color>00000000</color><fill>0</fill><outline>1</outline></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark><Folder><name>Malha Vetorial Colorida (${cellPlacemarks.length} células)</name>${cellPlacemarks.join('')}</Folder></Document></kml>`;
     const b = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.kml`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -2805,14 +3277,27 @@ function toggleReportLang() {
           )}
           {!raster && !differenceReady && <div className="map-empty"><div className="empty-orbit">◌</div><strong>{t.noData}</strong><span>{t.uploadHint}</span></div>}
           {(raster || differenceReady) && (
-            <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: '370px', zIndex: 5 }}>
-              <span>{comparisonMode === 'difference' && showingComparison && !swipeActive ? `Δ LST (${comparisonPrimary?.dateLabel} → ${comparisonSecondary?.dateLabel})` : displayMode === 'uhi' ? `UHI (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})` : t.lst}</span>
+            <div className={`map-legend ${displayMode === 'uhi' ? 'uhi-legend' : ''}`} style={{ top: '14px', right: '54px', bottom: 'auto', left: 'auto', maxWidth: displayMode === 'uhi' ? '420px' : '370px', zIndex: 5 }}>
+              <span>{comparisonMode === 'difference' && showingComparison && !swipeActive ? `Δ LST (${comparisonPrimary?.dateLabel} → ${comparisonSecondary?.dateLabel})` : displayMode === 'uhi' ? `UHI · Classes e Temperatura (${uhiMethod.toUpperCase()} · γ=${uhiPower.toFixed(2)})` : t.lst}</span>
               <div className="legend-gradient" style={{ background: comparisonMode === 'difference' && showingComparison && !swipeActive ? DIFFERENCE_GRADIENT_CSS : legendGradient }} />
               <div>
                 <b>{(raster?.stats.min ?? comparisonPrimary?.stats.min ?? 0).toFixed(1)}°C</b>
                 <b>{(raster?.stats.mean ?? comparisonPrimary?.stats.mean ?? 0).toFixed(1)}°C</b>
                 <b>{(raster?.stats.max ?? comparisonPrimary?.stats.max ?? 0).toFixed(1)}°C</b>
               </div>
+              {displayMode === 'uhi' && raster && !showingComparison && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px', marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(121,226,220,0.22)' }}>
+                  {buildUhiClassLegendItems(raster.stats, uhiMethod, uhiPower).map((it) => (
+                    <div key={it.idx} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'rgba(0,0,0,0.32)', padding: '3px 5px', borderRadius: '5px', fontSize: '10px', lineHeight: 1.2 }}>
+                      <span style={{ width: '10px', height: '18px', borderRadius: '2px', background: it.color, flexShrink: 0, border: '1px solid rgba(255,255,255,0.4)' }} />
+                      <div>
+                        <strong style={{ display: 'block', color: '#fff', fontSize: '9.5px' }}>{lang === 'pt' ? it.shortPt : it.shortEn}</strong>
+                        <span style={{ color: '#fde047', fontWeight: 700, fontSize: '9.5px' }}>{it.tempRange}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <div className="map-tools">
@@ -2858,6 +3343,15 @@ function toggleReportLang() {
             map={mapInstance.current}
             rasterMin={raster?.stats.min ?? 18}
             rasterMax={raster?.stats.max ?? 38}
+            getCanvases={() => ({ optical: opticalCanvas.current, lst: lstCanvas.current })}
+            rasterBounds={raster?.bounds ?? null}
+            rasterStats={raster?.stats ?? null}
+            opacity={opacity}
+            displayMode={displayMode}
+            palette={palette}
+            customColors={draftCustomColors}
+            uhiMethod={uhiMethod}
+            uhiPower={uhiPower}
           />
         </section>
         <div className="resize-handle" onPointerDown={() => { resizing.current = true; document.body.classList.add('is-resizing'); }} title={t.resize}><Icon name="resize" /></div>
@@ -2940,7 +3434,7 @@ function toggleReportLang() {
                     <b style={{ color: '#38bdf8' }}>{validationMetrics.maeRadius.toFixed(2)} °C</b>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '3px' }}>
-                    <span>Viés Superfície−Ar (LST − Ta):</span>
+                    <span>Diferença Média (Satélite − Estação):</span>
                     <b style={{ color: '#ffb000' }}>{validationMetrics.biasRadius >= 0 ? '+' : ''}{validationMetrics.biasRadius.toFixed(2)} °C</b>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px' }}>
@@ -3110,6 +3604,7 @@ function toggleReportLang() {
                     <button onClick={() => exportVectorIsotherms('geojson')}>Isotermas GeoJSON</button>
                     <button onClick={() => exportVectorIsotherms('kml')}>Isotermas KML</button>
                     <button onClick={exportPng}>{t.png}</button>
+                    <button onClick={exportOpticalRgbPng}>{t.rgbPng}</button>
                     <button onClick={() => downloadFloat32Tiff(raster.data, raster.width, raster.height, 'LST-SynapseSR.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected)}>{t.tiff}</button>
                     <button onClick={() => downloadUhiTiff(raster.data, raster.width, raster.height, 'UHI-SynapseSR.tif', raster.origin, raster.resolution, raster.epsg, raster.isProjected, raster.stats.mean, raster.stats.stdDev)}>{t.uhi}</button>
                     <button disabled={!uhiSurface} onClick={() => uhiSurface && downloadUhiSurface(uhiSurface)}>Grade UHI GeoJSON</button>
@@ -3321,7 +3816,7 @@ function toggleReportLang() {
                   </strong>
                   <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <li>
-                      <b>{lang === 'pt' ? '1. Desacoplamento Superfície–Atmosfera (LST ≠ Ta):' : '1. Surface–Atmosphere Decoupling (LST ≠ Ta):'}</b>{' '}
+                      <b>{lang === 'pt' ? '1. Diferença Física entre Temperatura do Piso/Telhado e do Ar (LST ≠ Ta):' : '1. Physical Difference Between Surface and Air Temperature (LST ≠ Ta):'}</b>{' '}
                       {lang === 'pt'
                         ? 'Às 10h15 da manhã (horário de passagem do Landsat/Sentinel), telhados metálicos, fibrocimento e asfalto escuro absorvem radiação de ondas curtas e frequentemente ficam de +4 °C a +12 °C mais quentes que o ar a 2 m de altura. Por isso, a validação com estações meteorológicas deve avaliar a estatística espacial num raio de representatividade (ex.: 100 m, padrão OMM) e não um único pixel isolado de 2 m.'
                         : 'At 10:15 AM local solar time (Landsat/Sentinel overpass), metal roofs and dark asphalt absorb shortwave radiation and are typically +4 °C to +12 °C warmer than the air at 2 m height. Ground validation must therefore use a micrometeorological footprint radius (e.g., 100 m WMO urban standard) rather than an isolated 2 m pixel.'}
@@ -3403,4 +3898,4 @@ function toggleReportLang() {
     </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v3.9
+// FIM DO ARQUIVO src/App.tsx v4.0
