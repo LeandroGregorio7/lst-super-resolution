@@ -1952,73 +1952,544 @@ function paletteGradient(palette: string, customColors: string[]) {
   return `linear-gradient(90deg, ${pts.join(', ')})`;
 }
 
-async function fetchOsmUrbanFeatures(raster: RasterState): Promise<{ bairros: OsmFeatureStat[]; vias: OsmFeatureStat[] }> {
-  const ext = boundsExtent(raster.bounds);
-  const hotspotLim = raster.stats.mean + 0.85 * raster.stats.stdDev;
-  const sampleAt = (lng: number, lat: number, radiusPx: number) => {
-    const x = Math.floor(((lng - ext.west) / (ext.east - ext.west)) * raster.width);
-    const y = Math.floor(((ext.north - lat) / (ext.north - ext.south)) * raster.height);
-    if (x < 0 || y < 0 || x >= raster.width || y >= raster.height) return null;
-    const vals: number[] = [];
-    let sumT = 0; let maxT = -Infinity; let sumV = 0; let sumB = 0; let hot = 0;
-    for (let ky = -radiusPx; ky <= radiusPx; ky += 1) {
-      for (let kx = -radiusPx; kx <= radiusPx; kx += 1) {
-        const nx = Math.max(0, Math.min(raster.width - 1, x + kx));
-        const ny = Math.max(0, Math.min(raster.height - 1, y + ky));
-        const idx = ny * raster.width + nx;
-        const t = raster.data[idx];
-        if (Number.isFinite(t)) {
-          vals.push(t); sumT += t;
-          if (t > maxT) maxT = t;
-          if (t >= hotspotLim) hot += 1;
-          sumV += Number.isFinite(raster.ndvi[idx]) ? raster.ndvi[idx] : 0;
-          sumB += Number.isFinite(raster.ndbi[idx]) ? raster.ndbi[idx] : 0;
-        }
+const drawIsothermsOnCanvas = (
+    ctx: CanvasRenderingContext2D,
+    isoCollection: IsothermCollection | null,
+    bounds: RasterBounds,
+    imgX: number,
+    imgY: number,
+    imgW: number,
+    imgH: number,
+  ) => {
+    if (!isoCollection || !isoCollection.features.length) return;
+    const ext = boundsExtent(bounds);
+    const spanLng = Math.max(1e-6, ext.east - ext.west);
+    const spanLat = Math.max(1e-6, ext.north - ext.south);
+    const scale = Math.max(1, Math.min(imgW, imgH) / 650);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(imgX, imgY, imgW, imgH);
+    ctx.clip();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (const feat of isoCollection.features) {
+      for (const seg of feat.geometry.coordinates) {
+        if (seg.length < 2) continue;
+        ctx.beginPath();
+        seg.forEach(([lng, lat], idx) => {
+          const px = imgX + ((lng - ext.west) / spanLng) * imgW;
+          const py = imgY + ((ext.north - lat) / spanLat) * imgH;
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.strokeStyle = 'rgba(6, 16, 20, 0.88)';
+        ctx.lineWidth = 3.6 * scale;
+        ctx.stroke();
+
+        ctx.strokeStyle = feat.properties.color;
+        ctx.lineWidth = 2.0 * scale;
+        ctx.stroke();
       }
     }
-    if (!vals.length) return null;
-    vals.sort((a, b) => a - b);
-    return {
-      meanTemp: sumT / vals.length,
-      medianTemp: vals[Math.floor(vals.length * 0.5)],
-      maxTemp: maxT,
-      ndvi: sumV / vals.length,
-      ndbi: sumB / vals.length,
-      hotPct: (hot / vals.length) * 100,
-      samples: vals.length,
-    };
+    ctx.restore();
   };
 
-  const bairrosMap = new Map<string, OsmFeatureStat>();
-  const viasMap = new Map<string, OsmFeatureStat>();
-  try {
-    const query = `[out:json][timeout:6];(node["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["highway"~"primary|secondary|tertiary|trunk|residential"]["name"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 140;`;
-    const resp = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
-    if (resp.ok) {
-      const json = (await resp.json()) as { elements?: any[] };
-      for (const el of json.elements ?? []) {
-        const name = el.tags?.name;
-        if (!name) continue;
-        const lat = el.lat ?? el.center?.lat; const lon = el.lon ?? el.center?.lon;
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-        const isPlace = Boolean(el.tags?.place);
-        const s = sampleAt(lon, lat, isPlace ? 18 : 4);
-        if (!s) continue;
-        const id = `${el.type}/${el.id}`;
-        if (isPlace) {
-          if (!bairrosMap.has(name)) bairrosMap.set(name, { id, name, kind: 'Bairro', ...s });
-        } else if (el.tags?.highway) {
-          const prev = viasMap.get(name);
-          if (!prev || s.meanTemp > prev.meanTemp) viasMap.set(name, { id, name, kind: 'Via', highway: el.tags.highway, ...s });
-        }
+  const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, includeIsotherms = false) => {
+    const w = Math.min(980, Math.max(420, ctx.canvas.width - x * 2));
+    const pad = 24;
+    const isoExtraH = includeIsotherms && isotherms?.features.length ? 76 : 0;
+    const baseBoxH = displayMode === 'uhi' ? 210 : 180;
+    const boxH = baseBoxH + isoExtraH;
+
+    ctx.fillStyle = 'rgba(7,19,23,.96)';
+    ctx.fillRect(x, y, w, boxH);
+    ctx.strokeStyle = 'rgba(121,226,220,.7)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, w, boxH);
+
+    if (displayMode === 'uhi' && raster) {
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '700 21px Arial';
+      ctx.fillText(
+        `UHI · CLASSES DE ILHA DE CALOR E TEMPERATURA (2m · ${uhiMethod.toUpperCase()})`,
+        x + pad,
+        y + 36,
+        w - pad * 2,
+      );
+      const cls = buildUhiClassLegendItems(raster.stats, uhiMethod, uhiPower);
+      const barW = w - pad * 2;
+      const segW = barW / cls.length;
+      const barY = y + 54;
+      const barH = 34;
+      cls.forEach((it, idx) => {
+        const sx = x + pad + idx * segW;
+        const boxW = segW - 6;
+        const centerX = sx + boxW / 2;
+        ctx.fillStyle = it.color;
+        ctx.fillRect(sx, barY, boxW, barH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx, barY, boxW, barH);
+
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 15px Arial';
+        ctx.fillText(it.shortPt, centerX, barY + barH + 26, boxW - 6);
+
+        ctx.fillStyle = '#fde047';
+        ctx.font = '700 14px Arial';
+        ctx.fillText(it.tempRange, centerX, barY + barH + 48, boxW - 6);
+
+        ctx.fillStyle = '#9cddda';
+        ctx.font = '600 12px Arial';
+        ctx.fillText(`(${it.sigmaLabel})`, centerX, barY + barH + 68, boxW - 6);
+      });
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '600 14px Arial';
+      ctx.fillText(
+        `Resumo da Cena: Mín ${raster.stats.min.toFixed(1)}°C  |  Mediana ${raster.stats.q50.toFixed(1)}°C  |  Média ${raster.stats.mean.toFixed(1)}°C (σ = ${raster.stats.stdDev.toFixed(2)}°C)  |  Máx ${raster.stats.max.toFixed(1)}°C`,
+        x + pad,
+        y + baseBoxH - 14,
+        w - pad * 2,
+      );
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 24px Arial';
+      ctx.fillText(`LST · TEMPERATURA DE SUPERFÍCIE (°C · PALETA ${palette.toUpperCase()})`, x + pad, y + 42, w - pad * 2);
+      const grad = ctx.createLinearGradient(x + pad, y + 84, x + w - pad, y + 84);
+      for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
+      ctx.fillStyle = grad;
+      ctx.fillRect(x + pad, y + 64, w - pad * 2, 36);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x + pad, y + 64, w - pad * 2, 36);
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 18px Arial';
+      ctx.fillText(`Mín: ${raster?.stats.min.toFixed(1) ?? '—'} °C`, x + pad, y + 136);
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `Mediana: ${raster?.stats.q50.toFixed(1) ?? '—'} °C  |  Média: ${raster?.stats.mean.toFixed(1) ?? '—'} °C (σ=${raster?.stats.stdDev.toFixed(2) ?? '—'}°C)`,
+        x + w / 2,
+        y + 136,
+      );
+      ctx.textAlign = 'right';
+      ctx.fillText(`Máx: ${raster?.stats.max.toFixed(1) ?? '—'} °C`, x + w - pad, y + 136);
+      ctx.textAlign = 'left';
+    }
+
+    if (includeIsotherms && isotherms?.features.length) {
+      const isoY = y + baseBoxH - 2;
+      ctx.strokeStyle = 'rgba(121,226,220,0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x + pad, isoY);
+      ctx.lineTo(x + w - pad, isoY);
+      ctx.stroke();
+
+      ctx.fillStyle = '#79e2dc';
+      ctx.font = '700 14px Arial';
+      ctx.fillText(`ISOTERMAS · CLUSTERS TÉRMICOS ATIVOS (${uhiMethod.toUpperCase()})`, x + pad, isoY + 22);
+
+      const barW = w - pad * 2;
+      const slotW = barW / isotherms.features.length;
+      isotherms.features.forEach((f, idx) => {
+        const ix = x + pad + idx * slotW;
+        const iy = isoY + 46;
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#061014';
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(ix + 2, iy - 5);
+        ctx.lineTo(ix + 24, iy - 5);
+        ctx.stroke();
+
+        ctx.strokeStyle = f.properties.color;
+        ctx.lineWidth = 3.8;
+        ctx.beginPath();
+        ctx.moveTo(ix + 2, iy - 5);
+        ctx.lineTo(ix + 24, iy - 5);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 12px Arial';
+        ctx.fillText(f.properties.label, ix + 30, iy - 1, slotW - 34);
+      });
+    }
+  };
+
+  const exportPng = () => {
+    if (!lstCanvas.current || !opticalCanvas.current || !raster) return;
+    const includeIso = uhiSurfaceVisible && Boolean(isotherms?.features.length);
+    const footerH = (displayMode === 'uhi' ? 234 : 204) + (includeIso ? 76 : 0);
+    const c = document.createElement('canvas');
+    c.width = Math.max(680, lstCanvas.current.width);
+    c.height = lstCanvas.current.height + footerH;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#071317';
+    ctx.fillRect(0, 0, c.width, c.height);
+    const imgX = Math.round((c.width - lstCanvas.current.width) / 2);
+    ctx.drawImage(opticalCanvas.current, imgX, 0);
+    ctx.globalAlpha = opacity;
+    ctx.drawImage(lstCanvas.current, imgX, 0);
+    ctx.globalAlpha = 1;
+
+    if (includeIso && isotherms) {
+      drawIsothermsOnCanvas(ctx, isotherms, raster.bounds, imgX, 0, lstCanvas.current.width, lstCanvas.current.height);
+    }
+
+    drawLegend(ctx, 16, lstCanvas.current.height + 12, includeIso);
+    const a = document.createElement('a');
+    a.href = c.toDataURL('image/png');
+    const clusterSuffix = includeIso ? '_isotermas' : '';
+    a.download = `SynapseSR-${displayMode === 'uhi' ? `UHI-${uhiMethod}` : `LST-${palette}`}${clusterSuffix}.png`;
+    a.click();
+  };
+
+  const exportOpticalRgbPng = () => {
+    if (!opticalCanvas.current) return;
+    const a = document.createElement('a');
+    a.href = opticalCanvas.current.toDataURL('image/png');
+    a.download = 'SynapseSR-Imagem-Optica-RGB-2m.png';
+    a.click();
+  };
+
+  const exportVectorIsotherms = (format: 'geojson' | 'kml') => {
+    if (!isotherms) return;
+    if (format === 'geojson') {
+      const b = new Blob([JSON.stringify(isotherms, null, 2)], { type: 'application/geo+json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SynapseSR-Isotermas-Meso.geojson'; a.click(); URL.revokeObjectURL(a.href);
+    } else {
+      const pm = isotherms.features.map((f) => {
+        const lns = f.geometry.coordinates.map((seg) => `<LineString><coordinates>${seg.map((c) => `${c[0]},${c[1]},0`).join(' ')}</coordinates></LineString>`).join('');
+        return `<Placemark><name>${f.properties.label}</name><Style><LineStyle><color>${f.properties.kmlColor}</color><width>2.5</width></LineStyle></Style><MultiGeometry>${lns}</MultiGeometry></Placemark>`;
+      }).join('');
+      const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Synapse SR Isotermas</name>${pm}</Document></kml>`;
+      const b = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'SynapseSR-Isotermas-Meso.kml'; a.click(); URL.revokeObjectURL(a.href);
+    }
+  };
+
+  const processFile = async (selectedFile: File = file as File) => {
+    if (!selectedFile) return;
+    const addLog = (message: string, level: 'info' | 'success' | 'error' = 'info') => {
+      setProcessingLog((p) => [...p.slice(-99), { time: new Date().toLocaleTimeString('pt-BR'), message, level }]); setStatus(message);
+    };
+    setProcessingLog([]); setBusy(true); setError(''); addLog(`Iniciando: ${selectedFile.name}`);
+    try {
+      const auto = await buildAutomaticThermalRaster(selectedFile, [Number(bands[0]), Number(bands[1]), Number(bands[2])], addLog);
+      const lst = document.createElement('canvas'); const opt = document.createElement('canvas');
+      const stats = renderPerceptualLstToCanvas(auto.result.lstDownscaled, auto.tiff.width, auto.tiff.height, lst, palette, customColors);
+      if (displayMode === 'uhi' && stats) renderHighDefUhiToCanvas(auto.result.lstDownscaled, auto.tiff.width, auto.tiff.height, lst, stats, uhiMethod, uhiPower);
+      renderRGBBasemapToCanvas(auto.tiff.rasters[Number(bands[2])] as Float32Array, auto.tiff.rasters[Number(bands[1])] as Float32Array, auto.tiff.rasters[Number(bands[0])] as Float32Array, auto.tiff.width, auto.tiff.height, opt);
+      if (!stats) throw new Error('empty raster');
+      lstCanvas.current = lst; opticalCanvas.current = opt;
+      setRaster({ data: auto.result.lstDownscaled, width: auto.tiff.width, height: auto.tiff.height, bounds: auto.bounds, origin: auto.tiff.origin, resolution: auto.tiff.resolution, epsg: auto.tiff.epsg, isProjected: auto.tiff.isProjected, stats, ndvi: auto.indices.ndvi, ndbi: auto.indices.ndbi, fileName: `${selectedFile.name} · ${auto.landsat.itemId}`, bands: auto.tiff.rasters.length });
+      setComparisonMode('main'); setSwipeActive(false);
+      setAoi([]); setAoiAnchor(null); setAoiCursorPt(null); setAoiStats(null); setAoiDetailed(null);
+      setStations([]);
+      setLstUrl(lst.toDataURL('image/png')); setOpticalUrl(opt.toDataURL('image/png')); addLog(t.ready, 'success');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : t.error; setError(msg); addLog(msg, 'error');
+    } finally { setBusy(false); }
+  };
+
+  const colorTempHistogram = useMemo(() => {
+    if (!raster) return [];
+    const nB = 24; const bins = Array.from({ length: nB }, () => 0);
+    const span = raster.stats.max - raster.stats.min || 1; let total = 0;
+    for (let i = 0; i < raster.data.length; i += 2) {
+      const v = raster.data[i]; if (!Number.isFinite(v)) continue;
+      bins[Math.max(0, Math.min(nB - 1, Math.floor(((v - raster.stats.min) / span) * nB)))] += 1; total += 1;
+    }
+    const peak = Math.max(bins.reduce((m, v) => Math.max(m, v), 0), 1);
+    return bins.map((c, i) => {
+      const t0 = raster.stats.min + (span * i) / nB; const t1 = raster.stats.min + (span * (i + 1)) / nB;
+      const pct = total > 0 ? ((c / total) * 100).toFixed(1) : '0.0';
+      return { height: Math.max(6, Math.pow(c / peak, 0.78) * 100), tempLabel: `${t0.toFixed(1)}°C – ${t1.toFixed(1)}°C (${pct}%)`, color: sampleCssColorAt((i + 0.5) / nB, palette, draftCustomColors, displayMode === 'uhi') };
+    });
+  }, [displayMode, draftCustomColors, palette, raster]);
+
+  const downloadComparisonPanel = async () => {
+    if (!comparisonPrimary || !comparisonSecondary || !differenceRender || !differenceStats) return;
+    const load = (u: string) => new Promise<HTMLImageElement>((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = u; });
+    const [a, b, d] = await Promise.all([load(comparisonPrimary.lstUrl), load(comparisonSecondary.lstUrl), load(differenceRender.url)]);
+    const w = 740; const iH = Math.round((w * a.height) / a.width); const legH = 166;
+    const c = document.createElement('canvas'); c.width = w * 3; c.height = iH + legH + 62;
+    const ctx = c.getContext('2d'); if (!ctx) return;
+    ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
+    const panels = [
+      { im: a, lbl: `ANTES · ${comparisonPrimary.dateLabel} (LST °C)`, st: comparisonPrimary.stats },
+      { im: b, lbl: `DEPOIS · ${comparisonSecondary.dateLabel} (LST °C)`, st: comparisonSecondary.stats },
+      { im: d, lbl: `DIFERENÇA ΔLST (DEPOIS − ANTES) · ±1σ = ±${differenceStats.thresholdSigma.toFixed(2)}°C`, st: null },
+    ];
+    panels.forEach((p, idx) => {
+      const x = idx * w; const lx = x + 14; const lw = w - 28; const ly = iH + 50;
+      ctx.fillStyle = '#fff'; ctx.font = '700 22px Arial'; ctx.textAlign = 'center';
+      ctx.fillText(p.lbl, x + w / 2, 36); ctx.textAlign = 'left';
+      ctx.drawImage(p.im, lx, 50, lw, iH - 14);
+      ctx.strokeStyle = 'rgba(121,226,220,0.45)'; ctx.lineWidth = 2; ctx.strokeRect(lx, 50, lw, iH - 14);
+      ctx.fillStyle = '#0d1f26'; ctx.fillRect(lx, ly, lw, legH - 14); ctx.strokeRect(lx, ly, lw, legH - 14);
+      if (p.st) {
+        ctx.fillStyle = '#79e2dc'; ctx.font = '700 16px Arial'; ctx.fillText(`ESCALA TÉRMICA (${palette.toUpperCase()})`, lx + 16, ly + 26);
+        const grad = ctx.createLinearGradient(lx + 16, ly + 40, lx + lw - 16, ly + 40);
+        for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, false));
+        ctx.fillStyle = grad; ctx.fillRect(lx + 16, ly + 40, lw - 32, 24);
+        ctx.fillStyle = '#fff'; ctx.font = '700 16px Arial';
+        ctx.fillText(`Mín: ${p.st.min.toFixed(1)}°C`, lx + 16, ly + 92);
+        ctx.textAlign = 'center'; ctx.fillText(`Média: ${p.st.mean.toFixed(1)}°C (σ=${p.st.stdDev.toFixed(2)}°C)`, lx + lw / 2, ly + 92);
+        ctx.textAlign = 'right'; ctx.fillText(`Máx: ${p.st.max.toFixed(1)}°C`, lx + lw - 16, ly + 92); ctx.textAlign = 'left';
+        ctx.fillStyle = '#9ab0b5'; ctx.font = '14px Arial';
+        ctx.fillText(`Q25: ${p.st.q25.toFixed(1)}°C · Mediana: ${p.st.q50.toFixed(1)}°C · Q75: ${p.st.q75.toFixed(1)}°C`, lx + 16, ly + 124);
+      } else {
+        const sig = differenceStats.thresholdSigma;
+        ctx.fillStyle = '#ffb000'; ctx.font = '700 16px Arial';
+        ctx.fillText(`MUDANÇA TÉRMICA (±1σ = ±${sig.toFixed(2)}°C · ΔMédio = ${differenceStats.mean >= 0 ? '+' : ''}${differenceStats.mean.toFixed(2)}°C)`, lx + 16, ly + 26);
+        const grad = ctx.createLinearGradient(lx + 16, ly + 40, lx + lw - 16, ly + 40);
+        grad.addColorStop(0, '#023e8a'); grad.addColorStop(0.24, '#0096c7'); grad.addColorStop(0.36, '#48cae4');
+        grad.addColorStop(0.37, '#45525a'); grad.addColorStop(0.63, '#526069'); grad.addColorStop(0.64, '#f77f00');
+        grad.addColorStop(0.84, '#d62828'); grad.addColorStop(1, '#ffea00');
+        ctx.fillStyle = grad; ctx.fillRect(lx + 16, ly + 40, lw - 32, 24);
+        ctx.font = '700 16px Arial'; ctx.fillStyle = '#48cae4';
+        ctx.fillText(`↓ Diminuiu: ${differenceStats.pctDecreased.toFixed(1)}%`, lx + 16, ly + 92);
+        ctx.textAlign = 'center'; ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(`＝ Igual (±1σ): ${differenceStats.pctEqual.toFixed(1)}%`, lx + lw / 2, ly + 92);
+        ctx.textAlign = 'right'; ctx.fillStyle = '#ff9e00';
+        ctx.fillText(`↑ Aumentou: ${differenceStats.pctIncreased.toFixed(1)}%`, lx + lw - 16, ly + 92); ctx.textAlign = 'left';
+        ctx.fillStyle = '#9ab0b5'; ctx.font = '14px Arial';
+        ctx.fillText(`Variação: ${differenceStats.min.toFixed(1)}°C a +${differenceStats.max.toFixed(1)}°C · Destaque estatístico acima de ±1σ.`, lx + 16, ly + 124);
+      }
+    });
+    const lnk = document.createElement('a'); lnk.href = c.toDataURL('image/png'); lnk.download = `SynapseSR-Comparacao-${comparisonPrimary.dateLabel}-${comparisonSecondary.dateLabel}.png`; lnk.click();
+  };
+
+  const downloadReport = async () => {
+    if (!raster || !opticalCanvas.current) return;
+    setStatus('Calculando matrizes numéricas, conforto térmico, uso do solo e vias OSM dentro do polígono…');
+    const osm = await fetchOsmUrbanFeatures(raster, aoi.length >= 3 ? aoi : undefined);
+
+    const tempCanvas = document.createElement('canvas');
+    renderPerceptualLstToCanvas(raster.data, raster.width, raster.height, tempCanvas, palette, customColors, raster.stats);
+    const uhiCanvas = document.createElement('canvas');
+    renderHighDefUhiToCanvas(raster.data, raster.width, raster.height, uhiCanvas, raster.stats, uhiMethod, uhiPower);
+
+    if (uhiSurfaceVisible && isotherms) {
+      const tCtx = tempCanvas.getContext('2d');
+      const uCtx = uhiCanvas.getContext('2d');
+      if (tCtx) drawIsothermsOnCanvas(tCtx, isotherms, raster.bounds, 0, 0, raster.width, raster.height);
+      if (uCtx) drawIsothermsOnCanvas(uCtx, isotherms, raster.bounds, 0, 0, raster.width, raster.height);
+    }
+
+    const lstMapImg = renderMapWithFooterLegend(
+      opticalCanvas.current, tempCanvas, opacity,
+      `MAPA 01 · TEMPERATURA DE SUPERFÍCIE (LST °C) · PALETA ${palette.toUpperCase()} · EPSG:${raster.epsg}`,
+      false, raster.stats, palette, customColors,
+    );
+    const uhiMapImg = renderMapWithFooterLegend(
+      opticalCanvas.current, uhiCanvas, opacity,
+      `MAPA 02 · CLASSES DE ILHA DE CALOR URBANA (UHI 2m · MÉTODO ${uhiMethod.toUpperCase()}) · EPSG:${raster.epsg}`,
+      true, raster.stats, palette, customColors, uhiMethod, uhiPower,
+    );
+
+    let valid = 0; let noData = 0;
+    let veg = 0; let built = 0; let water = 0; let mixed = 0; let overlapVB = 0; let specValid = 0;
+    let vegTempSum = 0; let builtTempSum = 0; let waterTempSum = 0; let mixedTempSum = 0;
+    let above31 = 0; let aboveHot = 0;
+    const hotspotLim = raster.stats.mean + 1.5 * raster.stats.stdDev;
+    const uhiCnt = [0, 0, 0, 0, 0, 0];
+    const utfviCnt = [0, 0, 0, 0, 0]; // Conforto Térmico UTFVI
+    const nBins = 12; const histBins = new Array<number>(nBins).fill(0);
+    const span = Math.max(0.1, raster.stats.max - raster.stats.min);
+
+    for (let i = 0; i < raster.data.length; i += 1) {
+      const v = raster.data[i];
+      if (!Number.isFinite(v)) { noData += 1; continue; }
+      valid += 1;
+      if (v > 31.0) above31 += 1;
+      if (v >= hotspotLim) aboveHot += 1;
+      histBins[Math.max(0, Math.min(nBins - 1, Math.floor(((v - raster.stats.min) / span) * nBins)))] += 1;
+      const z = computeClusteredZ(v, v, raster.stats, uhiMethod, uhiPower);
+      if (z < -0.95) uhiCnt[0] += 1;
+      else if (z < -0.3) uhiCnt[1] += 1;
+      else if (z < 0.25) uhiCnt[2] += 1;
+      else if (z < 0.85) uhiCnt[3] += 1;
+      else if (z < 1.4) uhiCnt[4] += 1;
+      else uhiCnt[5] += 1;
+
+      const utfvi = (v - raster.stats.mean) / Math.max(1, v);
+      if (utfvi <= 0) utfviCnt[0] += 1;
+      else if (utfvi <= 0.005) utfviCnt[1] += 1;
+      else if (utfvi <= 0.010) utfviCnt[2] += 1;
+      else if (utfvi <= 0.015) utfviCnt[3] += 1;
+      else utfviCnt[4] += 1;
+
+      const ndvi = raster.ndvi[i]; const ndbi = raster.ndbi[i];
+      if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
+        specValid += 1;
+        if (ndvi > 0.3 && ndbi > 0.1) overlapVB += 1;
+        if (ndvi > 0.3) { veg += 1; vegTempSum += v; }
+        else if (ndvi < 0 && ndbi < 0) { water += 1; waterTempSum += v; }
+        else if (ndbi > 0.1) { built += 1; builtTempSum += v; }
+        else { mixed += 1; mixedTempSum += v; }
       }
     }
-  } catch { /* ignore */ }
-  return {
-    bairros: [...bairrosMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 12),
-    vias: [...viasMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 15),
-  };
+
+    const resX = Math.abs(raster.resolution[0] || 1);
+    const resY = Math.abs(raster.resolution[1] || 1);
+    const pxM2 = raster.isProjected ? resX * resY : resX * 111320 * (resY * 110540);
+    const areaHa = (valid * pxM2) / 10000;
+    const areaKm2 = areaHa / 100;
+    const pct = (n: number, d = valid) => (d > 0 ? ((n / d) * 100).toFixed(1) : '0.0');
+    const ha = (n: number) => ((n * pxM2) / 10000).toFixed(2);
+    const strongExtPct = (((uhiCnt[4] + uhiCnt[5]) / Math.max(1, valid)) * 100).toFixed(1);
+    const meanNdviVal = meanOf(raster.ndvi).toFixed(3);
+    const meanNdbiVal = meanOf(raster.ndbi).toFixed(3);
+
+    const vegMeanT = veg > 0 ? vegTempSum / veg : raster.stats.mean;
+    const builtMeanT = built > 0 ? builtTempSum / built : raster.stats.mean;
+    const waterMeanT = water > 0 ? waterTempSum / water : raster.stats.mean;
+    const mixedMeanT = mixed > 0 ? mixedTempSum / mixed : raster.stats.mean;
+    const deltaBuiltVeg = builtMeanT - vegMeanT;
+    const fmtDelta = (tVal: number) => {
+      const d = tVal - raster.stats.mean;
+      return `${d >= 0 ? '+' : ''}${d.toFixed(2)} °C`;
+    };
+
+    const dateMatches = Array.from(raster.fileName.matchAll(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/g)).map((m) => `${m[1]}-${m[2]}-${m[3]}`);
+    const uniqueDates = [...new Set(dateMatches)];
+    const dateOpt = uniqueDates[0] ?? 'Data 1';
+    const dateTherm = uniqueDates[1] ?? uniqueDates[0] ?? 'Sincronizada STAC';
+    const daysGap = uniqueDates.length >= 2 ? Math.round(Math.abs(Date.parse(uniqueDates[1]) - Date.parse(uniqueDates[0])) / 86400000) : null;
+    const issueDate = new Date().toLocaleDateString('pt-BR');
+
+    const uhiLegendItems = buildUhiClassLegendItems(raster.stats, uhiMethod, uhiPower);
+    const uhiMeta = uhiLegendItems.map((it) => ({
+      pt: `${it.fullPt} · ${it.tempRange} (${it.sigmaLabel})`,
+      en: `${it.fullEn} · ${it.tempRange} (${it.sigmaLabel})`,
+      c: it.color,
+    }));
+
+    const uhiBars = uhiMeta.map((m, i) => `<div class="bar-row"><div class="bar-label"><span data-pt="${m.pt}" data-en="${m.en}">${m.pt}</span><b>${pct(uhiCnt[i])}% · ${ha(uhiCnt[i])} ha (${uhiCnt[i].toLocaleString('pt-BR')} px)</b></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(1.5, Number(pct(uhiCnt[i])))}%;background:${m.c}"></div></div></div>`).join('');
+    const histBars = histBins.map((cnt, i) => {
+      const t0 = raster.stats.min + (span * i) / nBins; const t1 = raster.stats.min + (span * (i + 1)) / nBins;
+      const p = pct(cnt); const col = i < 3 ? '#1d817e' : i < 6 ? '#27765e' : i < 9 ? '#f1b64a' : '#c84638';
+      return `<div class="bar-row" style="margin:8px 0"><div class="bar-label"><span>${t0.toFixed(1)} °C – ${t1.toFixed(1)} °C</span><b>${p}% (${cnt.toLocaleString('pt-BR')} px · ${ha(cnt)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(1, Number(p))}%;background:${col}"></div></div></div>`;
+    }).join('');
+
+    const utfviLabels = [
+      { pt: 'Conforto Ótimo / Sem Estresse (UTFVI ≤ 0,000)', en: 'Optimal Comfort / No Stress (UTFVI ≤ 0.000)', c: '#103e8a' },
+      { pt: 'Conforto Leve / Amenizado (0,000 a 0,005)', en: 'Mild / Mitigated Comfort (0.000 to 0.005)', c: '#2ba198' },
+      { pt: 'Desconforto Moderado (0,005 a 0,010)', en: 'Moderate Discomfort (0.005 to 0.010)', c: '#f8d668' },
+      { pt: 'Estresse Térmico Forte (0,010 a 0,015)', en: 'Strong Thermal Stress (0.010 to 0.015)', c: '#f47c30' },
+      { pt: 'Estresse Térmico Extremo / Crítico (UTFVI > 0,015)', en: 'Extreme / Critical Thermal Stress (UTFVI > 0.015)', c: '#c84638' },
+    ];
+    const utfviBars = utfviLabels.map((u, i) => `<div class="bar-row"><div class="bar-label"><span data-pt="${u.pt}" data-en="${u.en}">${u.pt}</span><b>${pct(utfviCnt[i])}% · ${ha(utfviCnt[i])} ha (${utfviCnt[i].toLocaleString('pt-BR')} px)</b></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(1.5, Number(pct(utfviCnt[i])))}%;background:${u.c}"></div></div></div>`).join('');
+
+    const bairrosHtml = osm.bairros.length
+      ? `<table><thead><tr><th>Bairro / ID Real OSM</th><th>LST Média</th><th>Mediana / Máx</th><th>% Acima Limiar</th><th>NDVI / NDBI</th><th>Amostragem no Polígono</th></tr></thead><tbody>${osm.bairros.map((b) => `<tr><td><strong>${b.name}</strong> <code>${b.id}</code></td><td><b>${b.meanTemp.toFixed(2)} °C</b></td><td>${b.medianTemp.toFixed(2)} °C / ${b.maxTemp.toFixed(1)} °C</td><td>${b.hotPct.toFixed(1)}%</td><td>${b.ndvi.toFixed(3)} / ${b.ndbi.toFixed(3)}</td><td>Recorte válido (${b.samples} px)</td></tr>`).join('')}</tbody></table>`
+      : `<div class="callout red"><strong>Bairros:</strong> Nenhuma etiqueta de bairro mapeada no OSM dentro dos píxeis válidos deste recorte.</div>`;
+
+    const renderViaTable = (list: OsmFeatureStat[], isHot: boolean) =>
+      list.length
+        ? `<table><thead><tr><th># &amp; Logradouro (OSM)</th><th>LST Média</th><th>Máx</th><th>Impacto (ΔT)</th><th>% Quente</th><th>NDVI / Amostras</th></tr></thead><tbody>${list.map((v, i) => {
+            const dT = v.meanTemp - raster.stats.mean;
+            const col = isHot ? '#c84638' : '#1d817e';
+            return `<tr><td><strong>#${i + 1} · ${v.name}</strong> <small>(${v.highway})</small></td><td style="color:${col};font-weight:800">${v.meanTemp.toFixed(2)} °C</td><td>${v.maxTemp.toFixed(1)} °C</td><td><b>${dT >= 0 ? '+' : ''}${dT.toFixed(2)} °C</b></td><td>${v.hotPct.toFixed(1)}%</td><td>${v.ndvi.toFixed(2)} (${v.samples} px)</td></tr>`;
+          }).join('')}</tbody></table>`
+        : `<div class="callout">Nenhuma via com nome retornada dentro do limite válido do polígono.</div>`;
+
+    const stationsHtml = stations.length
+      ? `<table><thead><tr><th>Estação / Fonte</th><th>Horário Passagem</th><th>Estação 2m (Ta)</th><th>LST Média no Raio (${stationRadiusM}m)</th><th>Desvio Espacial (σ)</th><th>LST Pixel 2m</th><th>Diferença ΔT (Raio − Estação)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => `<tr><td><strong>${s.name}</strong> (${s.source})</td><td>${s.dateIso} · ${s.overpassTime}</td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b></td><td>±${s.radiusStdC.toFixed(2)} °C (${s.pixelCount} px)</td><td>${s.pixel1mC.toFixed(2)} °C</td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`).join('')}</tbody></table>`
+      : `<div class="callout">Clique em "📡 Buscar Estações na Cena" antes de exportar para incluir a tabela de validação de estações no relatório.</div>`;
+
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synapse SR | Diagnóstico Térmico e Urbano (${raster.fileName})</title><style>
+:root{--navy:#10213b;--teal:#1d817e;--ink:#172b42;--muted:#65758a;--line:#dbe3ec;--paper:#ffffff;--bg:#eef2f7;--amber:#f1b64a;--red:#c84638;--radius:16px;--shadow:0 10px 32px rgba(16,33,59,.07)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.58 Inter,system-ui,Arial,sans-serif}.page{max-width:1240px;margin:0 auto;padding:26px 24px 60px}
+.topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;font-size:12px;font-weight:700}.lang-btn{border:2px solid #1d817e;background:#e7f3f1;color:#10213b;border-radius:999px;padding:7px 16px;font-weight:800;cursor:pointer}
+.hero{background:linear-gradient(115deg,var(--navy) 0%,#173658 66%,#176d75 100%);border-radius:24px;padding:34px 38px;color:#fff;box-shadow:var(--shadow)}h1{font-size:clamp(28px,3.6vw,44px);margin:0 0 12px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.hero-meta span{border:1px solid #ffffff30;background:#ffffff0e;padding:6px 10px;border-radius:9px;font-size:12px}
+.section{margin-top:26px}.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.grid-2,.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.metric-value{margin-top:8px;font-size:30px;color:var(--navy);font-weight:800}.map-frame{background:#0f2238;border-radius:14px;padding:10px}.map-frame img{width:100%;height:auto;border-radius:8px}
+.bar-row{margin:12px 0}.bar-label{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:13px;font-weight:700;line-height:1.4}.bar-track{height:10px;margin-top:5px;background:#edf1f5;border-radius:99px;overflow:hidden}.bar-fill{height:100%;border-radius:99px}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{border-collapse:collapse;width:100%;font-size:12px}th{background:#f1f5f8;text-align:left;padding:10px}td{padding:10px;border-top:1px solid #e5ebf1}
+.callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
+@media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
+</style></head><body><div class="page">
+  <div class="topline"><span>SYNAPSE SR · GEOSPATIAL INTELLIGENCE (v4.0)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
+  <header class="hero">
+    <h1 data-pt="Temperatura de superfície, ilhas de calor e validação em terra" data-en="Land surface temperature, heat islands and ground validation">Temperatura de superfície, ilhas de calor e validação em terra</h1>
+    <p data-pt="Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise ambiental/conforto térmico, uso do solo, bairros/ruas e validação com estações meteorológicas." data-en="Auditable diagnostics from the Float32Array numerical raster (${valid.toLocaleString('pt-BR')} valid px, ${noData.toLocaleString('pt-BR')} NoData), with LST and UHI maps, environmental/thermal comfort analysis, land use, neighborhoods/streets and ground station validation.">Diagnóstico auditável do raster numérico Float32Array (${valid.toLocaleString('pt-BR')} px válidos, ${noData.toLocaleString('pt-BR')} NoData), com mapas LST e UHI, análise ambiental/conforto térmico, uso do solo, bairros/ruas e validação com estações meteorológicas.</p>
+    <div class="hero-meta"><span>CRS: EPSG:${raster.epsg}</span><span>Resolução: ${resX.toFixed(2)} m</span><span>Área útil: ${areaHa.toFixed(2)} ha (${areaKm2.toFixed(2)} km²)</span><span>Datas: ${dateOpt} / ${dateTherm} ${daysGap !== null ? `(Δ=${daysGap}d)` : ''}</span><span>Emissão: ${issueDate}</span></div>
+  </header>
+  <section class="section"><div class="grid-4">
+    <article class="card"><small>LST Média / Mediana</small><div class="metric-value">${raster.stats.mean.toFixed(1)} °C</div><small>Mediana: ${raster.stats.q50.toFixed(1)} °C · σ=${raster.stats.stdDev.toFixed(2)} °C</small></article>
+    <article class="card"><small>Mínima / Máxima</small><div class="metric-value">${raster.stats.max.toFixed(1)} °C</div><small>Mín: ${raster.stats.min.toFixed(1)} °C · Limiar Hotspot (${hotspotLim.toFixed(1)}°C): ${pct(aboveHot)}%</small></article>
+    <article class="card"><small>UHI Forte + Extrema</small><div class="metric-value">${strongExtPct}%</div><small>${ha(uhiCnt[4] + uhiCnt[5])} ha (&gt; +0,85σ) · &gt;31°C: ${pct(above31)}%</small></article>
+    <article class="card"><small>Vegetação (NDVI &gt; 0,3)</small><div class="metric-value">${pct(veg, specValid)}%</div><small>NDVI μ=${meanNdviVal} · NDBI μ=${meanNdbiVal}</small></article>
+  </div></section>
+  <section class="section"><div class="grid-2">
+    <div class="card"><h3>Mapa 01 · Temperatura de Superfície (LST °C)</h3><div class="map-frame"><img src="${lstMapImg}" alt="Mapa LST"></div></div>
+    <div class="card"><h3>Mapa 02 · Ilha de Calor Urbana (UHI 2 m)</h3><div class="map-frame"><img src="${uhiMapImg}" alt="Mapa UHI"></div></div>
+  </div></section>
+  <section class="section"><div class="two-col">
+    <div class="card"><h3>Classes UHI (Denominador: ${valid.toLocaleString('pt-BR')} px)</h3>${uhiBars}</div>
+    <div class="card"><h3>Distribuição Térmica (°C)</h3>${histBars}</div>
+  </div></section>
+  <section class="section"><div class="two-col">
+    <div class="card">
+      <h3 data-pt="Análise Ambiental · Proporção dos Usos do Solo e Impacto na Temperatura" data-en="Environmental Analysis · Land Use Proportion and Temperature Impact">Análise Ambiental · Proporção dos Usos do Solo e Impacto na Temperatura</h3>
+      <div class="bar-row"><div class="bar-label"><span>Vegetação vigorosa (NDVI &gt; 0,30)</span><b>${pct(veg, specValid)}% (${ha(veg)} ha) · Média: ${vegMeanT.toFixed(2)} °C (${fmtDelta(vegMeanT)})</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(veg, specValid)}%;background:#27765e"></div></div></div>
+      <div class="bar-row"><div class="bar-label"><span>Área construída / impermeável (NDBI &gt; 0,10)</span><b>${pct(built, specValid)}% (${ha(built)} ha) · Média: ${builtMeanT.toFixed(2)} °C (${fmtDelta(builtMeanT)})</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(built, specValid)}%;background:#c84638"></div></div></div>
+      <div class="bar-row"><div class="bar-label"><span>Solo exposto / transição urbana</span><b>${pct(mixed, specValid)}% (${ha(mixed)} ha) · Média: ${mixedMeanT.toFixed(2)} °C (${fmtDelta(mixedMeanT)})</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(mixed, specValid)}%;background:#f1b64a"></div></div></div>
+      <div class="bar-row"><div class="bar-label"><span>Água ou sombra densa (NDVI &lt; 0 e NDBI &lt; 0)</span><b>${pct(water, specValid)}% (${ha(water)} ha) · Média: ${waterMeanT.toFixed(2)} °C (${fmtDelta(waterMeanT)})</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(water, specValid)}%;background:#2668b8"></div></div></div>
+      <div class="callout"><strong>Impacto Térmico por Cobertura (ΔT):</strong> As áreas construídas/impermeáveis apresentam em média <b>${deltaBuiltVeg >= 0 ? '+' : ''}${deltaBuiltVeg.toFixed(2)} °C</b> em relação à cobertura arbórea/vegetada dentro do limite do polígono (sobreposição espectral bruta: ${pct(overlapVB, specValid)}%).</div>
+    </div>
+    <div class="card">
+      <h3 data-pt="Conforto Térmico Ecológico (UTFVI) e Severidade de Ilhas de Calor" data-en="Ecological Thermal Comfort (UTFVI) and Heat Island Severity">Conforto Térmico Ecológico (UTFVI) e Severidade de Ilhas de Calor</h3>
+      ${utfviBars}
+      <div class="callout red"><strong>Síntese de Conforto Térmico:</strong> <b>${strongExtPct}%</b> (${ha(uhiCnt[4] + uhiCnt[5])} ha) da mancha útil encontram-se sob condição de ilha de calor forte ou extrema (&gt; +0,85σ), prioritários para arborização viária e aumento de albedo.</div>
+    </div>
+  </div></section>
+  <section class="section"><div class="card"><h3>Validação com Estações em Terra (Raio de Representatividade: ${stationRadiusM} m)</h3><div class="table-wrap">${stationsHtml}</div></div></section>
+  <section class="section">
+    <div class="card" style="margin-bottom:14px"><h3>Diagnóstico por Bairro (OSM · Dentro do Limite do Polígono)</h3><div class="table-wrap">${bairrosHtml}</div></div>
+    <div class="card">
+      <h3>Diagnóstico Viário (OSM) Dentro do Limite do Polígono · Ruas com Maior e Menor Intensidade Térmica</h3>
+      <div class="two-col" style="margin-top:12px">
+        <div>
+          <h4 style="margin:0 0 8px;color:#c84638">🔥 Ruas com Maior Intensidade Térmica (Hotspots Viários)</h4>
+          <div class="table-wrap">${renderViaTable(osm.viasQuentes, true)}</div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 8px;color:#1d817e">🌿 Ruas com Menor Intensidade Térmica (Corredores Amenizados)</h4>
+          <div class="table-wrap">${renderViaTable(osm.viasAmenas, false)}</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div><script>
+let lang = 'pt';
+function toggleReportLang() {
+  lang = lang === 'pt' ? 'en' : 'pt';
+  const b = document.getElementById('lang-btn');
+  if (b) b.textContent = lang === 'pt' ? '🇬🇧 Switch to English (EN)' : '🇵🇹 Mudar para Português (PT)';
+  document.querySelectorAll('[data-pt][data-en]').forEach((el) => {
+    const val = el.getAttribute(lang === 'pt' ? 'data-pt' : 'data-en');
+    if (val !== null) el.textContent = val;
+  });
 }
+</script></body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SynapseSR_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
+    setStatus('Relatório técnico expandido exportado com sucesso.');
+  };
 
 function renderMapWithFooterLegend(
   baseOptical: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, opacity: number,
