@@ -1952,50 +1952,6 @@ function paletteGradient(palette: string, customColors: string[]) {
   return `linear-gradient(90deg, ${pts.join(', ')})`;
 }
 
-function drawIsothermsOnCanvas(
-  ctx: CanvasRenderingContext2D,
-  isoCollection: IsothermCollection | null,
-  bounds: RasterBounds,
-  imgX: number,
-  imgY: number,
-  imgW: number,
-  imgH: number,
-) {
-  if (!isoCollection || !isoCollection.features.length) return;
-  const ext = boundsExtent(bounds);
-  const spanLng = Math.max(1e-6, ext.east - ext.west);
-  const spanLat = Math.max(1e-6, ext.north - ext.south);
-  const scale = Math.max(1, Math.min(imgW, imgH) / 650);
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(imgX, imgY, imgW, imgH);
-  ctx.clip();
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-
-  for (const feat of isoCollection.features) {
-    for (const seg of feat.geometry.coordinates) {
-      if (seg.length < 2) continue;
-      ctx.beginPath();
-      seg.forEach(([lng, lat], idx) => {
-        const px = imgX + ((lng - ext.west) / spanLng) * imgW;
-        const py = imgY + ((ext.north - lat) / spanLat) * imgH;
-        if (idx === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      });
-      ctx.strokeStyle = 'rgba(6, 16, 20, 0.88)';
-      ctx.lineWidth = 3.6 * scale;
-      ctx.stroke();
-
-      ctx.strokeStyle = feat.properties.color;
-      ctx.lineWidth = 2.0 * scale;
-      ctx.stroke();
-    }
-  }
-  ctx.restore();
-}
-
 async function fetchOsmUrbanFeatures(
   raster: RasterState,
   aoiPolygon?: [number, number][],
