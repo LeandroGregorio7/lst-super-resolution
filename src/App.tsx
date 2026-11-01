@@ -5157,15 +5157,20 @@ function toggleReportLang() {
               <button onClick={closeTutorial}>{lang === 'pt' ? 'Pular' : 'Skip'}</button>
               {tutorialStep > 0 && <button onClick={() => setTutorialStep((s) => s - 1)}>← {lang === 'pt' ? 'Anterior' : 'Back'}</button>}
               {tutorialStep < 3 ? (
-                <button className="primary-button" onClick={() => setTutorialStep((s) => s + 1)}>{lang === 'pt' ? 'Próximo →' : 'Next →'}</button>
+                <button className="primary-button" onClick={() => setTutorialStep((s) => s + 1)}>
+                  {lang === 'pt' ? 'Próximo →' : 'Next →'}
+                </button>
               ) : (
-                <button className="primary-button" onClick={closeTutorial}>{lang === 'pt' ? 'Começar →' : 'Start →'}</button>
+                <button className="primary-button" onClick={closeTutorial}>
+                  {lang === 'pt' ? 'Começar →' : 'Start →'}
+                </button>
               )}
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
+   )}
+ </div>
   );
 }
-// FIM DO ARQUIVO src/App.tsx v4.0
