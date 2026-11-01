@@ -879,6 +879,43 @@ type IsothermFeature = {
 };
 type IsothermCollection = { type: 'FeatureCollection'; features: IsothermFeature[] };
 
+/** Draws WGS84 isotherm lines over a raster canvas using the raster geographic extent. */
+function drawIsothermsOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  collection: IsothermCollection,
+  bounds: RasterBounds,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): void {
+  if (!collection.features.length || width <= 0 || height <= 0) return;
+  const ext = boundsExtent(bounds);
+  const spanLng = ext.east - ext.west;
+  const spanLat = ext.north - ext.south;
+  if (!Number.isFinite(spanLng) || !Number.isFinite(spanLat) || spanLng === 0 || spanLat === 0) return;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  collection.features.forEach((feature) => {
+    ctx.beginPath();
+    feature.geometry.coordinates.forEach((segment) => {
+      segment.forEach(([lng, lat], index) => {
+        const px = x + ((lng - ext.west) / spanLng) * width;
+        const py = y + ((ext.north - lat) / spanLat) * height;
+        if (index === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+    });
+    ctx.strokeStyle = feature.properties.color || '#ffffff';
+    ctx.lineWidth = Math.max(1.25, Math.min(3, width / 500));
+    ctx.globalAlpha = 0.94;
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
 const COLAB_URL = 'https://colab.research.google.com/drive/1jZBz9GQfCF3dceCTSWatsGAleEisLAeA#scrollTo=I3qNdVpuSadC';
 const DEFAULT_CUSTOM_COLORS = ['#0b2c7a', '#167288', '#48b574', '#f5d547', '#e86825', '#b81424'];
 const TILE_URLS: Record<Provider, string> = {
@@ -3067,7 +3104,7 @@ export default function App() {
       ? `<table><thead><tr><th>Bairro / ID Real OSM</th><th>LST Média</th><th>Mediana / Máx</th><th>% Acima Limiar</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${osm.bairros.map((b: OsmFeatureStat) => `<tr><td><strong>${b.name}</strong> <code>${b.id}</code></td><td><b>${b.meanTemp.toFixed(2)} °C</b></td><td>${b.medianTemp.toFixed(2)} °C / ${b.maxTemp.toFixed(1)} °C</td><td>${b.hotPct.toFixed(1)}%</td><td>${b.ndvi.toFixed(3)} / ${b.ndbi.toFixed(3)}</td><td>Janela zonal 37×37 px (${b.samples} px)</td></tr>`).join('')}</tbody></table>`
       : `<div class="callout red"><strong>Bairros — Não calculado:</strong> Nenhuma feição retornada para esta extensão.</div>`;
 
-    const renderViaTable = (list: OsmFeatureStat[], isHot: boolean) =>
+    const renderViaTable = (list: OsmFeatureStat[]) =>
       list.length
         ? `<table><thead><tr><th>Ranking &amp; Rua / ID Real OSM</th><th>LST Média</th><th>LST Máxima</th><th>% em Classe Quente</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${list.map((v: OsmFeatureStat, i: number) => `<tr><td><strong>#${i + 1} · ${v.name}</strong> <code>${v.id}</code> (${v.highway})</td><td><b>${v.meanTemp.toFixed(2)} °C</b></td><td>${v.maxTemp.toFixed(1)} °C</td><td>${v.hotPct.toFixed(1)}%</td><td>${v.ndvi.toFixed(3)} / ${v.ndbi.toFixed(3)}</td><td>Interseção buffer 9×9 m (${v.samples} px)</td></tr>`).join('')}</tbody></table>`
         : `<div class="callout red"><strong>Ruas — Não calculado:</strong> Nenhum segmento retornado na consulta atual.</div>`;
@@ -3076,11 +3113,11 @@ export default function App() {
       <div class="two-col" style="margin-top:12px">
         <div>
           <h4 style="margin:0 0 8px;color:#c84638">🔥 Ruas com Maior Intensidade Térmica (Hotspots Viários)</h4>
-          <div class="table-wrap">${renderViaTable(osm.viasQuentes, true)}</div>
+          <div class="table-wrap">${renderViaTable(osm.viasQuentes)}</div>
         </div>
         <div>
           <h4 style="margin:0 0 8px;color:#1d817e">🌿 Ruas com Menor Intensidade Térmica (Corredores Amenizados)</h4>
-          <div class="table-wrap">${renderViaTable(osm.viasAmenas, false)}</div>
+          <div class="table-wrap">${renderViaTable(osm.viasAmenas)}</div>
         </div>
       </div>
     `;
@@ -3151,6 +3188,243 @@ function toggleReportLang() {
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SynapseSR_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
     setStatus('Relatório técnico expandido exportado com sucesso.');
+  };
+
+  const downloadAoiModalPng = async () => {
+    if (!aoiDetailed || !raster) return;
+
+    try {
+      const preview = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('Não foi possível carregar a prévia da AOI.'));
+        image.src = aoiDetailed.previewDataUrl;
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 1680;
+      canvas.height = 1160;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.fillStyle = '#071317';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Header
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '700 17px Arial, sans-serif';
+      ctx.fillText('SYNAPSE SR / LST EXPLORER  ·  DIAGNÓSTICO ESPACIAL', 54, 54);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 34px Arial, sans-serif';
+      ctx.fillText(`Análise da Área de Interesse (AOI) · ${aoiDetailed.shapeMode.toUpperCase()}`, 54, 102, 1560);
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '16px Arial, sans-serif';
+      ctx.fillText(
+        `${aoiDetailed.areaHa.toFixed(2)} ha  ·  ${aoiDetailed.areaM2.toFixed(0)} m²  ·  ${aoiDetailed.count.toLocaleString('pt-BR')} pixels válidos  ·  EPSG:${raster.epsg}`,
+        54,
+        142,
+      );
+
+      // Map preview panel
+      const mapX = 54;
+      const mapY = 190;
+      const mapW = 1030;
+      const mapH = 700;
+      ctx.fillStyle = '#0b1b22';
+      ctx.fillRect(mapX, mapY, mapW, mapH);
+      ctx.strokeStyle = 'rgba(121,226,220,0.5)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(mapX, mapY, mapW, mapH);
+      const scale = Math.min((mapW - 28) / preview.width, (mapH - 28) / preview.height);
+      const drawW = preview.width * scale;
+      const drawH = preview.height * scale;
+      const drawX = mapX + (mapW - drawW) / 2;
+      const drawY = mapY + (mapH - drawH) / 2;
+      ctx.drawImage(preview, drawX, drawY, drawW, drawH);
+
+      // Summary panel
+      const panelX = 1110;
+      const panelY = 190;
+      const panelW = 516;
+      const panelH = 700;
+      ctx.fillStyle = '#0b1b22';
+      ctx.fillRect(panelX, panelY, panelW, panelH);
+      ctx.strokeStyle = 'rgba(121,226,220,0.35)';
+      ctx.strokeRect(panelX, panelY, panelW, panelH);
+      ctx.fillStyle = '#ffb000';
+      ctx.font = '700 19px Arial, sans-serif';
+      ctx.fillText('RESUMO ESTATÍSTICO', panelX + 26, panelY + 42);
+
+      const metricCards = [
+        { label: 'MÍNIMA', value: `${aoiDetailed.min.toFixed(2)} °C`, color: '#38bdf8' },
+        { label: 'MÉDIA', value: `${aoiDetailed.mean.toFixed(2)} °C`, color: '#ffb000' },
+        { label: 'MEDIANA', value: `${aoiDetailed.q50.toFixed(2)} °C`, color: '#9cddda' },
+        { label: 'MÁXIMA', value: `${aoiDetailed.max.toFixed(2)} °C`, color: '#f43f5e' },
+      ];
+      metricCards.forEach((metric, index) => {
+        const col = index % 2;
+        const row = Math.floor(index / 2);
+        const mx = panelX + 24 + col * 236;
+        const my = panelY + 66 + row * 92;
+        ctx.fillStyle = 'rgba(255,255,255,0.055)';
+        ctx.fillRect(mx, my, 220, 76);
+        ctx.fillStyle = '#9ab0b5';
+        ctx.font = '700 12px Arial, sans-serif';
+        ctx.fillText(metric.label, mx + 13, my + 23);
+        ctx.fillStyle = metric.color;
+        ctx.font = '700 23px Arial, sans-serif';
+        ctx.fillText(metric.value, mx + 13, my + 55);
+      });
+
+      const extraY = panelY + 278;
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '700 15px Arial, sans-serif';
+      ctx.fillText('INDICADORES COMPLEMENTARES', panelX + 26, extraY);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '15px Arial, sans-serif';
+      ctx.fillText(`Desvio-padrão: ${aoiDetailed.stdDev.toFixed(2)} °C`, panelX + 26, extraY + 34);
+      ctx.fillText(`NDVI médio: ${aoiDetailed.ndviMean.toFixed(3)}`, panelX + 26, extraY + 62);
+      ctx.fillText(`NDBI médio: ${aoiDetailed.ndbiMean.toFixed(3)}`, panelX + 26, extraY + 90);
+      ctx.fillText(`Cobertura vegetal (NDVI > 0,3): ${aoiDetailed.vegPct.toFixed(1)}%`, panelX + 26, extraY + 118);
+      ctx.fillText(`Superfície construída (NDBI > 0,1): ${aoiDetailed.builtPct.toFixed(1)}%`, panelX + 26, extraY + 146);
+
+      const classY = extraY + 190;
+      ctx.fillStyle = '#ffb000';
+      ctx.font = '700 15px Arial, sans-serif';
+      ctx.fillText('DISTRIBUIÇÃO TÉRMICA (Z-SCORE)', panelX + 26, classY);
+      const classLabels = [
+        '1. Frescor', '2. Amenizado', '3. Neutro',
+        '4. UHI Moderada', '5. UHI Forte', '6. Hotspot Extremo',
+      ];
+      const classColors = ['#103e8a', '#2ba198', '#68c96e', '#f8d668', '#f47c30', '#d42026'];
+      classLabels.forEach((label, index) => {
+        const yy = classY + 31 + index * 34;
+        ctx.fillStyle = classColors[index];
+        ctx.fillRect(panelX + 28, yy - 12, 17, 17);
+        ctx.fillStyle = '#e8f4f2';
+        ctx.font = '13px Arial, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(label, panelX + 57, yy + 1);
+        ctx.textAlign = 'right';
+        ctx.font = '700 13px Arial, sans-serif';
+        ctx.fillText(`${aoiDetailed.uhiPcts[index].toFixed(1)}%  (${aoiDetailed.uhiCounts[index].toLocaleString('pt-BR')} px)`, panelX + panelW - 24, yy + 1);
+      });
+      ctx.textAlign = 'left';
+
+      // Thermal legend
+      const legY = 930;
+      ctx.fillStyle = '#0b1b22';
+      ctx.fillRect(54, legY, 1572, 174);
+      ctx.strokeStyle = 'rgba(121,226,220,0.35)';
+      ctx.strokeRect(54, legY, 1572, 174);
+      ctx.fillStyle = '#9cddda';
+      ctx.font = '700 17px Arial, sans-serif';
+      ctx.fillText(displayMode === 'uhi' ? 'LEGENDA · CLASSES UHI' : `LEGENDA · TEMPERATURA DE SUPERFÍCIE (°C · ${palette.toUpperCase()})`, 80, legY + 35);
+
+      if (displayMode === 'uhi') {
+        const classes = buildUhiClassLegendItems(raster.stats, 'zscore', 1.1);
+        const itemW = 1480 / classes.length;
+        classes.forEach((item, index) => {
+          const ix = 80 + index * itemW;
+          ctx.fillStyle = item.color;
+          ctx.fillRect(ix, legY + 55, itemW - 10, 35);
+          ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+          ctx.strokeRect(ix, legY + 55, itemW - 10, 35);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '700 13px Arial, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(item.shortPt, ix + (itemW - 10) / 2, legY + 112, itemW - 14);
+          ctx.fillStyle = '#ffb000';
+          ctx.font = '12px Arial, sans-serif';
+          ctx.fillText(`${item.tempRange} (${item.sigmaLabel})`, ix + (itemW - 10) / 2, legY + 137, itemW - 14);
+        });
+      } else {
+        const grad = ctx.createLinearGradient(80, legY + 72, 1600, legY + 72);
+        for (let step = 0; step <= 16; step += 1) {
+          grad.addColorStop(step / 16, sampleCssColorAt(step / 16, palette, draftCustomColors, false));
+        }
+        ctx.fillStyle = grad;
+        ctx.fillRect(80, legY + 56, 1520, 35);
+        ctx.strokeStyle = '#ffffff';
+        ctx.strokeRect(80, legY + 56, 1520, 35);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 14px Arial, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Mínima: ${aoiDetailed.min.toFixed(2)} °C`, 80, legY + 125);
+        ctx.textAlign = 'center';
+        ctx.fillText(`Média: ${aoiDetailed.mean.toFixed(2)} °C  ·  Mediana: ${aoiDetailed.q50.toFixed(2)} °C`, 840, legY + 125);
+        ctx.textAlign = 'right';
+        ctx.fillText(`Máxima: ${aoiDetailed.max.toFixed(2)} °C`, 1600, legY + 125);
+      }
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#78949b';
+      ctx.font = '11px Arial, sans-serif';
+      ctx.fillText('Synapse SR / LST Explorer · Valores calculados a partir dos pixels válidos contidos na AOI.', 54, 1138);
+
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/png');
+      link.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}-diagnostico.png`;
+      link.click();
+      setStatus('PNG da análise AOI exportado com legenda.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao exportar o PNG da AOI.';
+      setStatus(message);
+    }
+  };
+
+  const downloadAoiModalTiff = () => {
+    if (!aoiDetailed || !raster) return;
+    downloadFloat32Tiff(
+      aoiDetailed.clippedFloat32,
+      aoiDetailed.clipWidth,
+      aoiDetailed.clipHeight,
+      `SynapseSR-AOI-${aoiDetailed.shapeMode}-LST.tif`,
+      aoiDetailed.clipOrigin,
+      raster.resolution,
+      raster.epsg,
+      raster.isProjected,
+    );
+    setStatus('GeoTIFF LST recortado para a AOI exportado.');
+  };
+
+  const downloadAoiModalGeoJson = () => {
+    if (!aoiDetailed) return;
+    const ring: [number, number][] = [
+      ...aoiDetailed.vertices,
+      aoiDetailed.vertices[0],
+    ];
+    const geojson = {
+      type: 'FeatureCollection',
+      name: `SynapseSR-AOI-${aoiDetailed.shapeMode}`,
+      features: [{
+        type: 'Feature',
+        properties: {
+          shape: aoiDetailed.shapeMode,
+          valid_pixels: aoiDetailed.count,
+          area_m2: Number(aoiDetailed.areaM2.toFixed(2)),
+          area_ha: Number(aoiDetailed.areaHa.toFixed(4)),
+          lst_min_c: Number(aoiDetailed.min.toFixed(3)),
+          lst_max_c: Number(aoiDetailed.max.toFixed(3)),
+          lst_mean_c: Number(aoiDetailed.mean.toFixed(3)),
+          lst_median_c: Number(aoiDetailed.q50.toFixed(3)),
+          lst_stddev_c: Number(aoiDetailed.stdDev.toFixed(3)),
+          ndvi_mean: Number(aoiDetailed.ndviMean.toFixed(4)),
+          ndbi_mean: Number(aoiDetailed.ndbiMean.toFixed(4)),
+          vegetation_pct: Number(aoiDetailed.vegPct.toFixed(2)),
+          built_up_pct: Number(aoiDetailed.builtPct.toFixed(2)),
+          uhi_class_percentages: aoiDetailed.uhiPcts.map((value) => Number(value.toFixed(2))),
+        },
+        geometry: { type: 'Polygon', coordinates: [ring] },
+      }],
+    };
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.geojson`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus('GeoJSON da geometria e dos indicadores da AOI exportado.');
   };
 
   const downloadAoiModalKml = () => {
