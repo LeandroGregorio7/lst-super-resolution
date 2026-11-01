@@ -2973,12 +2973,19 @@ export default function App() {
   const downloadReport = async () => {
     if (!raster || !opticalCanvas.current) return;
     setStatus('Calculando matrizes numéricas, mapas LST/UHI e feições OpenStreetMap para o relatório…');
-    const osm = await fetchOsmUrbanFeatures(raster);
+    const osm = await fetchOsmUrbanFeatures(raster, aoi.length >= 3 ? aoi : undefined);
 
     const tempCanvas = document.createElement('canvas');
     renderPerceptualLstToCanvas(raster.data, raster.width, raster.height, tempCanvas, palette, customColors, raster.stats);
     const uhiCanvas = document.createElement('canvas');
     renderHighDefUhiToCanvas(raster.data, raster.width, raster.height, uhiCanvas, raster.stats, uhiMethod, uhiPower);
+
+    if (uhiSurfaceVisible && isotherms) {
+      const tCtx = tempCanvas.getContext('2d');
+      const uCtx = uhiCanvas.getContext('2d');
+      if (tCtx) drawIsothermsOnCanvas(tCtx, isotherms, raster.bounds, 0, 0, raster.width, raster.height);
+      if (uCtx) drawIsothermsOnCanvas(uCtx, isotherms, raster.bounds, 0, 0, raster.width, raster.height);
+    }
 
     const lstMapImg = renderMapWithFooterLegend(
       opticalCanvas.current, tempCanvas, opacity,
@@ -3057,12 +3064,26 @@ export default function App() {
     }).join('');
 
     const bairrosHtml = osm.bairros.length
-      ? `<table><thead><tr><th>Bairro / ID Real OSM</th><th>LST Média</th><th>Mediana / Máx</th><th>% Acima Limiar</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${osm.bairros.map((b) => `<tr><td><strong>${b.name}</strong> <code>${b.id}</code></td><td><b>${b.meanTemp.toFixed(2)} °C</b></td><td>${b.medianTemp.toFixed(2)} °C / ${b.maxTemp.toFixed(1)} °C</td><td>${b.hotPct.toFixed(1)}%</td><td>${b.ndvi.toFixed(3)} / ${b.ndbi.toFixed(3)}</td><td>Janela zonal 37×37 px (${b.samples} px)</td></tr>`).join('')}</tbody></table>`
+      ? `<table><thead><tr><th>Bairro / ID Real OSM</th><th>LST Média</th><th>Mediana / Máx</th><th>% Acima Limiar</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${osm.bairros.map((b: OsmFeatureStat) => `<tr><td><strong>${b.name}</strong> <code>${b.id}</code></td><td><b>${b.meanTemp.toFixed(2)} °C</b></td><td>${b.medianTemp.toFixed(2)} °C / ${b.maxTemp.toFixed(1)} °C</td><td>${b.hotPct.toFixed(1)}%</td><td>${b.ndvi.toFixed(3)} / ${b.ndbi.toFixed(3)}</td><td>Janela zonal 37×37 px (${b.samples} px)</td></tr>`).join('')}</tbody></table>`
       : `<div class="callout red"><strong>Bairros — Não calculado:</strong> Nenhuma feição retornada para esta extensão.</div>`;
 
-    const viasHtml = osm.vias.length
-      ? `<table><thead><tr><th>Ranking &amp; Rua / ID Real OSM</th><th>LST Média</th><th>LST Máxima</th><th>% em Classe Quente</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${osm.vias.map((v, i) => `<tr><td><strong>#${i + 1} · ${v.name}</strong> <code>${v.id}</code> (${v.highway})</td><td><b>${v.meanTemp.toFixed(2)} °C</b></td><td>${v.maxTemp.toFixed(1)} °C</td><td>${v.hotPct.toFixed(1)}%</td><td>${v.ndvi.toFixed(3)} / ${v.ndbi.toFixed(3)}</td><td>Interseção buffer 9×9 m (${v.samples} px)</td></tr>`).join('')}</tbody></table>`
-      : `<div class="callout red"><strong>Ruas — Não calculado:</strong> Nenhum segmento retornado na consulta atual.</div>`;
+    const renderViaTable = (list: OsmFeatureStat[], isHot: boolean) =>
+      list.length
+        ? `<table><thead><tr><th>Ranking &amp; Rua / ID Real OSM</th><th>LST Média</th><th>LST Máxima</th><th>% em Classe Quente</th><th>NDVI / NDBI</th><th>Operação Espacial</th></tr></thead><tbody>${list.map((v: OsmFeatureStat, i: number) => `<tr><td><strong>#${i + 1} · ${v.name}</strong> <code>${v.id}</code> (${v.highway})</td><td><b>${v.meanTemp.toFixed(2)} °C</b></td><td>${v.maxTemp.toFixed(1)} °C</td><td>${v.hotPct.toFixed(1)}%</td><td>${v.ndvi.toFixed(3)} / ${v.ndbi.toFixed(3)}</td><td>Interseção buffer 9×9 m (${v.samples} px)</td></tr>`).join('')}</tbody></table>`
+        : `<div class="callout red"><strong>Ruas — Não calculado:</strong> Nenhum segmento retornado na consulta atual.</div>`;
+
+    const viasHtml = `
+      <div class="two-col" style="margin-top:12px">
+        <div>
+          <h4 style="margin:0 0 8px;color:#c84638">🔥 Ruas com Maior Intensidade Térmica (Hotspots Viários)</h4>
+          <div class="table-wrap">${renderViaTable(osm.viasQuentes, true)}</div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 8px;color:#1d817e">🌿 Ruas com Menor Intensidade Térmica (Corredores Amenizados)</h4>
+          <div class="table-wrap">${renderViaTable(osm.viasAmenas, false)}</div>
+        </div>
+      </div>
+    `;
 
     const stationsHtml = stations.length
       ? `<table><thead><tr><th>Estação / Fonte</th><th>Horário Passagem</th><th>Estação 2m (Ta)</th><th>LST Média no Raio (${stationRadiusM}m)</th><th>Desvio Espacial (σ)</th><th>LST Pixel 2m</th><th>Diferença ΔT (Raio − Estação)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => `<tr><td><strong>${s.name}</strong> (${s.source})</td><td>${s.dateIso} · ${s.overpassTime}</td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b></td><td>±${s.radiusStdC.toFixed(2)} °C (${s.pixelCount} px)</td><td>${s.pixel1mC.toFixed(2)} °C</td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`).join('')}</tbody></table>`
@@ -3110,7 +3131,10 @@ export default function App() {
     <div class="bar-row"><div class="bar-label"><span>Solo exposto de transição / cobertura mista</span><b>${pct(mixed, specValid)}% (${ha(mixed)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(mixed, specValid)}%;background:#f1b64a"></div></div></div>
   </div></section>
   <section class="section"><div class="card"><h3>Validação com Estações em Terra (Raio de Representatividade: ${stationRadiusM} m)</h3><div class="table-wrap">${stationsHtml}</div></div></section>
-  <section class="section"><div class="card" style="margin-bottom:14px"><h3>Diagnóstico por Bairro (OSM)</h3><div class="table-wrap">${bairrosHtml}</div></div><div class="card"><h3>Ranking por Rua / Segmento Viário (OSM)</h3><div class="table-wrap">${viasHtml}</div></div></section>
+  <section class="section">
+    <div class="card" style="margin-bottom:14px"><h3>Diagnóstico por Bairro (OSM)</h3><div class="table-wrap">${bairrosHtml}</div></div>
+    <div class="card"><h3>Ranking por Rua / Segmento Viário (OSM)</h3><div class="table-wrap">${viasHtml}</div></div>
+  </section>
 </div><script>
 let lang = 'pt';
 function toggleReportLang() {
@@ -3128,71 +3152,6 @@ function toggleReportLang() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SynapseSR_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
     setStatus('Relatório técnico expandido exportado com sucesso.');
   };
-
-  const downloadAoiModalPng = async () => {
-    if (!aoiDetailed || !raster) return;
-    const im = new Image(); im.src = aoiDetailed.previewDataUrl;
-    await new Promise<void>((r) => { im.onload = () => r(); im.onerror = () => r(); });
-    const w = Math.max(680, im.width + 60);
-    const iH = Math.min(520, Math.max(240, Math.round(((w - 60) * im.height) / Math.max(1, im.width))));
-    const iW = Math.round((iH * im.width) / Math.max(1, im.height));
-    const c = document.createElement('canvas'); c.width = w; c.height = iH + 260;
-    const ctx = c.getContext('2d'); if (!ctx) return;
-    ctx.fillStyle = '#071317'; ctx.fillRect(0, 0, c.width, c.height);
-    ctx.fillStyle = '#ffb000'; ctx.font = '700 20px Arial';
-    ctx.fillText(`SYNAPSE SR · RECORTE AOI (${aoiDetailed.shapeMode.toUpperCase()}) · ${aoiDetailed.areaHa.toFixed(2)} ha`, 28, 36);
-    const ix = Math.round((w - iW) / 2);
-    ctx.drawImage(im, ix, 50, iW, iH);
-    ctx.strokeStyle = '#ffb000'; ctx.lineWidth = 2; ctx.strokeRect(ix, 50, iW, iH);
-    const fy = iH + 66;
-    ctx.fillStyle = '#0d1f26'; ctx.fillRect(24, fy, w - 48, 174);
-    ctx.strokeStyle = '#79e2dc'; ctx.strokeRect(24, fy, w - 48, 174);
-    ctx.fillStyle = '#fff'; ctx.font = '700 17px Arial';
-    ctx.fillText(`Mín: ${aoiDetailed.min.toFixed(1)}°C | Média: ${aoiDetailed.mean.toFixed(2)}°C | Mediana: ${aoiDetailed.q50.toFixed(2)}°C | Máx: ${aoiDetailed.max.toFixed(1)}°C | σ=${aoiDetailed.stdDev.toFixed(2)}°C`, 40, fy + 34);
-    ctx.fillStyle = '#9cddda'; ctx.font = '15px Arial';
-    ctx.fillText(`Pixels: ${aoiDetailed.count.toLocaleString('pt-BR')} (${aoiDetailed.areaM2.toFixed(0)} m²) · NDVI: ${aoiDetailed.ndviMean.toFixed(3)} · NDBI: ${aoiDetailed.ndbiMean.toFixed(3)}`, 40, fy + 64);
-    const grad = ctx.createLinearGradient(40, fy + 84, w - 40, fy + 84);
-    for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, draftCustomColors, displayMode === 'uhi'));
-    ctx.fillStyle = grad; ctx.fillRect(40, fy + 84, w - 80, 22);
-    if (displayMode === 'uhi') {
-      const uhiItems = buildUhiClassLegendItems(raster.stats, uhiMethod, uhiPower);
-      const segW = (w - 80) / uhiItems.length;
-      uhiItems.forEach((it, idx) => {
-        const cx = 40 + idx * segW + segW / 2;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#ffffff'; ctx.font = '700 11px Arial';
-        ctx.fillText(it.shortPt, cx, fy + 124, segW - 4);
-        ctx.fillStyle = '#fde047'; ctx.font = '700 11px Arial';
-        ctx.fillText(it.tempRange, cx, fy + 140, segW - 4);
-      });
-      ctx.textAlign = 'left';
-    }
-    const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.png`; a.click();
-  };
-
-  const downloadAoiModalTiff = () => {
-    if (!aoiDetailed || !raster) return;
-    downloadFloat32Tiff(aoiDetailed.clippedFloat32, aoiDetailed.clipWidth, aoiDetailed.clipHeight, `SynapseSR-AOI-${aoiDetailed.shapeMode}.tif`, aoiDetailed.clipOrigin, raster.resolution, raster.epsg, raster.isProjected);
-  };
-
-  const downloadAoiModalGeoJson = () => {
-    if (!aoiDetailed || !raster) return;
-    const ring = [...aoiDetailed.vertices, aoiDetailed.vertices[0]];
-    const gj = {
-      type: 'FeatureCollection',
-      features: [{
-        type: 'Feature',
-        properties: { shape: aoiDetailed.shapeMode, pixels: aoiDetailed.count, area_ha: Number(aoiDetailed.areaHa.toFixed(3)), lst_min: Number(aoiDetailed.min.toFixed(2)), lst_mean: Number(aoiDetailed.mean.toFixed(2)), lst_median: Number(aoiDetailed.q50.toFixed(2)), lst_max: Number(aoiDetailed.max.toFixed(2)) },
-        geometry: { type: 'Polygon', coordinates: [ring] },
-      }],
-    };
-    const b = new Blob([JSON.stringify(gj, null, 2)], { type: 'application/geo+json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-AOI-${aoiDetailed.shapeMode}.geojson`; a.click(); URL.revokeObjectURL(a.href);
-  };
-
-  const downloadAoiModalKml = () => {
-    if (!aoiDetailed || !raster) return;
-    let minLng = Infinity; let maxLng = -Infinity; let minLat = Infinity; let maxLat = -Infinity;
     for (const [lng, lat] of aoiDetailed.vertices) {
       if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
       if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
