@@ -1952,54 +1952,851 @@ function paletteGradient(palette: string, customColors: string[]) {
   return `linear-gradient(90deg, ${pts.join(', ')})`;
 }
 
-const drawIsothermsOnCanvas = (
-    ctx: CanvasRenderingContext2D,
-    isoCollection: IsothermCollection | null,
-    bounds: RasterBounds,
-    imgX: number,
-    imgY: number,
-    imgW: number,
-    imgH: number,
-  ) => {
-    if (!isoCollection || !isoCollection.features.length) return;
-    const ext = boundsExtent(bounds);
-    const spanLng = Math.max(1e-6, ext.east - ext.west);
-    const spanLat = Math.max(1e-6, ext.north - ext.south);
-    const scale = Math.max(1, Math.min(imgW, imgH) / 650);
+function drawIsothermsOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  isoCollection: IsothermCollection | null,
+  bounds: RasterBounds,
+  imgX: number,
+  imgY: number,
+  imgW: number,
+  imgH: number,
+) {
+  if (!isoCollection || !isoCollection.features.length) return;
+  const ext = boundsExtent(bounds);
+  const spanLng = Math.max(1e-6, ext.east - ext.west);
+  const spanLat = Math.max(1e-6, ext.north - ext.south);
+  const scale = Math.max(1, Math.min(imgW, imgH) / 650);
 
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(imgX, imgY, imgW, imgH);
-    ctx.clip();
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(imgX, imgY, imgW, imgH);
+  ctx.clip();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
 
-    for (const feat of isoCollection.features) {
-      for (const seg of feat.geometry.coordinates) {
-        if (seg.length < 2) continue;
-        ctx.beginPath();
-        seg.forEach(([lng, lat], idx) => {
-          const px = imgX + ((lng - ext.west) / spanLng) * imgW;
-          const py = imgY + ((ext.north - lat) / spanLat) * imgH;
-          if (idx === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        });
-        ctx.strokeStyle = 'rgba(6, 16, 20, 0.88)';
-        ctx.lineWidth = 3.6 * scale;
-        ctx.stroke();
+  for (const feat of isoCollection.features) {
+    for (const seg of feat.geometry.coordinates) {
+      if (seg.length < 2) continue;
+      ctx.beginPath();
+      seg.forEach(([lng, lat], idx) => {
+        const px = imgX + ((lng - ext.west) / spanLng) * imgW;
+        const py = imgY + ((ext.north - lat) / spanLat) * imgH;
+        if (idx === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.strokeStyle = 'rgba(6, 16, 20, 0.88)';
+      ctx.lineWidth = 3.6 * scale;
+      ctx.stroke();
 
-        ctx.strokeStyle = feat.properties.color;
-        ctx.lineWidth = 2.0 * scale;
-        ctx.stroke();
+      ctx.strokeStyle = feat.properties.color;
+      ctx.lineWidth = 2.0 * scale;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+async function fetchOsmUrbanFeatures(
+  raster: RasterState,
+  aoiPolygon?: [number, number][],
+): Promise<{ bairros: OsmFeatureStat[]; viasQuentes: OsmFeatureStat[]; viasAmenas: OsmFeatureStat[] }> {
+  const ext = boundsExtent(raster.bounds);
+  const hotspotLim = raster.stats.mean + 0.85 * raster.stats.stdDev;
+  const hasAoi = Array.isArray(aoiPolygon) && aoiPolygon.length >= 3;
+
+  const isInsideValidPolygon = (lng: number, lat: number): number | null => {
+    if (lng < ext.west || lng > ext.east || lat < ext.south || lat > ext.north) return null;
+    if (hasAoi && !pointInPolygon([lng, lat], aoiPolygon!)) return null;
+    const x = Math.floor(((lng - ext.west) / (ext.east - ext.west)) * raster.width);
+    const y = Math.floor(((ext.north - lat) / (ext.north - ext.south)) * raster.height);
+    if (x < 0 || y < 0 || x >= raster.width || y >= raster.height) return null;
+    const idx = y * raster.width + x;
+    return Number.isFinite(raster.data[idx]) ? idx : null;
+  };
+
+  const sampleWindowAt = (lng: number, lat: number, radiusPx: number) => {
+    const centerIdx = isInsideValidPolygon(lng, lat);
+    if (centerIdx === null) return null;
+    const cx = centerIdx % raster.width;
+    const cy = Math.floor(centerIdx / raster.width);
+    const vals: number[] = [];
+    let sumT = 0; let maxT = -Infinity; let sumV = 0; let sumB = 0; let hot = 0;
+    for (let ky = -radiusPx; ky <= radiusPx; ky += 1) {
+      for (let kx = -radiusPx; kx <= radiusPx; kx += 1) {
+        const nx = cx + kx; const ny = cy + ky;
+        if (nx < 0 || ny < 0 || nx >= raster.width || ny >= raster.height) continue;
+        const idx = ny * raster.width + nx;
+        const t = raster.data[idx];
+        if (Number.isFinite(t)) {
+          vals.push(t); sumT += t;
+          if (t > maxT) maxT = t;
+          if (t >= hotspotLim) hot += 1;
+          sumV += Number.isFinite(raster.ndvi[idx]) ? raster.ndvi[idx] : 0;
+          sumB += Number.isFinite(raster.ndbi[idx]) ? raster.ndbi[idx] : 0;
+        }
       }
     }
-    ctx.restore();
+    if (!vals.length) return null;
+    vals.sort((a, b) => a - b);
+    return {
+      meanTemp: sumT / vals.length,
+      medianTemp: vals[Math.floor(vals.length * 0.5)],
+      maxTemp: maxT,
+      ndvi: sumV / vals.length,
+      ndbi: sumB / vals.length,
+      hotPct: (hot / vals.length) * 100,
+      samples: vals.length,
+    };
+  };
+
+  const bairrosMap = new Map<string, OsmFeatureStat>();
+  const viasAgg = new Map<string, { id: string; name: string; highway: string; vals: number[]; sumT: number; maxT: number; sumV: number; sumB: number; hot: number }>();
+
+  const query = `[out:json][timeout:20];(node["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east});way["highway"~"^(primary|secondary|tertiary|trunk|residential|living_street|unclassified|pedestrian)$"]["name"](${ext.south},${ext.west},${ext.north},${ext.east}););out body geom 350;`;
+
+  const endpoints = [
+    'https://overpass-api.de/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const resp = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`);
+      if (!resp.ok) continue;
+      const json = (await resp.json()) as { elements?: any[] };
+      if (!json.elements?.length) continue;
+
+      for (const el of json.elements) {
+        const name = el.tags?.name?.trim();
+        if (!name) continue;
+        const id = `${el.type}/${el.id}`;
+
+        if (el.tags?.place) {
+          const lat = el.lat ?? el.center?.lat ?? el.geometry?.[0]?.lat;
+          const lon = el.lon ?? el.center?.lon ?? el.geometry?.[0]?.lon;
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          const s = sampleWindowAt(lon, lat, 18);
+          if (s && !bairrosMap.has(name)) {
+            bairrosMap.set(name, { id, name, kind: 'Bairro', ...s });
+          }
+        } else if (el.tags?.highway && Array.isArray(el.geometry) && el.geometry.length >= 2) {
+          let entry = viasAgg.get(name);
+          if (!entry) {
+            entry = { id, name, highway: el.tags.highway, vals: [], sumT: 0, maxT: -Infinity, sumV: 0, sumB: 0, hot: 0 };
+            viasAgg.set(name, entry);
+          }
+          for (let i = 0; i < el.geometry.length - 1; i += 1) {
+            const p1 = el.geometry[i]; const p2 = el.geometry[i + 1];
+            const steps = Math.max(3, Math.ceil(Math.hypot(p2.lon - p1.lon, p2.lat - p1.lat) * 111320 / 4));
+            for (let k = 0; k <= steps; k += 1) {
+              const tRatio = k / steps;
+              const lon = p1.lon + (p2.lon - p1.lon) * tRatio;
+              const lat = p1.lat + (p2.lat - p1.lat) * tRatio;
+              const idx = isInsideValidPolygon(lon, lat);
+              if (idx === null) continue;
+              const temp = raster.data[idx];
+              entry.vals.push(temp);
+              entry.sumT += temp;
+              if (temp > entry.maxT) entry.maxT = temp;
+              if (temp >= hotspotLim) entry.hot += 1;
+              entry.sumV += Number.isFinite(raster.ndvi[idx]) ? raster.ndvi[idx] : 0;
+              entry.sumB += Number.isFinite(raster.ndbi[idx]) ? raster.ndbi[idx] : 0;
+            }
+          }
+        }
+      }
+      break;
+    } catch { /* tenta próximo endpoint */ }
+  }
+
+  const allVias: OsmFeatureStat[] = [];
+  for (const v of viasAgg.values()) {
+    if (v.vals.length < 4) continue;
+    v.vals.sort((a, b) => a - b);
+    allVias.push({
+      id: v.id,
+      name: v.name,
+      kind: 'Via',
+      highway: v.highway,
+      meanTemp: v.sumT / v.vals.length,
+      medianTemp: v.vals[Math.floor(v.vals.length * 0.5)],
+      maxTemp: v.maxT,
+      ndvi: v.sumV / v.vals.length,
+      ndbi: v.sumB / v.vals.length,
+      hotPct: (v.hot / v.vals.length) * 100,
+      samples: v.vals.length,
+    });
+  }
+
+  const sortedHot = [...allVias].sort((a, b) => b.meanTemp - a.meanTemp);
+  const sortedCool = [...allVias].sort((a, b) => a.meanTemp - b.meanTemp);
+
+  return {
+    bairros: [...bairrosMap.values()].sort((a, b) => b.meanTemp - a.meanTemp).slice(0, 12),
+    viasQuentes: sortedHot.slice(0, 10),
+    viasAmenas: sortedCool.slice(0, 10),
+  };
+}
+
+function renderMapWithFooterLegend(
+  baseOptical: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, opacity: number,
+  title: string, isUhi: boolean, stats: RasterStats, palette: string, customColors: string[],
+  uhiMethod: UhiClusterMethod = 'zscore', uhiPower = 1.1,
+): string {
+  const w = overlayCanvas.width; const h = overlayCanvas.height;
+  const legH = isUhi ? Math.max(195, Math.round(h * 0.175)) : Math.max(155, Math.round(h * 0.145));
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h + legH;
+  const ctx = out.getContext('2d');
+  if (!ctx) return '';
+  ctx.fillStyle = '#0f2238'; ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(baseOptical, 0, 0, w, h);
+  ctx.globalAlpha = opacity; ctx.drawImage(overlayCanvas, 0, 0, w, h); ctx.globalAlpha = 1;
+
+  const pad = Math.max(22, Math.round(w * 0.03));
+  const barW = w - pad * 2;
+  ctx.strokeStyle = 'rgba(156,221,218,0.4)'; ctx.lineWidth = 2;
+  ctx.strokeRect(pad * 0.5, h + 8, w - pad, legH - 16);
+  ctx.fillStyle = '#9cddda';
+  ctx.font = `700 ${Math.max(14, Math.round(w * 0.0145))}px Inter, Arial, sans-serif`;
+  ctx.fillText(title, pad, h + Math.round(legH * 0.23), barW);
+
+  const barY = h + Math.round(legH * 0.34);
+  const barH = Math.max(22, Math.round(legH * 0.20));
+  const fSub = Math.max(12, Math.round(w * 0.0115));
+
+  if (!isUhi) {
+    const grad = ctx.createLinearGradient(pad, barY, pad + barW, barY);
+    for (let s = 0; s <= 16; s += 1) grad.addColorStop(s / 16, sampleCssColorAt(s / 16, palette, customColors, false));
+    ctx.fillStyle = grad; ctx.fillRect(pad, barY, barW, barH);
+    ctx.strokeStyle = '#fff'; ctx.strokeRect(pad, barY, barW, barH);
+    ctx.fillStyle = '#fff'; ctx.font = `700 ${fSub}px Inter, Arial, sans-serif`;
+    const ly = barY + barH + Math.round(legH * 0.22);
+    ctx.textAlign = 'left'; ctx.fillText(`Mín: ${stats.min.toFixed(1)} °C`, pad, ly);
+    ctx.textAlign = 'center';
+    ctx.fillText(`Q25: ${stats.q25.toFixed(1)} °C`, pad + barW * 0.25, ly);
+    ctx.fillText(`Mediana: ${stats.q50.toFixed(1)} °C | Média: ${stats.mean.toFixed(1)} °C (σ=${stats.stdDev.toFixed(2)}°C)`, pad + barW * 0.5, ly);
+    ctx.fillText(`Q75: ${stats.q75.toFixed(1)} °C`, pad + barW * 0.75, ly);
+    ctx.textAlign = 'right'; ctx.fillText(`Máx: ${stats.max.toFixed(1)} °C`, pad + barW, ly);
+    ctx.textAlign = 'left';
+  } else {
+    const cls = buildUhiClassLegendItems(stats, uhiMethod, uhiPower);
+    const segW = barW / cls.length;
+    const fTitle = Math.max(11, Math.min(16, Math.round(segW * 0.11)));
+    const fTemp = Math.max(10, Math.min(14, Math.round(segW * 0.095)));
+    cls.forEach((it, idx) => {
+      const x = pad + idx * segW;
+      const boxW = segW - 6;
+      const centerX = x + boxW / 2;
+      ctx.fillStyle = it.color;
+      ctx.fillRect(x, barY, boxW, barH);
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.strokeRect(x, barY, boxW, barH);
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `700 ${fTitle}px Inter, Arial, sans-serif`;
+      ctx.fillText(it.shortPt, centerX, barY + barH + Math.round(legH * 0.15), boxW - 6);
+
+      ctx.fillStyle = '#fde047';
+      ctx.font = `700 ${fTemp}px Inter, Arial, sans-serif`;
+      ctx.fillText(it.tempRange, centerX, barY + barH + Math.round(legH * 0.26), boxW - 6);
+
+      ctx.fillStyle = '#9cddda';
+      ctx.font = `600 ${Math.max(9, fTemp - 1)}px Inter, Arial, sans-serif`;
+      ctx.fillText(`(${it.sigmaLabel})`, centerX, barY + barH + Math.round(legH * 0.36), boxW - 6);
+    });
+    ctx.textAlign = 'left';
+  }
+  return out.toDataURL('image/webp', 0.92);
+}
+
+export default function App() {
+  const [lang, setLang] = useState<Lang>(() => (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en'));
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('lst-theme') as Theme) || 'dark');
+  const [provider, setProvider] = useState<Provider>('osm');
+  const [raster, setRaster] = useState<RasterState | null>(null);
+  const [lstUrl, setLstUrl] = useState<string | null>(null);
+  const [opticalUrl, setOpticalUrl] = useState<string | null>(null);
+  const [visibleLst, setVisibleLst] = useState(true);
+  const [visibleOptical, setVisibleOptical] = useState(true);
+  const [opacity, setOpacity] = useState(0.96);
+  const [contrast, setContrast] = useState(0);
+  const [palette, setPalette] = useState<PaletteType>('ironbow');
+  const [customColors, setCustomColors] = useState<string[]>(DEFAULT_CUSTOM_COLORS);
+  const [draftCustomColors, setDraftCustomColors] = useState<string[]>(DEFAULT_CUSTOM_COLORS);
+  const [displayMode, setDisplayMode] = useState<'temperature' | 'uhi'>('temperature');
+  const [uhiMethod, setUhiMethod] = useState<UhiClusterMethod>('zscore');
+  const [uhiPower, setUhiPower] = useState(1.10);
+  const [file, setFile] = useState<File | null>(null);
+  const [bandCount, setBandCount] = useState(3);
+  const [bandLabels, setBandLabels] = useState<string[]>([]);
+  const [bands, setBands] = useState(['0', '1', '2']);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [processingLog, setProcessingLog] = useState<Array<{ time: string; message: string; level: 'info' | 'success' | 'error' }>>([]);
+  const [sample, setSample] = useState<InspectPoint | null>(null);
+  const [hoverSample, setHoverSample] = useState<InspectPoint | null>(null);
+  const [identifyMode, setIdentifyMode] = useState(false);
+  const [panEnabled, setPanEnabled] = useState(true);
+  const [showMethod, setShowMethod] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showMeta, setShowMeta] = useState(false);
+  const [showLimits, setShowLimits] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(() => sessionStorage.getItem('synapse-sr-tutorial-seen') !== '1');
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [showSearch, setShowSearch] = useState(true);
+  const [aoi, setAoi] = useState<[number, number][]>([]);
+  const [drawAoi, setDrawAoi] = useState(false);
+  const [aoiStats, setAoiStats] = useState<{ count: number; min: number; max: number; mean: number } | null>(null);
+  const [aoiShapeMode, setAoiShapeMode] = useState<AoiShapeMode>('rectangle');
+  const [aoiAnchor, setAoiAnchor] = useState<[number, number] | null>(null);
+  const [aoiCursorPt, setAoiCursorPt] = useState<[number, number] | null>(null);
+  const [aoiDetailed, setAoiDetailed] = useState<AoiDetailedStats | null>(null);
+  const [showAoiModal, setShowAoiModal] = useState(false);
+
+  const [stationRadiusM, setStationRadiusM] = useState<number>(100);
+  const [stations, setStations] = useState<StationValidationPoint[]>([]);
+  const [stationsBusy, setStationsBusy] = useState(false);
+  const [showStationsLayer, setShowStationsLayer] = useState(true);
+  const [showStationModal, setShowStationModal] = useState(false);
+
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [coordText, setCoordText] = useState('');
+  const [comparisonCount, setComparisonCount] = useState(2);
+  const [comparisonFiles, setComparisonFiles] = useState<(File | null)[]>([null, null]);
+  const [comparisonImages, setComparisonImages] = useState<ComparisonImage[]>([]);
+  const [comparisonMode, setComparisonMode] = useState<'difference' | 'secondary' | 'main'>('difference');
+  const [differenceReady, setDifferenceReady] = useState(false);
+  const [swipeActive, setSwipeActive] = useState(false);
+  const [swipePosition, setSwipePosition] = useState(50);
+  const [uhiSurface, setUhiSurface] = useState<UhiSurface | null>(null);
+  const [isotherms, setIsotherms] = useState<IsothermCollection | null>(null);
+  const [uhiSurfaceVisible, setUhiSurfaceVisible] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(390);
+
+  const resizing = useRef(false);
+  const curtainDragging = useRef(false);
+  const curtainMapRef = useRef<MapLibreMap | null>(null);
+  const curtainContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<MapLibreMap | null>(null);
+  const lastFittedKey = useRef<string>('');
+  const lstCanvas = useRef<HTMLCanvasElement | null>(null);
+  const opticalCanvas = useRef<HTMLCanvasElement | null>(null);
+
+  const t = copy[lang];
+  const extent = useMemo(() => (raster ? boundsExtent(raster.bounds) : null), [raster]);
+  const comparisonPrimary = comparisonImages[0] ?? null;
+  const comparisonSecondary = comparisonImages[1] ?? null;
+  const showingComparison = differenceReady && comparisonMode !== 'main';
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCustomColors(draftCustomColors), 140);
+    return () => window.clearTimeout(timer);
+  }, [draftCustomColors]);
+
+  const differenceRender = useMemo(() => {
+    if (!comparisonPrimary || !comparisonSecondary || !differenceReady) return null;
+    const data = thermalDifference(comparisonPrimary, comparisonSecondary);
+    const canvas = document.createElement('canvas');
+    const stats = renderDifferenceToCanvas(data, comparisonPrimary.data, comparisonPrimary.width, comparisonPrimary.height, canvas);
+    return stats ? { url: canvas.toDataURL('image/png'), stats, data } : null;
+  }, [comparisonPrimary, comparisonSecondary, differenceReady]);
+
+  const mapClickMode = useRef({
+    drawAoi: false, aoiShapeMode: 'rectangle' as AoiShapeMode, aoiAnchor: null as [number, number] | null,
+    raster: null as RasterState | null, extent: null as ReturnType<typeof boundsExtent> | null,
+    identifyMode: false, comparisonPrimary: null as ComparisonImage | null,
+    comparisonSecondary: null as ComparisonImage | null, differenceData: null as Float32Array | null,
+    showingComparison: false,
+  });
+
+  const uhiGradient = 'linear-gradient(90deg, #103e8a, #187a8c, #3aae6c, #bade76, #f8d668, #f47c30, #d42026, #fff4b8)';
+  const legendGradient = displayMode === 'uhi' ? uhiGradient : paletteGradient(palette, draftCustomColors);
+  const differenceStats = differenceRender?.stats ?? null;
+
+  useEffect(() => { localStorage.setItem('lst-theme', theme); document.documentElement.dataset.theme = theme; }, [theme]);
+
+  useEffect(() => {
+    mapClickMode.current = {
+      drawAoi, aoiShapeMode, aoiAnchor, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary,
+      differenceData: differenceRender?.data ?? null, showingComparison,
+    };
+  }, [drawAoi, aoiShapeMode, aoiAnchor, raster, extent, identifyMode, comparisonPrimary, comparisonSecondary, differenceRender, showingComparison]);
+
+  useEffect(() => {
+    const onMove = (ev: PointerEvent) => {
+      if (resizing.current) {
+        setPanelWidth(Math.max(330, Math.min(560, window.innerWidth - ev.clientX)));
+        mapInstance.current?.resize();
+      }
+      if (curtainDragging.current) {
+        const stage = document.querySelector('.map-stage') as HTMLElement | null;
+        if (stage) {
+          const rect = stage.getBoundingClientRect();
+          setSwipePosition(Math.max(0, Math.min(100, ((ev.clientX - rect.left) / rect.width) * 100)));
+        }
+      }
+    };
+    const onUp = () => {
+      resizing.current = false; curtainDragging.current = false;
+      document.body.classList.remove('is-resizing', 'is-curtain-dragging');
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mapRef.current || mapInstance.current) return;
+    const map = new maplibregl.Map({
+      container: mapRef.current,
+      style: { version: 8, sources: { basemap: { type: 'raster', tiles: [TILE_URLS.osm], tileSize: 256, attribution: '© OpenStreetMap' } }, layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }] },
+      center: [-46.63, -23.55], zoom: 4, attributionControl: false,
+    });
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+
+    const ro = new ResizeObserver(() => map.resize());
+    ro.observe(mapRef.current);
+
+    const inspectAt = (event: maplibregl.MapMouseEvent, commit: boolean) => {
+      const m = mapClickMode.current;
+      if (m.showingComparison && m.comparisonPrimary && m.comparisonSecondary && m.differenceData) {
+        const pE = boundsExtent(m.comparisonPrimary.bounds); const sE = boundsExtent(m.comparisonSecondary.bounds);
+        const px = Math.floor(((event.lngLat.lng - pE.west) / (pE.east - pE.west)) * m.comparisonPrimary.width);
+        const py = Math.floor(((pE.north - event.lngLat.lat) / (pE.north - pE.south)) * m.comparisonPrimary.height);
+        const sx = Math.floor(((event.lngLat.lng - sE.west) / (sE.east - sE.west)) * m.comparisonSecondary.width);
+        const sy = Math.floor(((sE.north - event.lngLat.lat) / (sE.north - sE.south)) * m.comparisonSecondary.height);
+        if (px >= 0 && py >= 0 && px < m.comparisonPrimary.width && py < m.comparisonPrimary.height) {
+          const i1 = py * m.comparisonPrimary.width + px;
+          const t1 = m.comparisonPrimary.data[i1];
+          const t2 = sx >= 0 && sy >= 0 && sx < m.comparisonSecondary.width && sy < m.comparisonSecondary.height ? m.comparisonSecondary.data[sy * m.comparisonSecondary.width + sx] : NaN;
+          const d = m.differenceData[i1];
+          if (Number.isFinite(t1) || Number.isFinite(d)) {
+            const pt: InspectPoint = { temp: Number.isFinite(t2) ? t2 : t1, lng: event.lngLat.lng, lat: event.lngLat.lat, beforeTemp: Number.isFinite(t1) ? t1 : undefined, afterTemp: Number.isFinite(t2) ? t2 : undefined, diffTemp: Number.isFinite(d) ? d : undefined };
+            if (commit) setSample(pt); else if (m.identifyMode) setHoverSample(pt);
+            return;
+          }
+        }
+      }
+      if (!m.raster || !m.extent) return;
+      const x = Math.floor(((event.lngLat.lng - m.extent.west) / (m.extent.east - m.extent.west)) * m.raster.width);
+      const y = Math.floor(((m.extent.north - event.lngLat.lat) / (m.extent.north - m.extent.south)) * m.raster.height);
+      if (x >= 0 && y >= 0 && x < m.raster.width && y < m.raster.height) {
+        const temp = m.raster.data[y * m.raster.width + x];
+        if (Number.isFinite(temp)) {
+          const pt: InspectPoint = { temp, lng: event.lngLat.lng, lat: event.lngLat.lat };
+          if (commit) setSample(pt); else if (m.identifyMode) setHoverSample(pt);
+        }
+      }
+    };
+
+    map.on('click', (ev) => {
+      const m = mapClickMode.current;
+      if (m.drawAoi) {
+        ev.preventDefault();
+        const pt: [number, number] = [ev.lngLat.lng, ev.lngLat.lat];
+        if (m.aoiShapeMode === 'polygon') {
+          setAoi((p) => [...p, pt]);
+          setAoiCursorPt(pt);
+        } else if (!m.aoiAnchor) {
+          setAoiAnchor(pt);
+          setAoiCursorPt(pt);
+          setAoi([pt]);
+        } else {
+          const poly = buildShapeVertices(m.aoiShapeMode, m.aoiAnchor, pt);
+          setAoi(poly);
+          setAoiAnchor(null);
+          setAoiCursorPt(null);
+          setDrawAoi(false);
+          setPanEnabled(true);
+          map.dragPan.enable(); map.scrollZoom.enable(); map.doubleClickZoom.enable();
+          if (m.raster) {
+            const det = analyzeAoiDetailed(m.raster, poly, m.aoiShapeMode, opticalCanvas.current, lstCanvas.current, 0.94);
+            if (det) {
+              setAoiDetailed(det);
+              setAoiStats({ count: det.count, min: det.min, max: det.max, mean: det.mean });
+              setShowAoiModal(true);
+            }
+          }
+        }
+        return;
+      }
+      inspectAt(ev, true);
+    });
+
+    map.on('dblclick', (ev) => {
+      const m = mapClickMode.current;
+      if (!m.drawAoi) return;
+      ev.preventDefault();
+      setAoi((p) => {
+        const cl = p.length > 1 && Math.abs(p[p.length - 1][0] - ev.lngLat.lng) < 1e-7 && Math.abs(p[p.length - 1][1] - ev.lngLat.lat) < 1e-7 ? p.slice(0, -1) : p;
+        if (cl.length >= 3) {
+          setDrawAoi(false); setAoiCursorPt(null); setPanEnabled(true);
+          map.dragPan.enable(); map.doubleClickZoom.enable(); map.scrollZoom.enable(); map.touchZoomRotate.enable();
+          if (m.raster) {
+            const det = analyzeAoiDetailed(m.raster, cl, m.aoiShapeMode, opticalCanvas.current, lstCanvas.current, 0.94);
+            if (det) {
+              setAoiDetailed(det);
+              setAoiStats({ count: det.count, min: det.min, max: det.max, mean: det.mean });
+              setShowAoiModal(true);
+            }
+          }
+        }
+        return cl;
+      });
+    });
+
+    let hf = 0;
+    map.on('mousemove', (ev) => {
+      const m = mapClickMode.current;
+      if (m.drawAoi) {
+        if (!hf) {
+          hf = requestAnimationFrame(() => {
+            const cur: [number, number] = [ev.lngLat.lng, ev.lngLat.lat];
+            setAoiCursorPt(cur);
+            if (m.aoiShapeMode !== 'polygon' && m.aoiAnchor) {
+              setAoi(buildShapeVertices(m.aoiShapeMode, m.aoiAnchor, cur));
+            }
+            hf = 0;
+          });
+        }
+        return;
+      }
+      if (m.identifyMode && !hf) {
+        hf = requestAnimationFrame(() => { inspectAt(ev, false); hf = 0; });
+      }
+    });
+
+    map.on('dragstart', () => setHoverSample(null));
+    map.dragPan.enable(); mapInstance.current = map;
+    return () => { ro.disconnect(); map.remove(); mapInstance.current = null; };
+  }, []);
+
+  const syncLayers = useCallback(() => {
+    const map = mapInstance.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const addOrUpdate = (id: string, url: string, coordinates: RasterBounds) => {
+      const ex = map.getSource(id) as any;
+      if (ex) ex.updateImage({ url, coordinates }); else map.addSource(id, { type: 'image', url, coordinates });
+    };
+    if (raster && lstUrl && opticalUrl) {
+      addOrUpdate('optical-raster', opticalUrl, raster.bounds);
+      addOrUpdate('lst-raster', lstUrl, raster.bounds);
+      if (!map.getLayer('optical-layer')) map.addLayer({ id: 'optical-layer', type: 'raster', source: 'optical-raster', paint: { 'raster-opacity': 1 } });
+      if (!map.getLayer('lst-layer')) map.addLayer({ id: 'lst-layer', type: 'raster', source: 'lst-raster', paint: { 'raster-opacity': opacity, 'raster-contrast': contrast } });
+    }
+    if (comparisonPrimary && comparisonSecondary && showingComparison) {
+      addOrUpdate('comparison-primary-raster', comparisonPrimary.lstUrl, comparisonPrimary.bounds);
+      addOrUpdate('comparison-lst-raster', comparisonSecondary.lstUrl, comparisonSecondary.bounds);
+      if (!map.getLayer('comparison-primary-layer')) map.addLayer({ id: 'comparison-primary-layer', type: 'raster', source: 'comparison-primary-raster', paint: { 'raster-opacity': 1 } });
+      if (!map.getLayer('comparison-lst-layer')) map.addLayer({ id: 'comparison-lst-layer', type: 'raster', source: 'comparison-lst-raster', paint: { 'raster-opacity': 0.95 } });
+      if (differenceRender) addOrUpdate('comparison-difference-raster', differenceRender.url, comparisonPrimary.bounds);
+      if (!map.getLayer('comparison-difference-layer')) map.addLayer({ id: 'comparison-difference-layer', type: 'raster', source: 'comparison-difference-raster', paint: { 'raster-opacity': 0.94 } });
+      map.setLayoutProperty('comparison-primary-layer', 'visibility', swipeActive ? 'visible' : 'none');
+      map.setLayoutProperty('comparison-lst-layer', 'visibility', !swipeActive && comparisonMode === 'secondary' ? 'visible' : 'none');
+      map.setLayoutProperty('comparison-difference-layer', 'visibility', comparisonMode === 'difference' && !swipeActive ? 'visible' : 'none');
+    } else {
+      for (const id of ['comparison-primary-layer', 'comparison-lst-layer', 'comparison-difference-layer']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+    }
+    if (map.getLayer('lst-layer')) {
+      map.setLayoutProperty('lst-layer', 'visibility', visibleLst && !showingComparison ? 'visible' : 'none');
+      map.setPaintProperty('lst-layer', 'raster-opacity', opacity); map.setPaintProperty('lst-layer', 'raster-contrast', contrast);
+    }
+    if (map.getLayer('optical-layer')) map.setLayoutProperty('optical-layer', 'visibility', visibleOptical && !showingComparison ? 'visible' : 'none');
+
+    bringOverlaysToFront(map);
+  }, [comparisonMode, comparisonPrimary, comparisonSecondary, contrast, differenceRender, lstUrl, opacity, opticalUrl, raster, showingComparison, swipeActive, visibleLst, visibleOptical]);
+
+  useEffect(() => {
+    const container = curtainContainerRef.current; const main = mapInstance.current;
+    if (!container || !main || !swipeActive || !comparisonSecondary || !showingComparison) {
+      curtainMapRef.current?.remove(); curtainMapRef.current = null; return;
+    }
+    const curtainMap = new maplibregl.Map({
+      container, style: { version: 8, sources: {}, layers: [] },
+      center: main.getCenter(), zoom: main.getZoom(), bearing: main.getBearing(), pitch: main.getPitch(),
+      interactive: false, attributionControl: false,
+    });
+    const syncCam = () => curtainMap.jumpTo({ center: main.getCenter(), zoom: main.getZoom(), bearing: main.getBearing(), pitch: main.getPitch() });
+    curtainMap.on('load', () => {
+      curtainMap.resize();
+      curtainMap.addSource('curtain-secondary-raster', { type: 'image', url: comparisonSecondary.lstUrl, coordinates: comparisonSecondary.bounds });
+      curtainMap.addLayer({ id: 'curtain-secondary-layer', type: 'raster', source: 'curtain-secondary-raster', paint: { 'raster-opacity': 1 } });
+      syncCam();
+    });
+    main.on('move', syncCam); curtainMapRef.current = curtainMap;
+    return () => { main.off('move', syncCam); curtainMap.remove(); curtainMapRef.current = null; };
+  }, [comparisonSecondary, showingComparison, swipeActive]);
+
+  useEffect(() => { const s = mapInstance.current?.getSource('basemap') as any; if (s?.setTiles) s.setTiles([TILE_URLS[provider]]); }, [provider]);
+  useEffect(() => {
+    const map = mapInstance.current; if (!map) return;
+    if (drawAoi || identifyMode) {
+      map.dragPan.disable(); map.scrollZoom.disable(); map.boxZoom.disable(); map.doubleClickZoom.disable(); map.getCanvas().style.cursor = 'crosshair';
+    } else {
+      if (panEnabled) map.dragPan.enable(); else map.dragPan.disable();
+      map.scrollZoom.enable(); map.boxZoom.enable(); map.doubleClickZoom.enable(); map.getCanvas().style.cursor = '';
+    }
+  }, [drawAoi, identifyMode, panEnabled]);
+
+  useEffect(() => {
+    const map = mapInstance.current; if (!map || (!raster && !differenceReady)) return;
+    if (map.isStyleLoaded()) syncLayers(); else map.once('load', syncLayers);
+    return () => { map.off('load', syncLayers); };
+  }, [lstUrl, opticalUrl, raster, differenceReady, syncLayers]);
+
+  useEffect(() => {
+    const key = raster?.fileName ?? comparisonPrimary?.id ?? '';
+    if (!key || key === lastFittedKey.current) return;
+    const vExt = extent ?? (comparisonPrimary ? boundsExtent(comparisonPrimary.bounds) : null);
+    if (mapInstance.current && vExt) {
+      lastFittedKey.current = key;
+      mapInstance.current.resize();
+      mapInstance.current.fitBounds([[vExt.west, vExt.south], [vExt.east, vExt.north]], { padding: 54, duration: 850, maxZoom: 16 });
+    }
+  }, [comparisonPrimary, extent, raster]);
+
+  useEffect(() => {
+    const map = mapInstance.current; if (!map) return;
+    const updateAoiLayer = () => {
+      if (!map.isStyleLoaded()) return;
+      const activeVertices: [number, number][] =
+        drawAoi && aoiShapeMode === 'polygon' && aoi.length >= 1 && aoiCursorPt ? [...aoi, aoiCursorPt] : aoi;
+      const displayPoints: [number, number][] = [];
+      if (aoiAnchor) displayPoints.push(aoiAnchor);
+      if (aoiShapeMode === 'circle' && activeVertices.length >= 8) {
+        for (let i = 0; i < activeVertices.length; i += 8) displayPoints.push(activeVertices[i]);
+      } else {
+        for (const pt of activeVertices) displayPoints.push(pt);
+      }
+      const features: any[] = [];
+      if (activeVertices.length >= 3) features.push({ type: 'Feature', properties: { kind: 'poly' }, geometry: { type: 'Polygon', coordinates: [[...activeVertices, activeVertices[0]]] } });
+      if (activeVertices.length >= 2) features.push({ type: 'Feature', properties: { kind: 'line' }, geometry: { type: 'LineString', coordinates: activeVertices.length >= 3 ? [...activeVertices, activeVertices[0]] : activeVertices } });
+      for (const pt of displayPoints) features.push({ type: 'Feature', properties: { kind: 'point' }, geometry: { type: 'Point', coordinates: pt } });
+
+      const data = { type: 'FeatureCollection' as const, features };
+      const src = map.getSource('aoi-source') as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data as any);
+      else {
+        map.addSource('aoi-source', { type: 'geojson', data: data as any });
+        map.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'poly'], paint: { 'fill-color': '#ffb000', 'fill-opacity': 0.28 } });
+        map.addLayer({ id: 'aoi-line-casing', type: 'line', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'line'], paint: { 'line-color': '#071317', 'line-width': 5, 'line-opacity': 0.9 } });
+        map.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'line'], paint: { 'line-color': '#ffb000', 'line-width': 3, 'line-dasharray': [2, 1] } });
+        map.addLayer({ id: 'aoi-pts', type: 'circle', source: 'aoi-source', filter: ['==', ['get', 'kind'], 'point'], paint: { 'circle-radius': 6, 'circle-color': '#ffb000', 'circle-stroke-color': '#071317', 'circle-stroke-width': 2.5 } });
+      }
+      bringOverlaysToFront(map);
+    };
+    if (map.isStyleLoaded()) updateAoiLayer(); else map.once('load', updateAoiLayer);
+  }, [aoi, aoiAnchor, aoiCursorPt, aoiShapeMode, drawAoi]);
+
+  useEffect(() => {
+    const map = mapInstance.current; if (!map) return;
+    const updateStationsLayer = () => {
+      if (!map.isStyleLoaded()) return;
+      const features: any[] = [];
+      if (showStationsLayer) {
+        for (const st of stations) {
+          features.push({
+            type: 'Feature',
+            properties: { kind: 'radius', color: st.proximityColor },
+            geometry: { type: 'Polygon', coordinates: [buildCircleMeters(st.lng, st.lat, stationRadiusM)] },
+          });
+          features.push({
+            type: 'Feature',
+            properties: { kind: 'station', name: st.name, color: st.proximityColor },
+            geometry: { type: 'Point', coordinates: [st.lng, st.lat] },
+          });
+        }
+      }
+      const data = { type: 'FeatureCollection' as const, features };
+      const src = map.getSource('stations-source') as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data as any);
+      else {
+        map.addSource('stations-source', { type: 'geojson', data: data as any });
+        map.addLayer({ id: 'stations-radius-fill', type: 'fill', source: 'stations-source', filter: ['==', ['get', 'kind'], 'radius'], paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.18 } });
+        map.addLayer({ id: 'stations-radius-line', type: 'line', source: 'stations-source', filter: ['==', ['get', 'kind'], 'radius'], paint: { 'line-color': '#38bdf8', 'line-width': 2.5, 'line-dasharray': [2, 1] } });
+        map.addLayer({ id: 'stations-pts', type: 'circle', source: 'stations-source', filter: ['==', ['get', 'kind'], 'station'], paint: { 'circle-radius': 7, 'circle-color': '#38bdf8', 'circle-stroke-color': '#071317', 'circle-stroke-width': 2.5 } });
+      }
+      bringOverlaysToFront(map);
+    };
+    if (map.isStyleLoaded()) updateStationsLayer(); else map.once('load', updateStationsLayer);
+  }, [stations, stationRadiusM, showStationsLayer]);
+
+  const updateStationRadius = useCallback((newRadius: number) => {
+    setStationRadiusM(newRadius);
+    if (!raster) return;
+    setStations((prev) =>
+      prev.map((st) => {
+        const sp = sampleRasterInRadiusMeters(raster, st.lng, st.lat, newRadius);
+        if (!sp) return st;
+        const deltaRadiusC = sp.radiusMeanC - st.stationTempC;
+        const deltaPixel1mC = sp.pixel1mC - st.stationTempC;
+        const absD = Math.abs(deltaRadiusC);
+        const proximityStatus =
+          absD <= Math.max(1.8, sp.radiusStdC * 1.5)
+            ? 'Temperaturas Próximas (Sombra / Vegetação)'
+            : absD <= 4.2
+              ? 'Superfície Mais Quente que o Ar (+2 a +4°C)'
+              : 'Superfície Muito Mais Quente que o Ar (Piso / Telhado)';
+        const proximityColor = absD <= Math.max(1.8, sp.radiusStdC * 1.5) ? '#34d399' : absD <= 4.2 ? '#facc15' : '#f43f5e';
+        return { ...st, ...sp, deltaRadiusC, deltaPixel1mC, proximityStatus, proximityColor };
+      }),
+    );
+  }, [raster]);
+
+  useEffect(() => {
+    if (raster) {
+      setUhiSurface(buildUhiSurface({ data: raster.data, width: raster.width, height: raster.height, bounds: raster.bounds, mean: raster.stats.mean, stdDev: raster.stats.stdDev }));
+      setIsotherms(buildMesoIsothermsGeoJSON(raster.data, raster.width, raster.height, raster.bounds, raster.stats, uhiMethod, uhiPower));
+    } else { setUhiSurface(null); setIsotherms(null); }
+  }, [raster, uhiMethod, uhiPower]);
+
+  useEffect(() => {
+    if (!raster) return;
+    const canvas = document.createElement('canvas');
+    if (displayMode === 'uhi') renderHighDefUhiToCanvas(raster.data, raster.width, raster.height, canvas, raster.stats, uhiMethod, uhiPower);
+    else renderPerceptualLstToCanvas(raster.data, raster.width, raster.height, canvas, palette, customColors, raster.stats);
+    lstCanvas.current = canvas; setLstUrl(canvas.toDataURL('image/png'));
+  }, [customColors, displayMode, palette, raster, uhiMethod, uhiPower]);
+
+  useEffect(() => {
+    const map = mapInstance.current; if (!map || !isotherms) return;
+    const syncIso = () => {
+      if (!map.isStyleLoaded()) return;
+      const src = map.getSource('uhi-surface') as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(isotherms as any);
+      else {
+        map.addSource('uhi-surface', { type: 'geojson', data: isotherms as any });
+        map.addLayer({ id: 'uhi-surface-casing', type: 'line', source: 'uhi-surface', paint: { 'line-color': '#061014', 'line-opacity': 0.85, 'line-width': 3.4 } });
+        map.addLayer({ id: 'uhi-surface-line', type: 'line', source: 'uhi-surface', paint: { 'line-color': ['get', 'color'], 'line-opacity': 0.96, 'line-width': 1.9 } });
+      }
+      const vis = uhiSurfaceVisible ? 'visible' : 'none';
+      if (map.getLayer('uhi-surface-casing')) map.setLayoutProperty('uhi-surface-casing', 'visibility', vis);
+      if (map.getLayer('uhi-surface-line')) map.setLayoutProperty('uhi-surface-line', 'visibility', vis);
+      bringOverlaysToFront(map);
+    };
+    if (map.isStyleLoaded()) syncIso(); else map.once('load', syncIso);
+    return () => { map.off('load', syncIso); };
+  }, [isotherms, uhiSurfaceVisible]);
+
+  const handleFileChange = async (selected: File | null) => {
+    setFile(selected); setError(''); setSearchResults([]); if (!selected) return;
+    setStatus(lang === 'pt' ? 'Lendo bandas e identificando assinatura espectral…' : 'Reading bands and identifying spectral signature…');
+    try {
+      const preview = await readTiffPixels(selected);
+      const count = preview.rasters.length;
+      const cfg = inferOpticalBandConfig(preview.rasters as Float32Array[], preview.bandLabels);
+      setBandCount(count);
+      setBandLabels(cfg.labels);
+      setBands(cfg.defaultBands);
+      const [rI, nI, sI] = cfg.defaultBands.map(Number);
+      setStatus(`${count} bandas (${cfg.profileName}) · Auto-selecionado: Red=C${rI + 1}, NIR=C${nI + 1}, SWIR=C${sI + 1}`);
+    } catch { setError('Não foi possível ler este GeoTIFF.'); setStatus(''); }
+  };
+
+  const clearMainAnalysis = () => {
+    setRaster(null); setFile(null); setLstUrl(null); setOpticalUrl(null);
+    setAoi([]); setAoiAnchor(null); setAoiCursorPt(null); setAoiStats(null); setAoiDetailed(null); setShowAoiModal(false);
+    setStations([]); setShowStationModal(false);
+    setSample(null); setHoverSample(null);
+    setUhiSurface(null); setIsotherms(null); setUhiSurfaceVisible(false);
+    setProcessingLog([]); setStatus('Produto principal limpo.');
+    const map = mapInstance.current;
+    if (map) for (const id of ['lst-layer', 'optical-layer', 'uhi-surface-line', 'uhi-surface-casing']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+  };
+
+  const clearComparisonAnalysis = () => {
+    setComparisonImages([]); setComparisonFiles(Array.from({ length: comparisonCount }, () => null));
+    setDifferenceReady(false); setSwipeActive(false); setComparisonMode('main');
+    setSample(null); setHoverSample(null);
+    setStatus(raster ? 'Comparação limpa · Exibindo mapa principal.' : 'Comparação limpa.');
+  };
+
+  const loadStationsOnMap = async () => {
+    if (!raster) return;
+    setStationsBusy(true);
+    setStatus('Buscando estações meteorológicas nos limites da imagem e sincronizando horário da passagem…');
+    try {
+      const pts = await fetchGroundStationsForScene(raster, stationRadiusM);
+      setStations(pts);
+      setShowStationsLayer(true);
+      setShowStationModal(true);
+      setStatus(`${pts.length} estações sincronizadas no raio de ${stationRadiusM} m.`);
+    } catch {
+      setStatus('Não foi possível consultar as estações no momento.');
+    } finally {
+      setStationsBusy(false);
+    }
+  };
+
+  const validationMetrics = useMemo(() => {
+    if (!stations.length) return null;
+    let absSum = 0; let sqSum = 0; let biasSum = 0; let abs1mSum = 0;
+    for (const s of stations) {
+      absSum += Math.abs(s.deltaRadiusC);
+      sqSum += s.deltaRadiusC ** 2;
+      biasSum += s.deltaRadiusC;
+      abs1mSum += Math.abs(s.deltaPixel1mC);
+    }
+    const n = stations.length;
+    return {
+      maeRadius: absSum / n,
+      mae1m: abs1mSum / n,
+      rmseRadius: Math.sqrt(sqSum / n),
+      biasRadius: biasSum / n,
+    };
+  }, [stations]);
+
+  const downloadStationsCsv = () => {
+    if (!stations.length) return;
+    const rows = [
+      'Estacao;Fonte;Data_Passagem;Horario;Lat;Lon;Raio_m;Pixels_No_Raio;Temp_Estacao_2m_C;LST_Media_Raio_C;LST_Mediana_Raio_C;LST_Desvio_Raio_C;LST_Pixel_2m_C;Diferenca_Raio_vs_Estacao_C;Diferenca_Pixel2m_vs_Estacao_C;NDVI_Raio;NDBI_Raio;Diagnostico_Proximidade',
+      ...stations.map((s) =>
+        `${s.name};${s.source};${s.dateIso};${s.overpassTime};${s.lat.toFixed(5)};${s.lng.toFixed(5)};${stationRadiusM};${s.pixelCount};${s.stationTempC.toFixed(2)};${s.radiusMeanC.toFixed(2)};${s.radiusMedianC.toFixed(2)};${s.radiusStdC.toFixed(2)};${s.pixel1mC.toFixed(2)};${s.deltaRadiusC.toFixed(2)};${s.deltaPixel1mC.toFixed(2)};${s.ndviMean.toFixed(3)};${s.ndbiMean.toFixed(3)};${s.proximityStatus}`,
+      ),
+    ].join('\n');
+    const b = new Blob([rows], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-Validacao-Estacoes-${stationRadiusM}m.csv`; a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  const calculateComparisons = async () => {
+    const selected = comparisonFiles.filter((it): it is File => Boolean(it));
+    if (selected.length < 2) { setError('Selecione pelo menos duas imagens.'); return; }
+    setBusy(true); setError(''); setDifferenceReady(false); setComparisonMode('difference');
+    const loaded: ComparisonImage[] = [];
+    for (let i = 0; i < selected.length; i += 1) {
+      const sf = selected[i]; setStatus(`Processando ${sf.name}…`);
+      try {
+        const auto = await buildAutomaticThermalRaster(sf, [Number(bands[0]), Number(bands[1]), Number(bands[2])]);
+        const lst = document.createElement('canvas'); const opt = document.createElement('canvas');
+        const stats = renderPerceptualLstToCanvas(auto.result.lstDownscaled, auto.tiff.width, auto.tiff.height, lst, palette, customColors);
+        renderRGBBasemapToCanvas(auto.tiff.rasters[Number(bands[2])] as Float32Array, auto.tiff.rasters[Number(bands[1])] as Float32Array, auto.tiff.rasters[Number(bands[0])] as Float32Array, auto.tiff.width, auto.tiff.height, opt);
+        if (!stats) continue;
+        const uhi = buildUhiSurface({ data: auto.result.lstDownscaled, width: auto.tiff.width, height: auto.tiff.height, bounds: auto.bounds, mean: stats.mean, stdDev: stats.stdDev });
+        loaded.push({ id: `${sf.name}-${sf.lastModified}-${i}`, name: sf.name, dateLabel: imageDateLabel(sf.name, i), lstUrl: lst.toDataURL('image/png'), opticalUrl: opt.toDataURL('image/png'), uhiSurface: uhi, bounds: auto.bounds, width: auto.tiff.width, height: auto.tiff.height, data: auto.result.lstDownscaled, stats });
+        await yieldUi();
+      } catch { /* ignore */ }
+    }
+    setComparisonImages(loaded); setDifferenceReady(loaded.length >= 2);
+    if (loaded.length < 2) setError('Falha ao processar o par de imagens.'); else setStatus('Diferença térmica pronta.');
+    setBusy(false);
   };
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, includeIsotherms = false) => {
     const w = Math.min(980, Math.max(420, ctx.canvas.width - x * 2));
     const pad = 24;
-    const isoExtraH = includeIsotherms && isotherms?.features.length ? 76 : 0;
+    const isoExtraH = includeIsotherms && isotherms?.features.length ? 96 : 0;
     const baseBoxH = displayMode === 'uhi' ? 210 : 180;
     const boxH = baseBoxH + isoExtraH;
 
@@ -2081,7 +2878,7 @@ const drawIsothermsOnCanvas = (
     }
 
     if (includeIsotherms && isotherms?.features.length) {
-      const isoY = y + baseBoxH - 2;
+      const isoY = y + baseBoxH - 4;
       ctx.strokeStyle = 'rgba(121,226,220,0.35)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -2094,10 +2891,13 @@ const drawIsothermsOnCanvas = (
       ctx.fillText(`ISOTERMAS · CLUSTERS TÉRMICOS ATIVOS (${uhiMethod.toUpperCase()})`, x + pad, isoY + 22);
 
       const barW = w - pad * 2;
-      const slotW = barW / isotherms.features.length;
+      const cols = Math.min(3, isotherms.features.length);
+      const slotW = barW / cols;
       isotherms.features.forEach((f, idx) => {
-        const ix = x + pad + idx * slotW;
-        const iy = isoY + 46;
+        const col = idx % cols;
+        const row = Math.floor(idx / cols);
+        const ix = x + pad + col * slotW;
+        const iy = isoY + 46 + row * 28;
         ctx.save();
         ctx.lineCap = 'round';
         ctx.strokeStyle = '#061014';
@@ -2116,7 +2916,7 @@ const drawIsothermsOnCanvas = (
         ctx.restore();
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = '700 12px Arial';
+        ctx.font = '700 13px Arial';
         ctx.fillText(f.properties.label, ix + 30, iy - 1, slotW - 34);
       });
     }
@@ -2125,7 +2925,7 @@ const drawIsothermsOnCanvas = (
   const exportPng = () => {
     if (!lstCanvas.current || !opticalCanvas.current || !raster) return;
     const includeIso = uhiSurfaceVisible && Boolean(isotherms?.features.length);
-    const footerH = (displayMode === 'uhi' ? 234 : 204) + (includeIso ? 76 : 0);
+    const footerH = (displayMode === 'uhi' ? 234 : 204) + (includeIso ? 96 : 0);
     const c = document.createElement('canvas');
     c.width = Math.max(680, lstCanvas.current.width);
     c.height = lstCanvas.current.height + footerH;
@@ -2302,7 +3102,7 @@ const drawIsothermsOnCanvas = (
     let above31 = 0; let aboveHot = 0;
     const hotspotLim = raster.stats.mean + 1.5 * raster.stats.stdDev;
     const uhiCnt = [0, 0, 0, 0, 0, 0];
-    const utfviCnt = [0, 0, 0, 0, 0]; // Conforto Térmico UTFVI
+    const utfviCnt = [0, 0, 0, 0, 0];
     const nBins = 12; const histBins = new Array<number>(nBins).fill(0);
     const span = Math.max(0.1, raster.stats.max - raster.stats.min);
 
@@ -2490,7 +3290,6 @@ function toggleReportLang() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SynapseSR_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
     setStatus('Relatório técnico expandido exportado com sucesso.');
   };
-
 function renderMapWithFooterLegend(
   baseOptical: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, opacity: number,
   title: string, isUhi: boolean, stats: RasterStats, palette: string, customColors: string[],
