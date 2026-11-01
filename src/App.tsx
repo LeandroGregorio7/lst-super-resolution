@@ -3152,6 +3152,15 @@ function toggleReportLang() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SynapseSR_relatorio_modelo_expandido_${dateOpt}.html`; a.click(); URL.revokeObjectURL(a.href);
     setStatus('Relatório técnico expandido exportado com sucesso.');
   };
+
+  const downloadAoiModalKml = () => {
+    if (!aoiDetailed || !raster) return;
+
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+
     for (const [lng, lat] of aoiDetailed.vertices) {
       if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
       if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
