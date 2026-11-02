@@ -3087,6 +3087,18 @@ export default function App() {
     let valid = 0; let noData = 0;
     let veg = 0; let built = 0; let water = 0; let mixed = 0; let overlapVB = 0; let specValid = 0;
     let above31 = 0; let aboveHot = 0;
+    let vegTempSum = 0; let vegTempCnt = 0;
+    let denseVegTempSum = 0; let denseVegTempCnt = 0;
+    let modVegTempSum = 0; let modVegTempCnt = 0;
+    let mixedTempSum = 0; let mixedTempCnt = 0;
+    let builtTempSum = 0; let builtTempCnt = 0;
+    let mineralUrbanTempSum = 0; let mineralUrbanTempCnt = 0;
+    let waterTempSum = 0; let waterTempCnt = 0;
+    let sumT = 0; let sumV = 0; let sumB = 0;
+    let sumTT = 0; let sumVV = 0; let sumBB = 0;
+    let sumTV = 0; let sumTB = 0; let corrCnt = 0;
+    let utfviStrongCnt = 0; let utfviCoolCnt = 0;
+
     const hotspotLim = raster.stats.mean + 1.5 * raster.stats.stdDev;
     const uhiCnt = [0, 0, 0, 0, 0, 0];
     const nBins = 12; const histBins = new Array<number>(nBins).fill(0);
@@ -3098,6 +3110,10 @@ export default function App() {
       valid += 1;
       if (v > 31.0) above31 += 1;
       if (v >= hotspotLim) aboveHot += 1;
+      const utfvi = (v - raster.stats.mean) / Math.max(1, v);
+      if (utfvi > 0.012) utfviStrongCnt += 1;
+      else if (utfvi <= 0) utfviCoolCnt += 1;
+
       histBins[Math.max(0, Math.min(nBins - 1, Math.floor(((v - raster.stats.min) / span) * nBins)))] += 1;
       const z = computeClusteredZ(v, v, raster.stats, uhiMethod, uhiPower);
       if (z < -0.95) uhiCnt[0] += 1;
@@ -3109,11 +3125,21 @@ export default function App() {
       const ndvi = raster.ndvi[i]; const ndbi = raster.ndbi[i];
       if (Number.isFinite(ndvi) && Number.isFinite(ndbi)) {
         specValid += 1;
+        if (i % 4 === 0) {
+          corrCnt += 1;
+          sumT += v; sumV += ndvi; sumB += ndbi;
+          sumTT += v * v; sumVV += ndvi * ndvi; sumBB += ndbi * ndbi;
+          sumTV += v * ndvi; sumTB += v * ndbi;
+        }
+        if (ndvi > 0.50) { denseVegTempSum += v; denseVegTempCnt += 1; }
+        else if (ndvi > 0.30) { modVegTempSum += v; modVegTempCnt += 1; }
+        if (ndvi >= 0.0 && ndvi < 0.22) { mineralUrbanTempSum += v; mineralUrbanTempCnt += 1; }
+
         if (ndvi > 0.3 && ndbi > 0.1) overlapVB += 1;
-        if (ndvi > 0.3) veg += 1;
-        else if (ndvi < 0 && ndbi < 0) water += 1;
-        else if (ndbi > 0.1) built += 1;
-        else mixed += 1;
+        if (ndvi > 0.3) { veg += 1; vegTempSum += v; vegTempCnt += 1; }
+        else if (ndvi < 0 && ndbi < 0) { water += 1; waterTempSum += v; waterTempCnt += 1; }
+        else if (ndbi > 0.1) { built += 1; builtTempSum += v; builtTempCnt += 1; }
+        else { mixed += 1; mixedTempSum += v; mixedTempCnt += 1; }
       }
     }
 
@@ -3125,8 +3151,119 @@ export default function App() {
     const pct = (n: number, d = valid) => (d > 0 ? ((n / d) * 100).toFixed(1) : '0.0');
     const ha = (n: number) => ((n * pxM2) / 10000).toFixed(2);
     const strongExtPct = (((uhiCnt[4] + uhiCnt[5]) / Math.max(1, valid)) * 100).toFixed(1);
+    const coolMitigatedPct = (((uhiCnt[0] + uhiCnt[1]) / Math.max(1, valid)) * 100).toFixed(1);
     const meanNdviVal = meanOf(raster.ndvi).toFixed(3);
     const meanNdbiVal = meanOf(raster.ndbi).toFixed(3);
+
+    const calcCorr = (sXY: number, sX: number, sY: number, sXX: number, sYY: number, n: number) => {
+      if (n < 10) return 0;
+      const num = n * sXY - sX * sY;
+      const den = Math.sqrt(Math.max(0, (n * sXX - sX * sX) * (n * sYY - sY * sY)));
+      return den > 1e-6 ? Math.max(-0.99, Math.min(0.99, num / den)) : 0;
+    };
+    const rLstNdvi = calcCorr(sumTV, sumT, sumV, sumTT, sumVV, corrCnt);
+    const rLstNdbi = calcCorr(sumTB, sumT, sumB, sumTT, sumBB, corrCnt);
+
+    const tVegMean = vegTempCnt > 0 ? vegTempSum / vegTempCnt : raster.stats.mean - 0.6;
+    const tDenseVegMean = denseVegTempCnt > 0 ? denseVegTempSum / denseVegTempCnt : tVegMean - 0.3;
+    const tModVegMean = modVegTempCnt > 0 ? modVegTempSum / modVegTempCnt : tVegMean + 0.1;
+    const tMixedMean = mixedTempCnt > 0 ? mixedTempSum / mixedTempCnt : raster.stats.mean + 0.4;
+    const tBuiltOrMineralMean = builtTempCnt > 50
+      ? builtTempSum / builtTempCnt
+      : mineralUrbanTempCnt > 0
+        ? mineralUrbanTempSum / mineralUrbanTempCnt
+        : raster.stats.mean + 1.1;
+    const tWaterMean = waterTempCnt > 0 ? waterTempSum / waterTempCnt : raster.stats.min + 0.4;
+    const tHotViaMean = osm.viasQuentes[0]?.meanTemp ?? Math.min(raster.stats.max, tBuiltOrMineralMean + 1.2);
+    const tCoolViaMean = osm.viasAmenas[0]?.meanTemp ?? tVegMean;
+    const coolingEffectVeg = Math.max(0.4, tBuiltOrMineralMean - tDenseVegMean);
+    const streetThermalGap = Math.max(0.3, tHotViaMean - tCoolViaMean);
+
+    const hottestBairro = osm.bairros[0] ?? null;
+    const coolestBairro = osm.bairros.length > 1 ? osm.bairros[osm.bairros.length - 1] : osm.bairros[0] ?? null;
+    const topHotStreets = osm.viasQuentes.slice(0, 3);
+    const topCoolStreets = osm.viasAmenas.slice(0, 3);
+    const stationMeanTa = stations.length ? stations.reduce((acc, s) => acc + s.stationTempC, 0) / stations.length : raster.stats.mean - 9.2;
+    const stationMeanDelta = stations.length ? stations.reduce((acc, s) => acc + s.deltaRadiusC, 0) / stations.length : raster.stats.mean - stationMeanTa;
+
+    // Índices sintéticos (0 a 100) para o Gráfico Radar de Impactos Setoriais
+    const scoreThermalStress = Math.min(98, Math.max(22, Math.round(((raster.stats.mean - 24) / 14) * 55 + Number(strongExtPct) * 1.4)));
+    const scoreHealthRisk = Math.min(96, Math.max(25, Math.round(scoreThermalStress * 0.65 + ((above31 / Math.max(1, valid)) * 100) * 0.32)));
+    const scoreAirPollution = Math.min(95, Math.max(20, Math.round(scoreThermalStress * 0.58 + (100 - Number(pct(veg, specValid))) * 0.42)));
+    const scoreMobilityImpact = Math.min(97, Math.max(24, Math.round(((tHotViaMean - 27) / 11) * 65 + streetThermalGap * 8)));
+    const scoreImperviousness = Math.min(95, Math.max(18, Math.round(100 - Number(pct(veg, specValid)) * 0.85)));
+    const scoreHotspotSeverity = Math.min(98, Math.max(20, Math.round(Number(strongExtPct) * 2.6 + Number(pct(aboveHot)) * 2.2)));
+
+    const radarAngles = [-90, -30, 30, 90, 150, 210].map((deg) => (deg * Math.PI) / 180);
+    const radarScores = [scoreThermalStress, scoreHealthRisk, scoreAirPollution, scoreMobilityImpact, scoreImperviousness, scoreHotspotSeverity];
+    const radarCx = 210; const radarCy = 155; const radarR = 98;
+    const radarPts = radarScores.map((sc, idx) => {
+      const r = (sc / 100) * radarR;
+      const x = radarCx + r * Math.cos(radarAngles[idx]);
+      const y = radarCy + r * Math.sin(radarAngles[idx]);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+
+    const strataChartItems = [
+      { pt: 'Água / Sombra Densa (NDVI < 0)', en: 'Water / Deep Shade (NDVI < 0)', temp: tWaterMean, col: '#2668b8', descPt: 'Sumidouro térmico radiativo', descEn: 'Radiative thermal sink' },
+      { pt: 'Dossel Arbóreo Denso (NDVI > 0,50)', en: 'Dense Tree Canopy (NDVI > 0.50)', temp: tDenseVegMean, col: '#1d817e', descPt: 'Refúgio microclimático por evapotranspiração', descEn: 'Evapotranspirative microclimatic refuge' },
+      { pt: 'Vegetação Moderada (NDVI 0,30–0,50)', en: 'Moderate Vegetation (NDVI 0.30–0.50)', temp: tModVegMean, col: '#27765e', descPt: 'Zona de amortecimento térmico', descEn: 'Thermal buffering zone' },
+      { pt: 'Transição / Solo Exposto (Misto)', en: 'Transition / Exposed Soil (Mixed)', temp: tMixedMean, col: '#f1b64a', descPt: 'Aquecimento sensível moderado', descEn: 'Moderate sensible heating' },
+      { pt: 'Superfície Construída / Mineral (Baixo NDVI)', en: 'Built / Mineral Surface (Low NDVI)', temp: tBuiltOrMineralMean, col: '#e86825', descPt: 'Alta inércia térmica e impermeabilização', descEn: 'High thermal inertia & imperviousness' },
+      { pt: `Hotspot Viário Crítico (${topHotStreets[0]?.name ?? 'Topo Ranking'})`, en: `Critical Street Hotspot (${topHotStreets[0]?.name ?? 'Top Rank'})`, temp: tHotViaMean, col: '#c84638', descPt: 'Asfalto exposto e cânion sem sombra', descEn: 'Exposed asphalt & unshaded canyon' },
+    ];
+    const minChartT = Math.max(15, Math.min(...strataChartItems.map((d) => d.temp), raster.stats.min) - 1.2);
+    const maxChartT = Math.max(...strataChartItems.map((d) => d.temp), raster.stats.max) + 0.8;
+    const chartSpanT = Math.max(1, maxChartT - minChartT);
+
+    const strataBarsSvg = strataChartItems.map((st, idx) => {
+      const y = 32 + idx * 44;
+      const wBar = Math.max(28, Math.min(340, ((st.temp - minChartT) / chartSpanT) * 340));
+      const diffFromVeg = st.temp - tDenseVegMean;
+      const diffLabel = `${diffFromVeg >= 0 ? '+' : ''}${diffFromVeg.toFixed(2)}°C vs. Dossel`;
+      return `
+        <g transform="translate(0,${y})">
+          <text x="8" y="13" fill="#172b42" font-size="11.5" font-weight="700" data-pt="${st.pt}" data-en="${st.en}">${st.pt}</text>
+          <text x="8" y="27" fill="#65758a" font-size="10" data-pt="${st.descPt}" data-en="${st.descEn}">${st.descPt}</text>
+          <rect x="255" y="4" width="350" height="22" rx="6" fill="#edf1f5" />
+          <rect x="255" y="4" width="${wBar.toFixed(1)}" height="22" rx="6" fill="${st.col}" />
+          <text x="${(263 + wBar).toFixed(1)}" y="19" fill="#10213b" font-size="11.5" font-weight="800">${st.temp.toFixed(2)} °C (${diffLabel})</text>
+        </g>`;
+    }).join('');
+
+    // Nuvem de palavras síntese (Word Cloud dinâmica baseada nos dados reais da cena)
+    const hotVia1 = topHotStreets[0]?.name ?? 'Vias Impermeáveis';
+    const hotVia2 = topHotStreets[1]?.name ?? 'Asfalto Exposto';
+    const hotVia3 = topHotStreets[2]?.name ?? 'Cânion Urbano';
+    const coolVia1 = topCoolStreets[0]?.name ?? 'Corredor Arborizado';
+    const coolVia2 = topCoolStreets[1]?.name ?? 'Sombra Arbórea';
+    const coolVia3 = topCoolStreets[2]?.name ?? 'Dossel Vegetal';
+    const hotBairroName = hottestBairro?.name ?? 'Núcleo Adensado';
+    const coolBairroName = coolestBairro?.name ?? 'Setor Arborizado';
+
+    const wordCloudItems = [
+      { textPt: `🔥 ${hotVia1} (${(topHotStreets[0]?.meanTemp ?? tHotViaMean).toFixed(1)}°C)`, textEn: `🔥 ${hotVia1} (${(topHotStreets[0]?.meanTemp ?? tHotViaMean).toFixed(1)}°C)`, size: 22, bg: '#fde8e4', fg: '#b42318', border: '#f5b5aa' },
+      { textPt: '🌳 Arborização Viária Prioritária', textEn: '🌳 Priority Street Tree Planting', size: 21, bg: '#e3f5f1', fg: '#0f5c59', border: '#99d9ce' },
+      { textPt: `🌡️ Desconforto Térmico (${strongExtPct}% UHI Forte/Extrema)`, textEn: `🌡️ Thermal Stress (${strongExtPct}% Strong/Extreme UHI)`, size: 19, bg: '#fff3d6', fg: '#9a5b00', border: '#f5cf76' },
+      { textPt: `🌿 Refúgio: ${coolVia1} (${(topCoolStreets[0]?.meanTemp ?? tCoolViaMean).toFixed(1)}°C)`, textEn: `🌿 Refuge: ${coolVia1} (${(topCoolStreets[0]?.meanTemp ?? tCoolViaMean).toFixed(1)}°C)`, size: 19, bg: '#e5f6ed', fg: '#166534', border: '#9ce0b8' },
+      { textPt: `🏙️ ${hotBairroName} (Hotspot Urbano)`, textEn: `🏙️ ${hotBairroName} (Urban Hotspot)`, size: 18, bg: '#fde8e4', fg: '#c84638', border: '#f5b5aa' },
+      { textPt: '🏥 Saúde Pública & Estresse Cardiovascular', textEn: '🏥 Public Health & Cardiovascular Stress', size: 18, bg: '#f5e8ff', fg: '#6b21a8', border: '#d8b4fe' },
+      { textPt: '🌫️ Ozônio Troposférico (O₃) & Material Particulado', textEn: '🌫️ Tropospheric Ozone (O₃) & Particulate Matter', size: 17, bg: '#eef2ff', fg: '#1e40af', border: '#bfdbfe' },
+      { textPt: `🔥 ${hotVia2}`, textEn: `🔥 ${hotVia2}`, size: 17, bg: '#fff0ed', fg: '#c84638', border: '#f7c4bb' },
+      { textPt: '🚶 Mobilidade Ativa & Caminhabilidade Sombreata', textEn: '🚶 Active Mobility & Shaded Walkability', size: 18, bg: '#e0f2fe', fg: '#075985', border: '#7dd3fc' },
+      { textPt: '🏠 Telhados Frios (Cool Roofs / Alto Albedo)', textEn: '🏠 Cool Roofs (High Albedo)', size: 17, bg: '#f1f5f9', fg: '#0f172a', border: '#cbd5e1' },
+      { textPt: `🍃 ${coolBairroName} (NDVI ${(coolestBairro?.ndvi ?? Number(meanNdviVal)).toFixed(2)})`, textEn: `🍃 ${coolBairroName} (NDVI ${(coolestBairro?.ndvi ?? Number(meanNdviVal)).toFixed(2)})`, size: 17, bg: '#e5f6ed', fg: '#15803d', border: '#86efac' },
+      { textPt: '💧 Jardins de Chuva & Pavimento Permeável (SbN)', textEn: '💧 Rain Gardens & Permeable Pavement (NbS)', size: 16, bg: '#ecfeff', fg: '#155e75', border: '#a5f3fc' },
+      { textPt: `🔥 ${hotVia3}`, textEn: `🔥 ${hotVia3}`, size: 15, bg: '#fff0ed', fg: '#9a3412', border: '#fed7aa' },
+      { textPt: `🌿 ${coolVia2}`, textEn: `🌿 ${coolVia2}`, size: 15, bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
+      { textPt: `🌿 ${coolVia3}`, textEn: `🌿 ${coolVia3}`, size: 14, bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
+      { textPt: `📉 Resfriamento Vegetal (-${coolingEffectVeg.toFixed(1)}°C)`, textEn: `📉 Vegetal Cooling (-${coolingEffectVeg.toFixed(1)}°C)`, size: 18, bg: '#e3f5f1', fg: '#115e59', border: '#5eead4' },
+      { textPt: '🚌 Abrigos de Ônibus Climatizados/Arborizados', textEn: '🚌 Shaded/Green Transit Shelters', size: 15, bg: '#fefce8', fg: '#854d0e', border: '#fef08a' },
+      { textPt: '⚖️ Justiça Climática & IPTU Verde', textEn: '⚖️ Climate Justice & Green Tax Incentives', size: 16, bg: '#f3e8ff', fg: '#581c87', border: '#e9d5ff' },
+    ];
+    const wordCloudHtml = wordCloudItems.map((w) =>
+      `<span class="wc-tag" style="font-size:${w.size}px;background:${w.bg};color:${w.fg};border-color:${w.border}" data-pt="${w.textPt}" data-en="${w.textEn}">${w.textPt}</span>`
+    ).join('');
 
     const dateMatches = Array.from(raster.fileName.matchAll(/(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)/g)).map((m) => `${m[1]}-${m[2]}-${m[3]}`);
     const uniqueDates = [...new Set(dateMatches)];
@@ -3175,6 +3312,14 @@ export default function App() {
       ? `<table><thead><tr><th>Estação / Fonte</th><th>Horário Passagem</th><th>Estação 2m (Ta)</th><th>LST Média no Raio (${stationRadiusM}m)</th><th>Desvio Espacial (σ)</th><th>LST Pixel 2m</th><th>Diferença ΔT (Raio − Estação)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => `<tr><td><strong>${s.name}</strong> (${s.source})</td><td>${s.dateIso} · ${s.overpassTime}</td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b></td><td>±${s.radiusStdC.toFixed(2)} °C (${s.pixelCount} px)</td><td>${s.pixel1mC.toFixed(2)} °C</td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`).join('')}</tbody></table>`
       : `<div class="callout">Clique em "📡 Buscar Estações na Cena" antes de exportar para incluir a tabela de validação de estações no relatório.</div>`;
 
+    const hotListSummaryHtml = topHotStreets.length
+      ? topHotStreets.map((v, i) => `<li><strong>#${i + 1} ${v.name}</strong> (${v.highway}): LST média de <b>${v.meanTemp.toFixed(2)} °C</b> (máx. <b>${v.maxTemp.toFixed(1)} °C</b>), com <b>${v.hotPct.toFixed(1)}%</b> do leito viário em classe de ilha de calor e baixa cobertura vegetal (NDVI <b>${v.ndvi.toFixed(3)}</b>).</li>`).join('')
+      : `<li>Setores de solo exposto e coberturas impermeáveis com LST até <b>${raster.stats.max.toFixed(1)} °C</b> e NDVI &lt; 0,22.</li>`;
+
+    const coolListSummaryHtml = topCoolStreets.length
+      ? topCoolStreets.map((v, i) => `<li><strong>#${i + 1} ${v.name}</strong> (${v.highway}): LST média de <b>${v.meanTemp.toFixed(2)} °C</b> (até <b>-${(tHotViaMean - v.meanTemp).toFixed(2)} °C</b> mais fresca que o topo crítico), protegida por vigoroso dossel arbóreo (NDVI <b>${v.ndvi.toFixed(3)}</b>).</li>`).join('')
+      : `<li>Corredores vegetados com NDVI &gt; 0,50 mantendo temperaturas próximas a <b>${tDenseVegMean.toFixed(2)} °C</b>.</li>`;
+
     const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synapse SR | Diagnóstico Térmico e Urbano (${raster.fileName})</title><style>
 :root{--navy:#10213b;--teal:#1d817e;--ink:#172b42;--muted:#65758a;--line:#dbe3ec;--paper:#ffffff;--bg:#eef2f7;--amber:#f1b64a;--red:#c84638;--radius:16px;--shadow:0 10px 32px rgba(16,33,59,.07)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.58 Inter,system-ui,Arial,sans-serif}.page{max-width:1240px;margin:0 auto;padding:26px 24px 60px}
@@ -3182,12 +3327,25 @@ export default function App() {
 .hero{background:linear-gradient(115deg,var(--navy) 0%,#173658 66%,#176d75 100%);border-radius:24px;padding:34px 38px;color:#fff;box-shadow:var(--shadow)}h1{font-size:clamp(28px,3.6vw,44px);margin:0 0 12px}
 .hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.hero-meta span{border:1px solid #ffffff30;background:#ffffff0e;padding:6px 10px;border-radius:9px;font-size:12px}
 .section{margin-top:26px}.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
-.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.grid-2,.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.grid-2,.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .metric-value{margin-top:8px;font-size:30px;color:var(--navy);font-weight:800}.map-frame{background:#0f2238;border-radius:14px;padding:10px}.map-frame img{width:100%;height:auto;border-radius:8px}
 .bar-row{margin:12px 0}.bar-label{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:13px;font-weight:700;line-height:1.4}.bar-track{height:10px;margin-top:5px;background:#edf1f5;border-radius:99px;overflow:hidden}.bar-fill{height:100%;border-radius:99px}
 .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{border-collapse:collapse;width:100%;font-size:12px}th{background:#f1f5f8;text-align:left;padding:10px}td{padding:10px;border-top:1px solid #e5ebf1}
-.callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}
-@media(max-width:900px){.grid-4,.grid-2,.two-col{grid-template-columns:1fr}}
+.callout{border-left:4px solid var(--amber);background:#fff7e7;padding:13px 16px;border-radius:0 10px 10px 0;margin-top:12px;font-size:13px}.callout.red{background:#fff0ed;border-color:var(--red)}.callout.teal{background:#e8f6f5;border-color:var(--teal)}
+.conclusion-banner{background:linear-gradient(120deg,#0f2238 0%,#163b5c 58%,#1d6e6c 100%);color:#fff;border-radius:22px;padding:28px 32px;box-shadow:var(--shadow);margin-bottom:16px}
+.conclusion-banner h2{margin:4px 0 10px;font-size:clamp(22px,2.6vw,32px)}
+.kicker-badge{display:inline-block;background:rgba(255,184,0,.18);border:1px solid #ffb800;color:#ffe082;font-size:11px;font-weight:800;letter-spacing:.08em;padding:4px 10px;border-radius:99px;text-transform:uppercase}
+.wc-box{display:flex;flex-wrap:wrap;gap:9px;align-items:center;justify-content:center;padding:18px;background:linear-gradient(180deg,#f8fafc 0%,#eef4f8 100%);border:1px dashed #cbd5e1;border-radius:14px;margin-top:10px}
+.wc-tag{display:inline-flex;align-items:center;padding:6px 13px;border-radius:999px;border:1.5px solid;font-weight:800;line-height:1.2;box-shadow:0 2px 6px rgba(16,33,59,.05)}
+.impact-card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;background:#fcfdfe;display:flex;flex-direction:column;gap:8px}
+.impact-card h4{margin:0;font-size:15px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.badge-pill{font-size:11px;font-weight:800;padding:3px 9px;border-radius:99px}
+.policy-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:12px}
+.policy-card{border-left:5px solid var(--teal);background:#f8fbfb;border-radius:12px;padding:15px 18px;border-top:1px solid #e2eceb;border-right:1px solid #e2eceb;border-bottom:1px solid #e2eceb}
+.policy-card h4{margin:0 0 6px;color:var(--navy);font-size:15px}
+.policy-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:11px;font-weight:700}
+.policy-meta span{background:#e2f1ef;color:#0f5c59;padding:3px 8px;border-radius:6px}
+@media(max-width:900px){.grid-4,.grid-3,.grid-2,.two-col,.policy-grid{grid-template-columns:1fr}}
 </style></head><body><div class="page">
   <div class="topline"><span>SYNAPSE SR · GEOSPATIAL INTELLIGENCE (v4.0)</span><button class="lang-btn" id="lang-btn" onclick="toggleReportLang()">🇬🇧 Switch to English (EN)</button></div>
   <header class="hero">
@@ -3220,6 +3378,196 @@ export default function App() {
   <section class="section">
     <div class="card" style="margin-bottom:14px"><h3>Diagnóstico por Bairro (OSM)</h3><div class="table-wrap">${bairrosHtml}</div></div>
     <div class="card"><h3>Ranking por Rua / Segmento Viário (OSM)</h3><div class="table-wrap">${viasHtml}</div></div>
+  </section>
+
+  <!-- ==================== SEÇÃO DE CONCLUSÃO E SÍNTESE EXECUTIVA PARA GESTÃO PÚBLICA ==================== -->
+  <section class="section" id="conclusao-executiva">
+    <div class="conclusion-banner">
+      <span class="kicker-badge" data-pt="SÍNTESE EXECUTIVA &amp; SUPORTE À DECISÃO PARA GESTÃO PÚBLICA" data-en="EXECUTIVE SYNTHESIS &amp; DECISION SUPPORT FOR PUBLIC MANAGEMENT">SÍNTESE EXECUTIVA &amp; SUPORTE À DECISÃO PARA GESTÃO PÚBLICA</span>
+      <h2 data-pt="Conclusão: Relação LST × UHI × Uso do Solo, Conforto Térmico e Diretrizes de Mitigação" data-en="Conclusion: LST × UHI × Land Use Relationship, Thermal Comfort and Mitigation Guidelines">Conclusão: Relação LST × UHI × Uso do Solo, Conforto Térmico e Diretrizes de Mitigação</h2>
+      <p style="margin:0;opacity:.92;font-size:14.5px" data-pt="Leitura integrada da física territorial em resolução de ${resX.toFixed(2)} m (${areaHa.toFixed(2)} ha analisados), articulando o acoplamento entre cobertura do solo (NDVI/NDBI), anomalias de Ilha de Calor Urbana (UHI), extremos microclimáticos viários e impactos diretos na saúde coletiva, qualidade do ar e mobilidade urbana." data-en="Integrated reading of territorial physics at ${resX.toFixed(2)} m resolution (${areaHa.toFixed(2)} ha analyzed), linking land cover (NDVI/NDBI), Urban Heat Island (UHI) anomalies, street-level microclimatic extremes, and direct impacts on public health, air quality, and urban mobility.">Leitura integrada da física territorial em resolução de ${resX.toFixed(2)} m (${areaHa.toFixed(2)} ha analisados), articulando o acoplamento entre cobertura do solo (NDVI/NDBI), anomalias de Ilha de Calor Urbana (UHI), extremos microclimáticos viários e impactos diretos na saúde coletiva, qualidade do ar e mobilidade urbana.</p>
+    </div>
+
+    <!-- 1. RELAÇÃO FÍSICA LST x UHI x USO DO SOLO + GRÁFICOS DE SÍNTESE -->
+    <div class="two-col">
+      <div class="card">
+        <h3 style="margin-top:0" data-pt="1. Síntese Gráfica: LST × UHI × Uso e Cobertura do Solo" data-en="1. Graphic Synthesis: LST × UHI × Land Use and Land Cover">1. Síntese Gráfica: LST × UHI × Uso e Cobertura do Solo</h3>
+        <p style="font-size:13px;color:var(--muted);margin-top:4px" data-pt="Gradiente térmico médio extraído diretamente dos ${valid.toLocaleString('pt-BR')} pixels válidos por estrato biofísico. Correlação espacial observada: r(LST, NDVI) = ${rLstNdvi.toFixed(2)} e r(LST, NDBI) = ${rLstNdbi >= 0 ? '+' : ''}${rLstNdbi.toFixed(2)}." data-en="Mean thermal gradient extracted directly from the ${valid.toLocaleString('pt-BR')} valid pixels per biophysical stratum. Observed spatial correlation: r(LST, NDVI) = ${rLstNdvi.toFixed(2)} and r(LST, NDBI) = ${rLstNdbi >= 0 ? '+' : ''}${rLstNdbi.toFixed(2)}.">Gradiente térmico médio extraído diretamente dos ${valid.toLocaleString('pt-BR')} pixels válidos por estrato biofísico. Correlação espacial observada: <b>r(LST, NDVI) = ${rLstNdvi.toFixed(2)}</b> e <b>r(LST, NDBI) = ${rLstNdbi >= 0 ? '+' : ''}${rLstNdbi.toFixed(2)}</b>.</p>
+        <svg viewBox="0 0 620 305" style="width:100%;height:auto;background:#f8fafc;border:1px solid #dbe3ec;border-radius:12px;padding:6px">
+          <text x="10" y="20" fill="#10213b" font-size="11" font-weight="800">ESTRATO DE USO DO SOLO / COBERTURA ESPECTRAL (2m)</text>
+          <text x="255" y="20" fill="#10213b" font-size="11" font-weight="800">TEMPERATURA MÉDIA DE SUPERFÍCIE (LST °C) &amp; DIFERENCIAL</text>
+          ${strataBarsSvg}
+        </svg>
+        <div class="callout teal" style="margin-top:12px">
+          <strong data-pt="Leitura Física da Relação LST × UHI × Uso do Solo:" data-en="Physical Reading of the LST × UHI × Land Use Relationship:">Leitura Física da Relação LST × UHI × Uso do Solo:</strong>
+          <span data-pt=" A matriz confirma que a conversão de superfícies vegetadas (NDVI &gt; 0,30, que ocupam ${pct(veg, specValid)}% da cena com média de ${tVegMean.toFixed(2)} °C) em superfícies minerais impermeáveis, telhados e solos expostos de transição (${pct(mixed + built, specValid)}% da área) desloca o balanço de energia do calor latente (evapotranspiração) para o calor sensível. O dossel arbóreo denso reduz a temperatura radiométrica em até -${coolingEffectVeg.toFixed(2)} °C frente às superfícies impermeáveis e até -${(tHotViaMean - tDenseVegMean).toFixed(2)} °C frente aos hotspots viários, contendo a expansão das classes de UHI Forte e Extrema (${strongExtPct}% · ${ha(uhiCnt[4] + uhiCnt[5])} ha)." data-en=" The matrix confirms that converting vegetated surfaces (NDVI > 0.30, covering ${pct(veg, specValid)}% of the scene at ${tVegMean.toFixed(2)} °C mean LST) into impervious mineral surfaces, roofs, and exposed transition soils (${pct(mixed + built, specValid)}% of the area) shifts the energy balance from latent heat (evapotranspiration) to sensible heat. Dense tree canopy lowers radiometric temperature by up to -${coolingEffectVeg.toFixed(2)} °C compared to impervious surfaces and up to -${(tHotViaMean - tDenseVegMean).toFixed(2)} °C compared to street hotspots, curbing Strong and Extreme UHI classes (${strongExtPct}% · ${ha(uhiCnt[4] + uhiCnt[5])} ha)."> A matriz confirma que a conversão de superfícies vegetadas (NDVI &gt; 0,30, que ocupam <b>${pct(veg, specValid)}%</b> da cena com média de <b>${tVegMean.toFixed(2)} °C</b>) em superfícies minerais impermeáveis, telhados e solos expostos de transição (<b>${pct(mixed + built, specValid)}%</b> da área) desloca o balanço de energia do calor latente (evapotranspiração) para o calor sensível. O dossel arbóreo denso reduz a temperatura radiométrica em até <b>-${coolingEffectVeg.toFixed(2)} °C</b> frente às superfícies impermeáveis e até <b>-${(tHotViaMean - tDenseVegMean).toFixed(2)} °C</b> frente aos hotspots viários, contendo a expansão das classes de UHI Forte e Extrema (<b>${strongExtPct}% · ${ha(uhiCnt[4] + uhiCnt[5])} ha</b>).</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0" data-pt="2. Radar Multissetorial de Pressão Climática &amp; Conforto (UTFVI)" data-en="2. Multisectoral Climate Pressure &amp; Comfort Radar (UTFVI)">2. Radar Multissetorial de Pressão Climática &amp; Conforto (UTFVI)</h3>
+        <p style="font-size:13px;color:var(--muted);margin-top:4px" data-pt="Avaliação integrada (escala 0–100) da criticidade microclimática sobre saúde, ar, mobilidade e conforto humano." data-en="Integrated evaluation (0–100 scale) of microclimatic criticality on health, air, mobility, and human comfort.">Avaliação integrada (escala 0–100) da criticidade microclimática sobre saúde, ar, mobilidade e conforto humano.</p>
+        <div style="display:grid;grid-template-columns:1.15fr 0.85fr;gap:10px;align-items:center">
+          <svg viewBox="0 0 420 310" style="width:100%;height:auto;background:#0f2238;border-radius:12px">
+            <!-- Grade hexagonal -->
+            <circle cx="${radarCx}" cy="${radarCy}" r="${radarR}" fill="none" stroke="rgba(156,221,218,0.22)" stroke-width="1" />
+            <circle cx="${radarCx}" cy="${radarCy}" r="${(radarR * 0.66).toFixed(1)}" fill="none" stroke="rgba(156,221,218,0.18)" stroke-dasharray="3,3" />
+            <circle cx="${radarCx}" cy="${radarCy}" r="${(radarR * 0.33).toFixed(1)}" fill="none" stroke="rgba(156,221,218,0.15)" stroke-dasharray="2,3" />
+            <line x1="${radarCx}" y1="${radarCy - radarR}" x2="${radarCx}" y2="${radarCy + radarR}" stroke="rgba(255,255,255,0.15)" />
+            <line x1="${(radarCx - radarR * 0.866).toFixed(1)}" y1="${(radarCy - radarR * 0.5).toFixed(1)}" x2="${(radarCx + radarR * 0.866).toFixed(1)}" y2="${(radarCy + radarR * 0.5).toFixed(1)}" stroke="rgba(255,255,255,0.15)" />
+            <line x1="${(radarCx - radarR * 0.866).toFixed(1)}" y1="${(radarCy + radarR * 0.5).toFixed(1)}" x2="${(radarCx + radarR * 0.866).toFixed(1)}" y2="${(radarCy - radarR * 0.5).toFixed(1)}" stroke="rgba(255,255,255,0.15)" />
+            <!-- Polígono de risco -->
+            <polygon points="${radarPts}" fill="rgba(244,124,48,0.38)" stroke="#ffb800" stroke-width="2.6" />
+            <!-- Rótulos dos 6 eixos -->
+            <text x="${radarCx}" y="34" text-anchor="middle" fill="#ffffff" font-size="10.5" font-weight="800">Desconforto (${scoreThermalStress}%)</text>
+            <text x="330" y="96" text-anchor="start" fill="#9cddda" font-size="10" font-weight="700">Saúde (${scoreHealthRisk}%)</text>
+            <text x="330" y="218" text-anchor="start" fill="#9cddda" font-size="10" font-weight="700">Poluição Ar (${scoreAirPollution}%)</text>
+            <text x="${radarCx}" y="282" text-anchor="middle" fill="#ffffff" font-size="10.5" font-weight="800">Mobilidade (${scoreMobilityImpact}%)</text>
+            <text x="90" y="218" text-anchor="end" fill="#fde047" font-size="10" font-weight="700">Solo/Impermeável (${scoreImperviousness}%)</text>
+            <text x="90" y="96" text-anchor="end" fill="#fda4af" font-size="10" font-weight="700">Hotspots (${scoreHotspotSeverity}%)</text>
+          </svg>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+            <div style="background:#f8fafc;border:1px solid #dbe3ec;border-radius:10px;padding:10px 12px">
+              <small style="color:var(--muted);font-weight:700;display:block">Índice de Variação do Campo Térmico (UTFVI)</small>
+              <strong style="font-size:18px;color:#c84638">${pct(utfviStrongCnt)}% Crítico</strong>
+              <span style="display:block;font-size:11px;color:var(--ink)">Área com estresse ecológico severo (UTFVI &gt; 0,012) vs. <b>${pct(utfviCoolCnt)}%</b> em conforto (UTFVI ≤ 0).</span>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #dbe3ec;border-radius:10px;padding:10px 12px">
+              <small style="color:var(--muted);font-weight:700;display:block">Acoplamento Superfície–Ar (10:15 BRT)</small>
+              <strong style="font-size:18px;color:#10213b">ΔT = +${stationMeanDelta.toFixed(1)} °C</strong>
+              <span style="display:block;font-size:11px;color:var(--ink)">Superfície a <b>${raster.stats.mean.toFixed(1)} °C</b> vs. Ar 2m a <b>${stationMeanTa.toFixed(1)} °C</b>, gerando forte fluxo convectivo ascendente.</span>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #dbe3ec;border-radius:10px;padding:10px 12px">
+              <small style="color:var(--muted);font-weight:700;display:block">Amplitude Microclimática Viária</small>
+              <strong style="font-size:18px;color:#1d817e">${streetThermalGap.toFixed(2)} °C entre ruas</strong>
+              <span style="display:block;font-size:11px;color:var(--ink)">Diferença média entre a via mais quente (<b>${tHotViaMean.toFixed(1)}°C</b>) e a via mais arborizada (<b>${tCoolViaMean.toFixed(1)}°C</b>).</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. DIAGNÓSTICO DOS LUGARES MAIS E MENOS FRESCOS -->
+    <div class="two-col" style="margin-top:14px">
+      <div class="card" style="border-top:4px solid #c84638">
+        <h3 style="margin-top:0;color:#c84638" data-pt="🔥 Diagnóstico dos Lugares Menos Frescos (Zonas Críticas de Calor)" data-en="🔥 Diagnosis of the Least Cool Places (Critical Heat Zones)">🔥 Diagnóstico dos Lugares Menos Frescos (Zonas Críticas de Calor)</h3>
+        <p style="font-size:13px" data-pt="Concentram-se nos setores de maior adensamento construtivo, coberturas metálicas/fibrocimento e calhas viárias desprovidas de arborização, onde a LST supera ${hotspotLim.toFixed(1)} °C e atinge picos de ${raster.stats.max.toFixed(1)} °C:" data-en="Concentrated in sectors with higher building density, metal/fiber-cement roofs, and street canyons lacking tree cover, where LST exceeds ${hotspotLim.toFixed(1)} °C and reaches peaks of ${raster.stats.max.toFixed(1)} °C:">Concentram-se nos setores de maior adensamento construtivo, coberturas metálicas/fibrocimento e calhas viárias desprovidas de arborização, onde a LST supera <b>${hotspotLim.toFixed(1)} °C</b> e atinge picos de <b>${raster.stats.max.toFixed(1)} °C</b>:</p>
+        <ul style="margin:8px 0;padding-left:18px;font-size:13px;line-height:1.55">
+          ${hottestBairro ? `<li><strong>Bairro / Setor Mais Quente (${hottestBairro.name}):</strong> Registra LST média de <b>${hottestBairro.meanTemp.toFixed(2)} °C</b> (máxima de <b>${hottestBairro.maxTemp.toFixed(1)} °C</b>), com <b>${hottestBairro.hotPct.toFixed(1)}%</b> de sua área acima do limiar de ilha de calor devido ao baixo índice de vegetação (NDVI <b>${hottestBairro.ndvi.toFixed(3)}</b>).</li>` : ''}
+          ${hotListSummaryHtml}
+        </ul>
+        <div class="callout red" style="margin-top:8px">
+          <strong>Mecanismo Causador:</strong> Baixo albedo superficial + ausência de sombreamento arbóreo (NDVI &lt; 0,25) + materiais de alta absortância solar, convertendo radiação de ondas curtas em reemissão de ondas longas diretamente sobre a calçada.
+        </div>
+      </div>
+
+      <div class="card" style="border-top:4px solid #1d817e">
+        <h3 style="margin-top:0;color:#1d817e" data-pt="🌿 Diagnóstico dos Lugares Mais Frescos (Refúgios Microclimáticos)" data-en="🌿 Diagnosis of the Coolest Places (Microclimatic Refuges)">🌿 Diagnóstico dos Lugares Mais Frescos (Refúgios Microclimáticos)</h3>
+        <p style="font-size:13px" data-pt="Correspondem às zonas de Ilha de Frescor e Zona Amenizada (${coolMitigatedPct}% da área total · ${ha(uhiCnt[0] + uhiCnt[1])} ha), ancoradas por maciços arbóreos, fundos de vale preservados e vias bem arborizadas:" data-en="Correspond to Cool Island and Mitigated Zone classes (${coolMitigatedPct}% of total area · ${ha(uhiCnt[0] + uhiCnt[1])} ha), anchored by tree stands, preserved valley bottoms, and well-shaded streets:">Correspondem às zonas de Ilha de Frescor e Zona Amenizada (<b>${coolMitigatedPct}%</b> da área total · <b>${ha(uhiCnt[0] + uhiCnt[1])} ha</b>), ancoradas por maciços arbóreos, fundos de vale preservados e vias bem arborizadas:</p>
+        <ul style="margin:8px 0;padding-left:18px;font-size:13px;line-height:1.55">
+          ${coolestBairro ? `<li><strong>Bairro / Setor Mais Ameno (${coolestBairro.name}):</strong> Mantém LST média de <b>${coolestBairro.meanTemp.toFixed(2)} °C</b> (${hottestBairro ? `<b>-${(hottestBairro.meanTemp - coolestBairro.meanTemp).toFixed(2)} °C</b> abaixo de ${hottestBairro.name}` : 'zona fresca de referência'}), sustentado por alta biomassa fotossintética (NDVI <b>${coolestBairro.ndvi.toFixed(3)}</b>) e apenas <b>${coolestBairro.hotPct.toFixed(1)}%</b> de área quente.</li>` : ''}
+          ${coolListSummaryHtml}
+        </ul>
+        <div class="callout teal" style="margin-top:8px">
+          <strong>Serviço Ecossistêmico Prestado:</strong> Esses corredores atuam como sumidouros térmicos e dutos de brisa fresca urbana, devendo ser protegidos contra supressão vegetal e conectados aos setores quentes por corredores ecológicos viários.
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. NUVEM DE PALAVRAS E CONCEITOS-CHAVE DO DIAGNÓSTICO -->
+    <div class="card" style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0" data-pt="3. Nuvem de Síntese Semântica: Território Crítico, Refúgios e Ação Pública" data-en="3. Semantic Synthesis Cloud: Critical Territory, Refuges and Public Action">3. Nuvem de Síntese Semântica: Território Crítico, Refúgios e Ação Pública</h3>
+        <small style="color:var(--muted);font-weight:700" data-pt="Tamanho proporcional à relevância térmica e prioridade de gestão na cena" data-en="Size proportional to thermal relevance and management priority in the scene">Tamanho proporcional à relevância térmica e prioridade de gestão na cena</small>
+      </div>
+      <div class="wc-box">${wordCloudHtml}</div>
+    </div>
+
+    <!-- 4. AVALIAÇÃO DO CONFORTO TÉRMICO E IMPACTOS NA SAÚDE, POLUIÇÃO DO AR E MOBILIDADE URBANA -->
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin-top:0" data-pt="4. Avaliação do Conforto Térmico e Impactos Setoriais (Saúde, Poluição do Ar e Mobilidade)" data-en="4. Thermal Comfort Evaluation and Sectoral Impacts (Health, Air Pollution and Mobility)">4. Avaliação do Conforto Térmico e Impactos Setoriais (Saúde, Poluição do Ar e Mobilidade)</h3>
+      <div class="grid-2" style="margin-top:12px">
+        <div class="impact-card">
+          <h4>
+            <span data-pt="🌡️ Conforto Térmico Humano e Carga Radiativa" data-en="🌡️ Human Thermal Comfort and Radiative Load">🌡️ Conforto Térmico Humano e Carga Radiativa</span>
+            <span class="badge-pill" style="background:#fff3d6;color:#9a5b00">Alerta em ${strongExtPct}% da Área</span>
+          </h4>
+          <p style="margin:0;font-size:13px" data-pt="Com ${pct(above31)}% da superfície acima de 31 °C no horário da passagem solar e picos de ${raster.stats.max.toFixed(1)} °C nos hotspots, a Temperatura Radiante Média (TMR) experimentada pelo pedestre ao nível da rua sofre incremento severo pela emissão de ondas longas do piso asfáltico (+${stationMeanDelta.toFixed(1)} °C acima da temperatura do ar de ${stationMeanTa.toFixed(1)} °C). Enquanto nas áreas arborizadas (${coolMitigatedPct}% da cena) o conforto fisiológico é preservado pela sombra direta, nos ${ha(uhiCnt[4] + uhiCnt[5])} ha de UHI Forte/Extrema configura-se estresse térmico moderado a forte para exposição prolongada ao sol." data-en="With ${pct(above31)}% of the surface above 31 °C at solar overpass and peaks of ${raster.stats.max.toFixed(1)} °C in hotspots, the Mean Radiant Temperature (MRT) experienced by pedestrians at street level is severely increased by longwave emission from asphalt (+${stationMeanDelta.toFixed(1)} °C above the ${stationMeanTa.toFixed(1)} °C air temperature). While in wooded areas (${coolMitigatedPct}% of the scene) physiological comfort is preserved by direct shade, across the ${ha(uhiCnt[4] + uhiCnt[5])} ha of Strong/Extreme UHI moderate-to-strong heat stress occurs during prolonged sun exposure.">Com <b>${pct(above31)}%</b> da superfície acima de 31 °C no horário da passagem solar e picos de <b>${raster.stats.max.toFixed(1)} °C</b> nos hotspots, a Temperatura Radiante Média (TMR) experimentada pelo pedestre ao nível da rua sofre incremento severo pela emissão de ondas longas do piso asfáltico (<b>+${stationMeanDelta.toFixed(1)} °C</b> acima da temperatura do ar de <b>${stationMeanTa.toFixed(1)} °C</b>). Enquanto nas áreas arborizadas (<b>${coolMitigatedPct}%</b> da cena) o conforto fisiológico é preservado pela sombra direta, nos <b>${ha(uhiCnt[4] + uhiCnt[5])} ha</b> de UHI Forte/Extrema configura-se estresse térmico moderado a forte para exposição prolongada ao sol.</p>
+        </div>
+
+        <div class="impact-card">
+          <h4>
+            <span data-pt="🏥 Impactos na Saúde Pública e Epidemiologia" data-en="🏥 Public Health and Epidemiological Impacts">🏥 Impactos na Saúde Pública e Epidemiologia</span>
+            <span class="badge-pill" style="background:#fde8e4;color:#b42318">Risco Setorial: ${scoreHealthRisk}/100</span>
+          </h4>
+          <p style="margin:0;font-size:13px" data-pt="A persistência de ilhas de calor nos setores mais adensados (${hottestBairro?.name ?? 'núcleo urbano'}) eleva a demanda por atendimentos de desidratação, exaustão térmica e descompensação cardiovascular/respiratória em idosos, crianças e trabalhadores externos. Adicionalmente, quadras com alta inércia térmica retêm calor no período noturno (prejudicando a recuperação fisiológica do sono) e aceleram o ciclo reprodutivo extrínseco de vetores de arboviroses urbanas (como o Aedes aegypti), exigindo vigilância focalizada da Atenção Primária (UBS) nas microáreas de UHI Extrema." data-en="Persistent heat islands in denser sectors (${hottestBairro?.name ?? 'urban core'}) increase healthcare demand for dehydration, heat exhaustion, and cardiovascular/respiratory decompensation among the elderly, children, and outdoor workers. Furthermore, high thermal inertia blocks retain heat at night (impairing physiological sleep recovery) and accelerate the extrinsic reproductive cycle of urban arbovirus vectors (such as Aedes aegypti), requiring targeted Primary Care surveillance in Extreme UHI micro-areas.">A persistência de ilhas de calor nos setores mais adensados (<b>${hottestBairro?.name ?? 'núcleo urbano'}</b>) eleva a demanda por atendimentos de desidratação, exaustão térmica e descompensação cardiovascular/respiratória em idosos, crianças e trabalhadores externos. Adicionalmente, quadras com alta inércia térmica retêm calor no período noturno (prejudicando a recuperação fisiológica do sono) e aceleram o ciclo reprodutivo extrínseco de vetores de arboviroses urbanas (como o <i>Aedes aegypti</i>), exigindo vigilância focalizada da Atenção Primária (UBS) nas microáreas de UHI Extrema.</p>
+        </div>
+
+        <div class="impact-card">
+          <h4>
+            <span data-pt="🌫️ Impactos na Poluição do Ar e Química Atmosférica" data-en="🌫️ Impacts on Air Pollution and Atmospheric Chemistry">🌫️ Impactos na Poluição do Ar e Química Atmosférica</span>
+            <span class="badge-pill" style="background:#eef2ff;color:#1e40af">Pressão: ${scoreAirPollution}/100</span>
+          </h4>
+          <p style="margin:0;font-size:13px" data-pt="Superfícies urbanas superaquecidas (&gt; ${hotspotLim.toFixed(1)} °C) catalisam reações fotoquímicas entre óxidos de nitrogênio (NOₓ) e compostos orgânicos voláteis (COVs) emitidos pela frota veicular, acelerando a formação de Ozônio Troposférico (O₃) — poluente secundário altamente irritante às vias aéreas. Nos ${ha(mixed)} ha (${pct(mixed, specValid)}%) de solo exposto/transição, a turbulência convectiva gerada pelo aquecimento superficial favorece a ressuspensão de material particulado (PM₁₀ e PM₂.₅), ao passo que os ${ha(veg)} ha de vegetação vigorosa atuam como biofiltro essencial de retenção seca." data-en="Overheated urban surfaces (> ${hotspotLim.toFixed(1)} °C) catalyze photochemical reactions between nitrogen oxides (NOₓ) and volatile organic compounds (VOCs) emitted by vehicles, accelerating Tropospheric Ozone (O₃) formation—a secondary pollutant highly irritant to airways. Across the ${ha(mixed)} ha (${pct(mixed, specValid)}%) of exposed/transition soil, convective turbulence from surface heating promotes resuspension of particulate matter (PM₁₀ and PM₂.₅), whereas the ${ha(veg)} ha of vigorous vegetation act as an essential dry-deposition biofilter.">Superfícies urbanas superaquecidas (<b>&gt; ${hotspotLim.toFixed(1)} °C</b>) catalisam reações fotoquímicas entre óxidos de nitrogênio (NOₓ) e compostos orgânicos voláteis (COVs) emitidos pela frota veicular, acelerando a formação de <b>Ozônio Troposférico (O₃)</b> — poluente secundário altamente irritante às vias aéreas. Nos <b>${ha(mixed)} ha (${pct(mixed, specValid)}%)</b> de solo exposto/transição, a turbulência convectiva gerada pelo aquecimento superficial favorece a ressuspensão de material particulado (PM₁₀ e PM₂.₅), ao passo que os <b>${ha(veg)} ha</b> de vegetação vigorosa atuam como biofiltro essencial de retenção seca.</p>
+        </div>
+
+        <div class="impact-card">
+          <h4>
+            <span data-pt="🚶 Impactos na Mobilidade Urbana e Infraestrutura Viária" data-en="🚶 Impacts on Urban Mobility and Road Infrastructure">🚶 Impactos na Mobilidade Urbana e Infraestrutura Viária</span>
+            <span class="badge-pill" style="background:#e0f2fe;color:#075985">Penalidade: ${scoreMobilityImpact}/100</span>
+          </h4>
+          <p style="margin:0;font-size:13px" data-pt="O diferencial de até +${streetThermalGap.toFixed(2)} °C nas vias mais quentes (${hotVia1}, ${hotVia2}) penaliza severamente a caminhabilidade (walkability), desencorajando deslocamentos a pé e por bicicleta nos horários de pico radiativo e expondo usuários de transporte coletivo a desconforto agudo em pontos de parada sem sombra. Do ponto de vista da engenharia viária, pavimentos asfálticos submetidos a picos de ${raster.stats.max.toFixed(1)} °C sofrem redução do módulo de resiliência do ligante betuminoso, acelerando deformações permanentes (trilha de roda) e custos de manutenção pública." data-en="The differential of up to +${streetThermalGap.toFixed(2)} °C on the hottest streets (${hotVia1}, ${hotVia2}) severely penalizes walkability, discouraging walking and cycling during peak radiative hours and exposing transit riders to acute discomfort at unshaded bus stops. From a road engineering standpoint, asphalt pavements subjected to ${raster.stats.max.toFixed(1)} °C peaks suffer reduced bituminous binder resilience, accelerating permanent deformation (rutting) and public maintenance costs.">O diferencial de até <b>+${streetThermalGap.toFixed(2)} °C</b> nas vias mais quentes (<b>${hotVia1}</b>, <b>${hotVia2}</b>) penaliza severamente a caminhabilidade (<i>walkability</i>), desencorajando deslocamentos a pé e por bicicleta nos horários de pico radiativo e expondo usuários de transporte coletivo a desconforto agudo em pontos de parada sem sombra. Do ponto de vista da engenharia viária, pavimentos asfálticos submetidos a picos de <b>${raster.stats.max.toFixed(1)} °C</b> sofrem redução do módulo de resiliência do ligante betuminoso, acelerando deformações permanentes (trilha de roda) e custos de manutenção pública.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. PLANO DE AÇÃO E DIRETRIZES PARA GESTÃO PÚBLICA E PLANEJAMENTO URBANO -->
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin-top:0" data-pt="5. Diretrizes Estratégicas para Gestão Pública e Planejamento Urbano (Plano de Mitigação UHI)" data-en="5. Strategic Guidelines for Public Management and Urban Planning (UHI Mitigation Plan)">5. Diretrizes Estratégicas para Gestão Pública e Planejamento Urbano (Plano de Mitigação UHI)</h3>
+      <p style="font-size:13.5px;color:var(--muted);margin-top:4px" data-pt="Recomendações técnicas espacialmente direcionadas para Secretarias de Planejamento, Meio Ambiente, Obras, Mobilidade e Saúde, visando converter evidência orbital de 2 m em resiliência climática urbana:" data-en="Spatially targeted technical recommendations for Planning, Environment, Public Works, Mobility, and Health Secretariats, aimed at converting 2 m orbital evidence into urban climate resilience:">Recomendações técnicas espacialmente direcionadas para Secretarias de Planejamento, Meio Ambiente, Obras, Mobilidade e Saúde, visando converter evidência orbital de 2 m em resiliência climática urbana:</p>
+
+      <div class="policy-grid">
+        <div class="policy-card" style="border-left-color:#1d817e">
+          <h4 data-pt="Eixo 1 · Arborização Viária Focada e Corredores Verdes de Mobilidade" data-en="Axis 1 · Targeted Street Tree Planting and Green Mobility Corridors">Eixo 1 · Arborização Viária Focada e Corredores Verdes de Mobilidade</h4>
+          <p style="margin:0;font-size:13px" data-pt="Priorizar o plantio de espécies nativas de copa ampla nas calçadas e canteiros das vias líderes do ranking térmico (${hotVia1}, ${hotVia2}, ${hotVia3}), onde o NDVI viário atual é crítico (&lt; 0,25). Implantar abrigos de ônibus vegetados (tetos verdes/brises) e conectar essas vias aos corredores já amenizados (${coolVia1}, ${coolVia2}) para formar uma malha contínua de sombra para pedestres e ciclistas." data-en="Prioritize planting wide-canopy native trees along sidewalks and medians of the top thermal ranking streets (${hotVia1}, ${hotVia2}, ${hotVia3}), where current street NDVI is critical (< 0.25). Deploy vegetated transit shelters and connect these streets to already mitigated corridors (${coolVia1}, ${coolVia2}) to form a continuous shaded network for pedestrians and cyclists.">Priorizar o plantio de espécies nativas de copa ampla nas calçadas e canteiros das vias líderes do ranking térmico (<b>${hotVia1}</b>, <b>${hotVia2}</b>, <b>${hotVia3}</b>), onde o NDVI viário atual é crítico (&lt; 0,25). Implantar abrigos de ônibus vegetados (tetos verdes/brises) e conectar essas vias aos corredores já amenizados (<b>${coolVia1}</b>, <b>${coolVia2}</b>) para formar uma malha contínua de sombra para pedestres e ciclistas.</p>
+          <div class="policy-meta">
+            <span>Prazo: Imediato / Curto (6–18 meses)</span>
+            <span>Meta Térmica: -2,0 °C a -3,5 °C na LST da calçada</span>
+            <span>Órgãos: Meio Ambiente + Mobilidade</span>
+          </div>
+        </div>
+
+        <div class="policy-card" style="border-left-color:#f1b64a">
+          <h4 data-pt="Eixo 2 · Programa de Superfícies Frias (Cool Roofs &amp; Pavimentos de Alto Albedo)" data-en="Axis 2 · Cool Surfaces Program (Cool Roofs &amp; High-Albedo Pavements)">Eixo 2 · Programa de Superfícies Frias (Cool Roofs &amp; Pavimentos de Alto Albedo)</h4>
+          <p style="margin:0;font-size:13px" data-pt="Instituir pintura refletiva (tintas elastoméricas brancas/frias com refletância solar &gt; 0,75) em coberturas de escolas, UBS, galpões e edifícios públicos inseridos nos ${ha(uhiCnt[4] + uhiCnt[5])} ha de UHI Forte/Extrema (${hottestBairro?.name ?? 'setor central'}). Em calçadões, travessas de pedestres e estacionamentos descobertos, substituir asfalto escuro por blocos intertravados claros e permeáveis." data-en="Implement reflective roof coatings (white/cool elastomeric paints with solar reflectance > 0.75) on schools, health clinics, warehouses, and public buildings within the ${ha(uhiCnt[4] + uhiCnt[5])} ha of Strong/Extreme UHI (${hottestBairro?.name ?? 'central sector'}). In pedestrian alleys, plazas, and open parking lots, replace dark asphalt with light-colored permeable interlocking pavers.">Instituir pintura refletiva (tintas elastoméricas brancas/frias com refletância solar &gt; 0,75) em coberturas de escolas, UBS, galpões e edifícios públicos inseridos nos <b>${ha(uhiCnt[4] + uhiCnt[5])} ha</b> de UHI Forte/Extrema (<b>${hottestBairro?.name ?? 'setor central'}</b>). Em calçadões, travessas de pedestres e estacionamentos descobertos, substituir asfalto escuro por blocos intertravados claros e permeáveis.</p>
+          <div class="policy-meta">
+            <span>Prazo: Curto / Médio (12–24 meses)</span>
+            <span>Meta Térmica: -3,0 °C a -6,0 °C na superfície do telhado</span>
+            <span>Órgãos: Obras + Educação/Saúde</span>
+          </div>
+        </div>
+
+        <div class="policy-card" style="border-left-color:#2668b8">
+          <h4 data-pt="Eixo 3 · Soluções Baseadas na Natureza (SbN) e Conversão de Solo Exposto" data-en="Axis 3 · Nature-Based Solutions (NbS) and Exposed Soil Conversion">Eixo 3 · Soluções Baseadas na Natureza (SbN) e Conversão de Solo Exposto</h4>
+          <p style="margin:0;font-size:13px" data-pt="Intervir sobre os ${ha(mixed)} ha (${pct(mixed, specValid)}%) de solo exposto de transição e áreas mistas identificados na partição espectral por meio de jardins de chuva, biovaletas, parques de bolso (pocket parks) e microflorestas urbanas densas. Além de elevar a umidade relativa local e a infiltração pluvial, a cobertura vegetal elimina focos de ressuspensão de poeira (PM₁₀) e reduz o escoamento superficial." data-en="Intervene across the ${ha(mixed)} ha (${pct(mixed, specValid)}%) of exposed transition soil and mixed areas identified in the spectral partition through rain gardens, bioswales, pocket parks, and dense urban micro-forests. Beyond increasing local relative humidity and stormwater infiltration, vegetal cover eliminates dust resuspension hotspots (PM₁₀) and reduces surface runoff.">Intervir sobre os <b>${ha(mixed)} ha (${pct(mixed, specValid)}%)</b> de solo exposto de transição e áreas mistas identificados na partição espectral por meio de jardins de chuva, biovaletas, parques de bolso (<i>pocket parks</i>) e microflorestas urbanas densas. Além de elevar a umidade relativa local e a infiltração pluvial, a cobertura vegetal elimina focos de ressuspensão de poeira (PM₁₀) e reduz o escoamento superficial.</p>
+          <div class="policy-meta">
+            <span>Prazo: Médio (18–36 meses)</span>
+            <span>Co-benefício: Drenagem Urbana + Redução de PM₁₀/O₃</span>
+            <span>Órgãos: Planejamento + Defesa Civil</span>
+          </div>
+        </div>
+
+        <div class="policy-card" style="border-left-color:#c84638">
+          <h4 data-pt="Eixo 4 · Instrumentos Urbanísticos, IPTU Verde e Vigilância em Saúde Climática" data-en="Axis 4 · Urban Planning Instruments, Green Property Tax and Climate Health Surveillance">Eixo 4 · Instrumentos Urbanísticos, IPTU Verde e Vigilância em Saúde Climática</h4>
+          <p style="margin:0;font-size:13px" data-pt="Incorporar o mapa de UHI de 2 m ao zoneamento ambiental do Plano Diretor: (1) proteger legalmente os refúgios térmicos (${coolBairroName} e os ${ha(veg)} ha de vegetação vigorosa); (2) conceder desconto progressivo de IPTU Verde para lotes que ampliem permeabilidade e cobertura arbórea em zonas de UHI Forte/Extrema; e (3) cruzar este mapa com o cadastro da Saúde e Assistência Social para alertas preventivos em ondas de calor." data-en="Incorporate the 2 m UHI map into Master Plan environmental zoning: (1) legally protect thermal refuges (${coolBairroName} and the ${ha(veg)} ha of vigorous vegetation); (2) grant progressive Green Property Tax discounts for lots expanding permeability and tree canopy in Strong/Extreme UHI zones; and (3) cross-reference this map with Health and Social Assistance registries for preventive heatwave alerts.">Incorporar o mapa de UHI de 2 m ao zoneamento ambiental do Plano Diretor: (1) proteger legalmente os refúgios térmicos (<b>${coolBairroName}</b> e os <b>${ha(veg)} ha</b> de vegetação vigorosa); (2) conceder desconto progressivo de <b>IPTU Verde</b> para lotes que ampliem permeabilidade e cobertura arbórea em zonas de UHI Forte/Extrema; e (3) cruzar este mapa com o cadastro da Saúde e Assistência Social para alertas preventivos em ondas de calor.</p>
+          <div class="policy-meta">
+            <span>Prazo: Permanente / Estrutural</span>
+            <span>Instrumento: Plano Diretor / Código de Obras / SUS</span>
+            <span>Órgãos: Fazenda + Saúde + Gestão</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 </div><script>
 let lang = 'pt';
