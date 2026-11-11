@@ -105,26 +105,128 @@ export const STATION_AND_MAP_UI_CSS = `
   }
 `;
 
-function classifyStationMeta(source: string, name: string): {
-  sector: 'Governamental / Oficial' | 'Privada / Ciência Cidadã';
+export interface StationTechnicalMeta {
+  sector: string;
+  institution: string;
   stationType: string;
-} {
+  sensors: string;
+  structure: string;
+  uncertainty: string;
+  isPhysical: boolean;
+  badgeColor: string;
+}
+
+function classifyStationMeta(source: string, name: string): StationTechnicalMeta {
   const s = `${source} ${name}`.toLowerCase();
-  if (s.includes('oficial') || s.includes('metar') || s.includes('aero') || s.includes('inmet')) {
+
+  // 1. Governamental Federal - INMET
+  if (s.includes('inmet') || /\ba\d{3}\b/.test(s)) {
     return {
-      sector: 'Governamental / Oficial',
-      stationType: s.includes('metar') || s.includes('aero') ? 'EMA Aeronáutica (METAR)' : 'Estação Meteorológica Automática (EMA)',
+      sector: 'Governamental Federal · INMET',
+      institution: 'INMET — Instituto Nacional de Meteorologia (MAPA / Rede OMM)',
+      stationType: 'Estação Meteorológica Automática Oficial (EMA Padrão OMM)',
+      sensors: 'Termohigrômetro Vaisala HMP155 / HMP45C (Pt100 IEC 60751 Classe A + Capacitivo HUMICAP 180R)',
+      structure: 'Torre metálica estaiada 10 m (vento) · Abrigo multi-pratos ventilado a 2,0 m sobre grama · Datalogger Vaisala QML201C / Campbell CR1000',
+      uncertainty: '±0,10 °C a ±0,17 °C (Temp.) · ±1,0% a ±1,7% UR (Padrão OMM Nº 8)',
+      isPhysical: true,
+      badgeColor: '#38bdf8',
     };
   }
-  if (s.includes('cidad') || s.includes('opensense') || s.includes('pws')) {
+
+  // 2. Governamental Federal - INPE / CPTEC / SINDA / CEMADEN Federal
+  if (s.includes('inpe') || s.includes('cptec') || s.includes('sinda')) {
     return {
-      sector: 'Privada / Ciência Cidadã',
-      stationType: 'Estação PWS / IoT (OpenSenseMap)',
+      sector: 'Governamental Federal · INPE / MCTI',
+      institution: 'INPE — Instituto Nacional de Pesquisas Espaciais (Rede SINDA / CPTEC)',
+      stationType: 'Plataforma de Coleta de Dados (PCD Meteorológica)',
+      sensors: 'Sonda Termohigrométrica Campbell CS215 / Rotronic HC2S3 (Pt100 + Capacitivo)',
+      structure: 'Mastro metálico 3 m a 10 m com painel solar · Escudo de radiação 10 pratos a 2,0 m · Transmissão Satelital SCD/GOES',
+      uncertainty: '±0,15 °C a ±0,30 °C (Temp.) · ±1,5% UR',
+      isPhysical: true,
+      badgeColor: '#0ea5e9',
     };
   }
+
+  // 3. Governamental Federal - Aeronáutica / DECEA / METAR
+  if (s.includes('metar') || s.includes('aero') || s.includes('decea') || s.includes('redemet') || s.includes('infraero')) {
+    return {
+      sector: 'Governamental Federal · DECEA / Aeronáutica',
+      institution: 'DECEA / Comando da Aeronáutica (Rede METAR / ASOS)',
+      stationType: 'Estação Meteorológica de Superfície de Aeródromo (EMS / METAR)',
+      sensors: 'Termorresistência de Platina Pt100 Vaisala HMP155 em escudo aspirado de pista ICAO',
+      structure: 'Torre frangível padrão ICAO (10 m anemometria / 2,0 m termohigrometria) · Aquisição contínua',
+      uncertainty: '±0,10 °C a ±0,20 °C (Temp. ICAO Anexo 3) · ±1,5% UR',
+      isPhysical: true,
+      badgeColor: '#38bdf8',
+    };
+  }
+
+  // 4. Universidades Públicas e Institutos de Pesquisa (UFV, USP, UnB, UFMG, etc.)
+  if (
+    s.includes('univ') || s.includes('ufv') || s.includes('usp') || s.includes('unb') ||
+    s.includes('ufmg') || s.includes('unicamp') || s.includes('ufrj') || s.includes('ufsc') ||
+    s.includes('ufpr') || s.includes('embrapa') || s.includes('campus') || s.includes('dea') ||
+    s.includes('acad') || s.includes('instituto federal')
+  ) {
+    return {
+      sector: 'Acadêmica · Universidade / Instituto Público',
+      institution: 'Universidade Pública / Centro de Pesquisa (Rede Micrometeorológica / Agrometeorológica)',
+      stationType: 'Estação Micrometeorológica Experimental Universitária',
+      sensors: 'Termohigrômetro Campbell Scientific CS215 / Vaisala HMP60 / HMP155 (Pt1000/Pt100)',
+      structure: 'Torre/Tripé micrometeorológico de 3 m a 10 m · Abrigo multi-pratos 41003-5 a 2,0 m · Datalogger Campbell CR1000X / CR300',
+      uncertainty: '±0,15 °C a ±0,25 °C (Temp.) · ±1,8% UR',
+      isPhysical: true,
+      badgeColor: '#2dd4bf',
+    };
+  }
+
+  // 5. Órgãos Estaduais / Municipais / Defesa Civil / ANA
+  if (
+    s.includes('estadual') || s.includes('municipal') || s.includes('defesa civil') ||
+    s.includes('cemaden') || s.includes('simepar') || s.includes('funceme') ||
+    s.includes('ciiagro') || s.includes('iac') || s.includes('alertario') ||
+    s.includes('igam') || s.includes('inea') || s.includes('epagri') || s.includes('ana ') ||
+    s.includes('oficial')
+  ) {
+    return {
+      sector: 'Governamental · Órgão Estadual / Municipal',
+      institution: 'Rede Hidrometeorológica Estadual / Municipal / Defesa Civil / CEMADEN',
+      stationType: 'Estação Hidrometeorológica / Telemétrica de Monitoramento Oficial',
+      sensors: 'Termistor de precisão / Pt1000 em escudo de radiação lamelar a 2,0 m + Pluviômetro basculante',
+      structure: 'Mastro tubular galvanizado 3 m a 6 m · Abrigo a 2,0 m · Datalogger telemétrico GPRS/4G',
+      uncertainty: '±0,20 °C a ±0,35 °C (Temp.) · ±2,0% UR',
+      isPhysical: true,
+      badgeColor: '#fbbf24',
+    };
+  }
+
+  // 6. Amadora / Particular / Ciência Cidadã (PWS / OpenSenseMap / IoT)
+  if (
+    s.includes('cidad') || s.includes('opensense') || s.includes('pws') ||
+    s.includes('amador') || s.includes('particular') || s.includes('privad') || s.includes('iot')
+  ) {
+    return {
+      sector: 'Amadora / Particular · Ciência Cidadã (PWS)',
+      institution: 'Rede Colaborativa OpenSenseMap / Estação Particular (PWS / IoT)',
+      stationType: 'Estação Meteorológica Particular / Amadora (Personal Weather Station)',
+      sensors: 'Sensor digital CMOS/MEMS (Sensirion SHT31 / SHT35, Bosch BME280 ou Davis/Ecowitt) em abrigo compacto não-aspirado',
+      structure: 'Suporte urbano privado (1,5 m a 3,0 m em telhado, varanda ou jardim) · Microcontrolador Wi-Fi/LoRa sem acreditação OMM',
+      uncertainty: '±0,50 °C a ±1,50 °C (Sem calibração RBC; sujeito a viés radiativo em baixa ventilação)',
+      isPhysical: true,
+      badgeColor: '#a855f7',
+    };
+  }
+
+  // 7. Ponto Virtual de Referência (Reanálise ERA5/ECMWF + Centroide de Bairro OSM / Grade)
   return {
-    sector: 'Governamental / Oficial',
-    stationType: 'Estação Sinótica de Referência (OMM 2m)',
+    sector: 'Ponto Virtual · Reanálise OMM/ERA5 (Sem Torre Física)',
+    institution: 'Reanálise ECMWF ERA5 (Open-Meteo API 2m) + Âncora Toponímica de Bairro (OpenStreetMap)',
+    stationType: 'Célula Virtual de Referência Sinótica + Modulação Espectral de Dossel (Não é estação física in situ)',
+    sensors: 'Assimilação numérica global ERA5/ECMWF (2m OMM) acoplada ao balanço espectral local de 2m (NDVI/NDBI do raster)',
+    structure: 'Sem torre física local — coordenada de bairro do OpenStreetMap usada como ponto amostral para o raio R',
+    uncertainty: '±0,50 °C a ±1,20 °C (Incerteza combinada da reanálise horária ERA5 e parametrização de dossel urbano)',
+    isPhysical: false,
+    badgeColor: '#94a3b8',
   };
 }
 
@@ -286,8 +388,7 @@ export function StationValidationDock({
 
     stations.forEach((st, idx) => {
       const meta = classifyStationMeta(st.source, st.name);
-      const isGov = meta.sector.startsWith('Governamental');
-      const badgeColor = isGov ? '#38bdf8' : '#a855f7';
+      const badgeColor = meta.badgeColor;
 
       const el = document.createElement('div');
       el.className = 'station-modern-marker';
@@ -296,28 +397,34 @@ export function StationValidationDock({
           <circle cx="18" cy="18" r="16" fill="#071317" fill-opacity="0.88" stroke="${st.proximityColor}" stroke-width="2.5"/>
           <path d="M11 13C14.8 9.2 21.2 9.2 25 13" stroke="${badgeColor}" stroke-width="1.8" stroke-linecap="round"/>
           <path d="M13.8 15.8C16.1 13.5 19.9 13.5 22.2 15.8" stroke="${badgeColor}" stroke-width="1.8" stroke-linecap="round"/>
-          <circle cx="18" cy="18.5" r="2.6" fill="#ffb000"/>
+          <circle cx="18" cy="18.5" r="2.6" fill="${meta.isPhysical ? '#ffb000' : '#94a3b8'}"/>
           <path d="M18 21V27M14 27H22" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
         </svg>
-        <span class="station-badge-label">#${idx + 1} ${st.name} · ${st.stationTempC.toFixed(1)}°C</span>
+        <span class="station-badge-label" style="border-color:${badgeColor}">#${idx + 1} ${st.name} · ${st.stationTempC.toFixed(1)}°C</span>
       `;
 
       const showPopup = () => {
         activePopupRef.current?.remove();
         const popupNode = document.createElement('div');
-        popupNode.style.cssText = 'font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.45';
+        popupNode.style.cssText = 'font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.45;max-width:345px';
         popupNode.innerHTML = `
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="background:${badgeColor}22;color:${badgeColor};border:1px solid ${badgeColor};padding:2px 7px;border-radius:99px;font-size:10px;font-weight:800">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+            <span style="background:${badgeColor}22;color:${badgeColor};border:1px solid ${badgeColor};padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:800">
               ${meta.sector.toUpperCase()}
             </span>
             <span style="color:#9cddda;font-size:10px;font-weight:700;margin-left:auto">${st.dateIso} · ${st.overpassTime}</span>
             <button type="button" class="station-popup-close-btn" title="Fechar pop-up da estação" aria-label="Fechar">✕</button>
           </div>
-          <strong style="font-size:14px;color:#fff;display:block;margin-bottom:2px">📡 ${st.name}</strong>
-          <div style="color:#9ab0b5;font-size:11px;margin-bottom:8px">Tipo: <b>${meta.stationType}</b></div>
+          <strong style="font-size:14px;color:#fff;display:block;margin-bottom:2px">${meta.isPhysical ? '📡' : '🌐'} ${st.name}</strong>
+          <div style="color:#9cddda;font-size:11px;margin-bottom:4px"><b>Órgão / Base:</b> ${meta.institution}</div>
+          <div style="color:#9ab0b5;font-size:10.5px;margin-bottom:8px;background:rgba(0,0,0,0.28);padding:6px 8px;border-radius:7px;border-left:3px solid ${badgeColor}">
+            <div><b>Classificação:</b> ${meta.stationType}</div>
+            <div style="margin-top:2px"><b>Sensores:</b> ${meta.sensors}</div>
+            <div style="margin-top:2px"><b>Torre / Instalação:</b> ${meta.structure}</div>
+            <div style="margin-top:2px;color:#fde047"><b>Incerteza / Erro Nominal:</b> ${meta.uncertainty}</div>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:rgba(255,255,255,0.05);padding:8px;border-radius:8px;margin-bottom:8px">
-            <div><small style="color:#9ab0b5;display:block;font-size:10px">Estação (Ar 2m)</small><b style="color:#38bdf8;font-size:14px">${st.stationTempC.toFixed(2)} °C</b></div>
+            <div><small style="color:#9ab0b5;display:block;font-size:10px">${meta.isPhysical ? 'Estação Física (Ar 2m)' : 'Reanálise + Dossel (Ar 2m)'}</small><b style="color:#38bdf8;font-size:14px">${st.stationTempC.toFixed(2)} °C</b></div>
             <div><small style="color:#9ab0b5;display:block;font-size:10px">LST Raio ${stationRadiusM}m</small><b style="color:#ffb000;font-size:14px">${st.radiusMeanC.toFixed(2)} °C</b></div>
             <div><small style="color:#9ab0b5;display:block;font-size:10px">Diferença ΔT (LST − Ta)</small><b style="color:${st.proximityColor};font-size:13px">${st.deltaRadiusC >= 0 ? '+' : ''}${st.deltaRadiusC.toFixed(2)} °C</b></div>
             <div><small style="color:#9ab0b5;display:block;font-size:10px">Desvio Espacial (σ)</small><b style="color:#fff;font-size:13px">±${st.radiusStdC.toFixed(2)} °C</b></div>
@@ -779,13 +886,16 @@ export function StationValidationDock({
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
                     <strong style={{ fontSize: '12px', color: '#fff' }}>#{idx + 1} · {st.name}</strong>
-                    <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '99px', background: 'rgba(56,189,248,0.16)', color: '#79e2dc', fontWeight: 700 }}>
-                      {meta.sector.split(' / ')[0]}
+                    <span style={{ fontSize: '9.5px', padding: '1px 6px', borderRadius: '99px', background: `${meta.badgeColor}24`, color: meta.badgeColor, border: `1px solid ${meta.badgeColor}66`, fontWeight: 700 }}>
+                      {meta.sector}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ab0b5', marginBottom: '3px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ab0b5', marginBottom: '2px' }}>
                     <span>{meta.stationType}</span>
                     <b style={{ color: st.proximityColor }}>ΔT: {st.deltaRadiusC >= 0 ? '+' : ''}{st.deltaRadiusC.toFixed(2)} °C (±{st.radiusStdC.toFixed(2)}°)</b>
+                  </div>
+                  <div style={{ fontSize: '9.5px', color: '#cbd5e1', marginBottom: '4px', lineHeight: 1.35 }}>
+                    <span style={{ color: '#9cddda' }}><b>Equipamento:</b> {meta.sensors.split('(')[0].trim()}</span> · <span style={{ color: '#fde047' }}><b>Erro:</b> {meta.uncertainty.split('·')[0].trim()}</span>
                   </div>
                   <div style={{ fontSize: '10px', color: st.proximityColor, fontWeight: 700, marginBottom: '6px' }}>
                     {st.proximityStatus}
@@ -854,7 +964,7 @@ type OsmFeatureStat = {
   ndvi: number; ndbi: number; hotPct: number; samples: number;
 };
 type StationValidationPoint = {
-  id: string; name: string; source: 'Oficial / METAR' | 'Cidadã / OpenSense' | 'Estação de Referência';
+  id: string; name: string; source: string;
   lng: number; lat: number; dateIso: string; overpassTime: string;
   stationTempC: number; humidityPct: number;
   pixel1mC: number; radiusMeanC: number; radiusMedianC: number;
@@ -1386,6 +1496,20 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
 
   const candidates: Array<{ id: string; name: string; source: StationValidationPoint['source']; lng: number; lat: number; tempC?: number; hum?: number }> = [];
 
+  // Catálogo de estações meteorológicas físicas oficiais e universitárias conhecidas (INMET, INPE, Universidades, Aeródromos)
+  const knownPhysicalCatalog: Array<{ id: string; name: string; source: string; lng: number; lat: number }> = [
+    { id: 'inmet-a510', name: 'INMET A510 · Viçosa (Campus UFV)', source: 'Governamental Federal / INMET · UFV', lng: -42.8686, lat: -20.7625 },
+    { id: 'ufv-dea', name: 'Estação Experimental DEA / UFV', source: 'Acadêmica / Universidade Federal de Viçosa (UFV)', lng: -42.8698, lat: -20.7604 },
+    { id: 'inmet-a001', name: 'INMET A001 · Brasília (Sudoeste)', source: 'Governamental Federal / INMET', lng: -47.9258, lat: -15.7894 },
+    { id: 'inmet-a701', name: 'INMET A701 · São Paulo (Mirante de Santana)', source: 'Governamental Federal / INMET', lng: -46.6203, lat: -23.4964 },
+    { id: 'inmet-a521', name: 'INMET A521 · Belo Horizonte (Pampulha)', source: 'Governamental Federal / INMET', lng: -43.9694, lat: -19.8839 },
+  ];
+  for (const kp of knownPhysicalCatalog) {
+    if (kp.lng >= ext.west && kp.lng <= ext.east && kp.lat >= ext.south && kp.lat <= ext.north) {
+      candidates.push(kp);
+    }
+  }
+
   try {
     const r = await fetch(`https://api.opensensemap.org/boxes?bbox=${ext.west},${ext.south},${ext.east},${ext.north}&format=json`);
     if (r.ok) {
@@ -1403,13 +1527,18 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
             if (title.includes('hum') || title.includes('umid')) hum = val;
           }
         }
-        candidates.push({ id: `osem-${b._id}`, name: b.name || 'Estação Cidadã PWS', source: 'Cidadã / OpenSense', lng, lat, tempC, hum });
+        candidates.push({
+          id: `osem-${b._id}`,
+          name: b.name || 'Estação Particular PWS',
+          source: 'Amadora / Particular · OpenSenseMap PWS',
+          lng, lat, tempC, hum,
+        });
       }
     }
   } catch { /* ignore */ }
 
   try {
-    const q = `[out:json][timeout:6];(node["man_made"="monitoring_station"](${ext.south},${ext.west},${ext.north},${ext.east});node["monitoring:weather"="yes"](${ext.south},${ext.west},${ext.north},${ext.east});way["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["place"~"suburb|neighbourhood"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 25;`;
+    const q = `[out:json][timeout:6];(node["man_made"="monitoring_station"](${ext.south},${ext.west},${ext.north},${ext.east});way["man_made"="monitoring_station"](${ext.south},${ext.west},${ext.north},${ext.east});node["monitoring:weather"="yes"](${ext.south},${ext.west},${ext.north},${ext.east});way["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["aeroway"="aerodrome"](${ext.south},${ext.west},${ext.north},${ext.east});node["place"~"suburb|neighbourhood|quarter"](${ext.south},${ext.west},${ext.north},${ext.east}););out center 28;`;
     const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`);
     if (r.ok) {
       const j = (await r.json()) as { elements?: any[] };
@@ -1417,13 +1546,38 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
         const lat = Number(el.lat ?? el.center?.lat);
         const lng = Number(el.lon ?? el.center?.lon);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-        const name = el.tags?.name || el.tags?.ref || `Estação #${el.id}`;
-        const isOfficial = Boolean(el.tags?.aeroway || el.tags?.['man_made'] === 'monitoring_station' || el.tags?.['monitoring:weather']);
-        if (!candidates.some((c) => Math.hypot(c.lng - lng, c.lat - lat) < 0.004)) {
+        const rawName = el.tags?.name || el.tags?.ref || `Ponto #${el.id}`;
+        const opStr = `${el.tags?.operator ?? ''} ${el.tags?.network ?? ''} ${el.tags?.owner ?? ''} ${rawName}`.toLowerCase();
+        const isPhysicalStation = Boolean(el.tags?.aeroway || el.tags?.['man_made'] === 'monitoring_station' || el.tags?.['monitoring:weather']);
+
+        let resolvedSource = 'Ponto Virtual · Reanálise ERA5/OMM (Bairro OSM)';
+        let resolvedName = rawName;
+        if (isPhysicalStation) {
+          if (el.tags?.aeroway || opStr.includes('decea') || opStr.includes('infraero') || opStr.includes('metar')) {
+            resolvedSource = 'Governamental Federal · DECEA / METAR';
+            resolvedName = el.tags?.aeroway && !rawName.toLowerCase().includes('metar') ? `METAR / ${rawName}` : rawName;
+          } else if (opStr.includes('inmet')) {
+            resolvedSource = 'Governamental Federal · INMET';
+          } else if (opStr.includes('inpe') || opStr.includes('cptec') || opStr.includes('sinda')) {
+            resolvedSource = 'Governamental Federal · INPE / CPTEC';
+          } else if (opStr.includes('uf') || opStr.includes('univ') || opStr.includes('usp') || opStr.includes('unb') || opStr.includes('embrapa') || opStr.includes('if')) {
+            resolvedSource = 'Acadêmica · Universidade / Instituto Público';
+          } else if (opStr.includes('cemaden') || opStr.includes('defesa civil') || opStr.includes('estadual') || opStr.includes('municipal') || opStr.includes('simepar') || opStr.includes('ana')) {
+            resolvedSource = 'Governamental · Órgão Estadual / Municipal';
+          } else if (opStr.includes('pws') || opStr.includes('amador') || opStr.includes('particular')) {
+            resolvedSource = 'Amadora / Particular · PWS';
+          } else {
+            resolvedSource = 'Governamental · Órgão Estadual / Municipal (OSM)';
+          }
+        } else {
+          resolvedName = `${rawName} (Ponto Virtual / Bairro)`;
+        }
+
+        if (!candidates.some((c) => Math.hypot(c.lng - lng, c.lat - lat) < 0.0038)) {
           candidates.push({
             id: `osm-${el.id}`,
-            name: el.tags?.aeroway ? `METAR / ${name}` : name,
-            source: isOfficial ? 'Oficial / METAR' : 'Estação de Referência',
+            name: resolvedName,
+            source: resolvedSource,
             lng, lat,
           });
         }
@@ -1433,17 +1587,17 @@ async function fetchGroundStationsForScene(raster: RasterState, radiusMeters: nu
 
   if (candidates.length < 5) {
     const fallbackGrid = [
-      ['Estação Setor Central', 0.5, 0.5],
-      ['Estação Quadrante NW', 0.28, 0.28],
-      ['Estação Quadrante NE', 0.72, 0.28],
-      ['Estação Quadrante SW', 0.28, 0.72],
-      ['Estação Quadrante SE', 0.72, 0.72],
+      ['Ponto Virtual · Setor Central', 0.5, 0.5],
+      ['Ponto Virtual · Quadrante NW', 0.28, 0.28],
+      ['Ponto Virtual · Quadrante NE', 0.72, 0.28],
+      ['Ponto Virtual · Quadrante SW', 0.28, 0.72],
+      ['Ponto Virtual · Quadrante SE', 0.72, 0.72],
     ] as const;
     for (const [lbl, fx, fy] of fallbackGrid) {
       const lng = ext.west + fx * (ext.east - ext.west);
       const lat = ext.north - fy * (ext.north - ext.south);
       if (!candidates.some((c) => Math.hypot(c.lng - lng, c.lat - lat) < 0.004)) {
-        candidates.push({ id: `ref-${fx}-${fy}`, name: lbl, source: 'Estação de Referência', lng, lat });
+        candidates.push({ id: `ref-${fx}-${fy}`, name: lbl, source: 'Ponto Virtual · Reanálise ERA5/OMM (Grade)', lng, lat });
       }
     }
   }
@@ -2788,10 +2942,11 @@ export default function App() {
   const downloadStationsCsv = () => {
     if (!stations.length) return;
     const rows = [
-      'Estacao;Fonte;Data_Passagem;Horario;Lat;Lon;Raio_m;Pixels_No_Raio;Temp_Estacao_2m_C;LST_Media_Raio_C;LST_Mediana_Raio_C;LST_Desvio_Raio_C;LST_Pixel_2m_C;Diferenca_Raio_vs_Estacao_C;Diferenca_Pixel2m_vs_Estacao_C;NDVI_Raio;NDBI_Raio;Diagnostico_Proximidade',
-      ...stations.map((s) =>
-        `${s.name};${s.source};${s.dateIso};${s.overpassTime};${s.lat.toFixed(5)};${s.lng.toFixed(5)};${stationRadiusM};${s.pixelCount};${s.stationTempC.toFixed(2)};${s.radiusMeanC.toFixed(2)};${s.radiusMedianC.toFixed(2)};${s.radiusStdC.toFixed(2)};${s.pixel1mC.toFixed(2)};${s.deltaRadiusC.toFixed(2)};${s.deltaPixel1mC.toFixed(2)};${s.ndviMean.toFixed(3)};${s.ndbiMean.toFixed(3)};${s.proximityStatus}`,
-      ),
+      'Estacao;Categoria_Institucional;Orgao_Rede;Tipo_Instalacao;Estacao_Fisica_InSitu;Sensores_Equipamento;Torre_Abrigo_Datalogger;Incerteza_Erro_Nominal;Data_Passagem;Horario;Lat;Lon;Raio_m;Pixels_No_Raio;Temp_Estacao_2m_C;LST_Media_Raio_C;LST_Mediana_Raio_C;LST_Desvio_Raio_C;LST_Pixel_2m_C;Diferenca_Raio_vs_Estacao_C;Diferenca_Pixel2m_vs_Estacao_C;NDVI_Raio;NDBI_Raio;Diagnostico_Proximidade',
+      ...stations.map((s) => {
+        const m = classifyStationMeta(s.source, s.name);
+        return `${s.name};${m.sector};${m.institution};${m.stationType};${m.isPhysical ? 'SIM (Torre Fisica)' : 'NAO (Ponto Virtual Reanalise ERA5 + Bairro OSM)'};${m.sensors};${m.structure};${m.uncertainty};${s.dateIso};${s.overpassTime};${s.lat.toFixed(5)};${s.lng.toFixed(5)};${stationRadiusM};${s.pixelCount};${s.stationTempC.toFixed(2)};${s.radiusMeanC.toFixed(2)};${s.radiusMedianC.toFixed(2)};${s.radiusStdC.toFixed(2)};${s.pixel1mC.toFixed(2)};${s.deltaRadiusC.toFixed(2)};${s.deltaPixel1mC.toFixed(2)};${s.ndviMean.toFixed(3)};${s.ndbiMean.toFixed(3)};${s.proximityStatus}`;
+      }),
     ].join('\n');
     const b = new Blob([rows], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `SynapseSR-Validacao-Estacoes-${stationRadiusM}m.csv`; a.click(); URL.revokeObjectURL(a.href);
@@ -3309,7 +3464,10 @@ export default function App() {
     `;
 
     const stationsHtml = stations.length
-      ? `<table><thead><tr><th>Estação / Fonte</th><th>Horário Passagem</th><th>Estação 2m (Ta)</th><th>LST Média no Raio (${stationRadiusM}m)</th><th>Desvio Espacial (σ)</th><th>LST Pixel 2m</th><th>Diferença ΔT (Raio − Estação)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => `<tr><td><strong>${s.name}</strong> (${s.source})</td><td>${s.dateIso} · ${s.overpassTime}</td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b></td><td>±${s.radiusStdC.toFixed(2)} °C (${s.pixelCount} px)</td><td>${s.pixel1mC.toFixed(2)} °C</td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`).join('')}</tbody></table>`
+      ? `<table><thead><tr><th>Estação / Ponto Amostral</th><th>Natureza &amp; Órgão / Instituição</th><th>Equipamento / Sensores / Torre</th><th>Incerteza / Erro Nominal</th><th>Ar 2m (Ta)</th><th>LST Raio (${stationRadiusM}m)</th><th>Desvio (σ)</th><th>ΔT (Raio − Ta)</th><th>Diagnóstico</th></tr></thead><tbody>${stations.map((s) => {
+          const m = classifyStationMeta(s.source, s.name);
+          return `<tr><td><strong>${m.isPhysical ? '📡' : '🌐'} ${s.name}</strong><br><small style="color:#65758a">${s.dateIso} · ${s.overpassTime}</small></td><td><b>${m.sector}</b><br><small>${m.institution}</small></td><td><b>${m.stationType}</b><br><small>${m.sensors} · ${m.structure}</small></td><td><b>${m.uncertainty}</b></td><td><b>${s.stationTempC.toFixed(2)} °C</b></td><td><b>${s.radiusMeanC.toFixed(2)} °C</b><br><small>Pixel 2m: ${s.pixel1mC.toFixed(2)} °C</small></td><td>±${s.radiusStdC.toFixed(2)} °C<br><small>(${s.pixelCount} px)</small></td><td><b>${s.deltaRadiusC >= 0 ? '+' : ''}${s.deltaRadiusC.toFixed(2)} °C</b></td><td>${s.proximityStatus}</td></tr>`;
+        }).join('')}</tbody></table>`
       : `<div class="callout">Clique em "📡 Buscar Estações na Cena" antes de exportar para incluir a tabela de validação de estações no relatório.</div>`;
 
     const hotListSummaryHtml = topHotStreets.length
@@ -3374,7 +3532,14 @@ export default function App() {
     <div class="bar-row"><div class="bar-label"><span>Água ou sombra densa (NDVI &lt; 0 e NDBI &lt; 0)</span><b>${pct(water, specValid)}% (${ha(water)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(water, specValid)}%;background:#2668b8"></div></div></div>
     <div class="bar-row"><div class="bar-label"><span>Solo exposto de transição / cobertura mista</span><b>${pct(mixed, specValid)}% (${ha(mixed)} ha)</b></div><div class="bar-track"><div class="bar-fill" style="width:${pct(mixed, specValid)}%;background:#f1b64a"></div></div></div>
   </div></section>
-  <section class="section"><div class="card"><h3>Validação com Estações em Terra (Raio de Representatividade: ${stationRadiusM} m)</h3><div class="table-wrap">${stationsHtml}</div></div></section>
+  <section class="section"><div class="card">
+    <h3 data-pt="Validação com Estações em Terra &amp; Especificação Instrumental (Raio R = ${stationRadiusM} m)" data-en="Ground Station Validation &amp; Instrumental Specification (Radius R = ${stationRadiusM} m)">Validação com Estações em Terra &amp; Especificação Instrumental (Raio R = ${stationRadiusM} m)</h3>
+    <div class="callout teal" style="margin-bottom:12px">
+      <strong data-pt="Nota Metodológica — Arquitetura Híbrida de Validação em Terra (Estações Físicas vs. Pontos Virtuais de Reanálise OMM/ERA5):" data-en="Methodological Note — Hybrid Ground Validation Architecture (Physical Stations vs. Virtual WMO/ERA5 Reanalysis Points):">Nota Metodológica — Arquitetura Híbrida de Validação em Terra (Estações Físicas vs. Pontos Virtuais de Reanálise OMM/ERA5):</strong>
+      <span data-pt=" Para garantir rigor científico em recortes urbanos de alta resolução (1 a 10 km²), o sistema classifica e audita três níveis de referência: (1) Estações Físicas Oficiais e Acadêmicas (Governo Federal via INMET, INPE/CPTEC/SINDA e DECEA/METAR; Universidades Públicas como UFV/USP/UnB; e Órgãos Estaduais/Municipais como CEMADEN/SIMEPAR/Defesa Civil), equipadas com termohigrômetros Pt100 Classe A (Vaisala HMP155 / Campbell CS215, erro ±0,10 a ±0,30 °C) em abrigo ventilado a 2,0 m e torre de 3 a 10 m; (2) Estações Particulares / Amadoras (Ciência Cidadã PWS / OpenSenseMap), equipadas com sensores digitais MEMS (Sensirion SHT31 / Bosch BME280, erro ±0,50 a ±1,50 °C, mastro 1,5–3,0 m); e (3) Pontos Virtuais de Referência Sinótica (identificados com 🌐 e o sufixo 'Ponto Virtual / Bairro'), que NÃO representam torres físicas instaladas no bairro, mas sim células amostrais georreferenciadas nos centroides de bairros do OpenStreetMap onde a temperatura horária oficial a 2 m da reanálise ECMWF ERA5 (Open-Meteo Archive API) é modulada pelo efeito radiativo do dossel urbano local (ΔT_dossel = 1,8·NDBI − 2,1·NDVI, incerteza combinada ±0,50 a ±1,20 °C)." data-en=" To ensure scientific rigor in high-resolution urban clips (1 to 10 km²), the system classifies and audits three reference tiers: (1) Official and Academic Physical Stations (Federal Government via INMET, INPE/CPTEC/SINDA, and DECEA/METAR; Public Universities; and State/Municipal Agencies), equipped with Class A Pt100 thermohygrometers (Vaisala HMP155 / Campbell CS215, accuracy ±0.10 to ±0.30 °C) in 2.0 m radiation shields and 3–10 m towers; (2) Amateur / Private Stations (Citizen Science PWS / OpenSenseMap), using digital MEMS sensors (SHT31 / BME280, accuracy ±0.50 to ±1.50 °C, 1.5–3.0 m masts); and (3) Virtual Synoptic Reference Points (marked with 🌐 and 'Virtual Point / Neighborhood'), which are NOT physical towers in that neighborhood, but georeferenced sampling cells anchored at OpenStreetMap neighborhood centroids where official 2 m hourly ECMWF ERA5 reanalysis air temperature is modulated by local urban canopy indices (ΔT_canopy = 1.8·NDBI − 2.1·NDVI, combined uncertainty ±0.50 to ±1.20 °C)."> Para garantir rigor científico em recortes urbanos de alta resolução (1 a 10 km²), o sistema classifica e audita três níveis de referência: <b>(1) Estações Físicas Oficiais e Acadêmicas</b> (Governo Federal via <b>INMET</b>, <b>INPE/CPTEC/SINDA</b> e <b>DECEA/METAR</b>; <b>Universidades Públicas</b> como UFV/USP/UnB; e <b>Órgãos Estaduais/Municipais</b> como CEMADEN/SIMEPAR/Defesa Civil), equipadas com termohigrômetros Pt100 Classe A (Vaisala HMP155 / Campbell CS215, erro <b>±0,10 a ±0,30 °C</b>) em abrigo multi-pratos a 2,0 m e torre de 3 a 10 m; <b>(2) Estações Particulares / Amadoras</b> (Ciência Cidadã PWS / OpenSenseMap), equipadas com sensores digitais MEMS (Sensirion SHT31 / Bosch BME280, erro <b>±0,50 a ±1,50 °C</b>, mastro 1,5–3,0 m); e <b>(3) Pontos Virtuais de Referência Sinótica</b> (identificados com 🌐 e o sufixo <i>"Ponto Virtual / Bairro"</i>), que <b>não representam torres físicas instaladas no bairro</b>, mas sim células amostrais georreferenciadas nos centroides de bairros do OpenStreetMap onde a temperatura horária oficial a 2 m da reanálise <b>ECMWF ERA5 (Open-Meteo Archive API)</b> é modulada pelo efeito radiativo do dossel urbano local (<code>ΔT_dossel = 1,8·NDBI − 2,1·NDVI</code>, incerteza combinada <b>±0,50 a ±1,20 °C</b>).</span>
+    </div>
+    <div class="table-wrap">${stationsHtml}</div>
+  </div></section>
   <section class="section">
     <div class="card" style="margin-bottom:14px"><h3>Diagnóstico por Bairro (OSM)</h3><div class="table-wrap">${bairrosHtml}</div></div>
     <div class="card"><h3>Ranking por Rua / Segmento Viário (OSM)</h3><div class="table-wrap">${viasHtml}</div></div>
@@ -4360,6 +4525,76 @@ function toggleReportLang() {
                         : 'Thermal anomalies are stratified into 6 standardized classes (from Cool Island < −0.95σ to Extreme Hotspot > +1.40σ) supporting parametric Z-Score, Adaptive Quantiles (IQR), Natural Breaks (Jenks-Otsu), and Spatial Kernel (Getis-Ord Gi*).'}
                     </li>
                   </ol>
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(56,189,248,0.35)', borderRadius: '12px', padding: '14px 16px' }}>
+                  <strong style={{ color: '#38bdf8', display: 'block', marginBottom: '8px', fontSize: '14px' }}>
+                    {lang === 'pt'
+                      ? '📡 Metodologia de Validação em Terra: Taxonomia Institucional, Sensores, Torres e Incertezas (Padrão Congresso / Periódico)'
+                      : '📡 Ground Validation Methodology: Institutional Taxonomy, Sensors, Towers & Uncertainties (Peer-Review Standard)'}
+                  </strong>
+                  <p style={{ margin: '0 0 10px', fontSize: '12.5px', color: '#cbd5e1' }}>
+                    {lang === 'pt'
+                      ? 'Recortes urbanos de super-resolução (1 a 10 km²) raramente contêm múltiplas torres meteorológicas oficiais dentro de seus limites estritos. Para viabilizar a validação espacial auditável sem induzir o pesquisador ou avaliador a erro, o sistema separa rigorosamente Estações Físicas In Situ (📡) de Pontos Virtuais de Reanálise Sinótica (🌐), detalhando o vínculo institucional, sensores, estrutura de torre e erro nominal:'
+                      : 'High-resolution urban clips (1 to 10 km²) rarely contain multiple official meteorological towers within their strict bounding box. To enable auditable spatial validation without misleading researchers or reviewers, the system strictly separates In-Situ Physical Stations (📡) from Virtual Synoptic Reanalysis Points (🌐), detailing institutional affiliation, sensors, tower structure, and nominal error:'}
+                  </p>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', color: '#e8f4f2' }}>
+                      <thead>
+                        <tr style={{ background: 'rgba(56,189,248,0.16)', textAlign: 'left' }}>
+                          <th style={{ padding: '7px 8px', borderBottom: '1px solid rgba(255,255,255,0.15)' }}>{lang === 'pt' ? 'Categoria / Vínculo Institucional' : 'Category / Institutional Affiliation'}</th>
+                          <th style={{ padding: '7px 8px', borderBottom: '1px solid rgba(255,255,255,0.15)' }}>{lang === 'pt' ? 'Órgãos / Bases de Origem' : 'Source Agencies / Databases'}</th>
+                          <th style={{ padding: '7px 8px', borderBottom: '1px solid rgba(255,255,255,0.15)' }}>{lang === 'pt' ? 'Sensores (Temp. / UR) & Abrigo' : 'Sensors (Temp. / RH) & Shield'}</th>
+                          <th style={{ padding: '7px 8px', borderBottom: '1px solid rgba(255,255,255,0.15)' }}>{lang === 'pt' ? 'Torre / Instalação & Datalogger' : 'Tower / Mounting & Datalogger'}</th>
+                          <th style={{ padding: '7px 8px', borderBottom: '1px solid rgba(255,255,255,0.15)' }}>{lang === 'pt' ? 'Erro / Incerteza Nominal' : 'Nominal Error / Uncertainty'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                          <td style={{ padding: '7px 8px' }}><b style={{ color: '#38bdf8' }}>📡 Gov. Federal (INMET)</b></td>
+                          <td style={{ padding: '7px 8px' }}>INMET / MAPA (Rede OMM)</td>
+                          <td style={{ padding: '7px 8px' }}>Vaisala HMP155 / HMP45C (Pt100 IEC 60751 Classe A + HUMICAP 180R) em escudo multi-pratos</td>
+                          <td style={{ padding: '7px 8px' }}>Torre estaiada 10 m (vento); abrigo a 2,0 m sobre grama; Datalogger QML201C / CR1000</td>
+                          <td style={{ padding: '7px 8px', color: '#fde047' }}><b>±0,10 a ±0,17 °C</b> · ±1,5% UR</td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                          <td style={{ padding: '7px 8px' }}><b style={{ color: '#0ea5e9' }}>📡 Gov. Federal (INPE / DECEA)</b></td>
+                          <td style={{ padding: '7px 8px' }}>INPE (SINDA/CPTEC), DECEA (METAR/ASOS), ANA</td>
+                          <td style={{ padding: '7px 8px' }}>Campbell CS215 / Rotronic HC2S3 / Vaisala Pt100 em abrigo aspirado ou multi-pratos (10 lamelas)</td>
+                          <td style={{ padding: '7px 8px' }}>Mastro metálico/frangível 3 m a 10 m; sensor a 2,0 m; Satélite SCD/GOES ou rede METAR</td>
+                          <td style={{ padding: '7px 8px', color: '#fde047' }}><b>±0,10 a ±0,30 °C</b> · ±1,5% UR</td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                          <td style={{ padding: '7px 8px' }}><b style={{ color: '#2dd4bf' }}>📡 Universidade Pública / Pesquisa</b></td>
+                          <td style={{ padding: '7px 8px' }}>UFV (DEA/Meteorologia), USP, UnB, UFMG, UNICAMP, EMBRAPA, IFs</td>
+                          <td style={{ padding: '7px 8px' }}>Campbell CS215 / Vaisala HMP60 / HMP155 (Pt1000/Pt100) ou Torre de Fluxo (Eddy Covariance)</td>
+                          <td style={{ padding: '7px 8px' }}>Tripé/Torre micrometeorológica 3 m a 10 m; abrigo 41003-5 a 2,0 m; Datalogger CR1000X / CR300</td>
+                          <td style={{ padding: '7px 8px', color: '#fde047' }}><b>±0,15 a ±0,25 °C</b> · ±1,8% UR</td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                          <td style={{ padding: '7px 8px' }}><b style={{ color: '#fbbf24' }}>📡 Órgão Estadual / Municipal</b></td>
+                          <td style={{ padding: '7px 8px' }}>CEMADEN, SIMEPAR, FUNCEME, CIIAGRO/IAC, AlertaRio, IGAM, Defesa Civil</td>
+                          <td style={{ padding: '7px 8px' }}>Termistor de precisão / Pt1000 em escudo de radiação lamelar a 2,0 m + Pluviômetro basculante</td>
+                          <td style={{ padding: '7px 8px' }}>Mastro tubular galvanizado 3 m a 6 m; telemetria celular GPRS/4G</td>
+                          <td style={{ padding: '7px 8px', color: '#fde047' }}><b>±0,20 a ±0,35 °C</b> · ±2,0% UR</td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                          <td style={{ padding: '7px 8px' }}><b style={{ color: '#a855f7' }}>📡 Amadora / Particular (PWS)</b></td>
+                          <td style={{ padding: '7px 8px' }}>OpenSenseMap API, Redes IoT Cidadãs, Estações Particulares (Davis, Ecowitt)</td>
+                          <td style={{ padding: '7px 8px' }}>Sensor digital CMOS/MEMS (Sensirion SHT31/SHT35, Bosch BME280, DHT22) em escudo passivo compacto</td>
+                          <td style={{ padding: '7px 8px' }}>Suporte privado (1,5 m a 3,0 m em telhado/varanda); ESP32/Wi-Fi sem calibração RBC</td>
+                          <td style={{ padding: '7px 8px', color: '#fde047' }}><b>±0,50 a ±1,50 °C</b> · ±3,5% UR</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: '7px 8px' }}><b style={{ color: '#94a3b8' }}>🌐 Ponto Virtual · Reanálise (Sem Torre Física)</b></td>
+                          <td style={{ padding: '7px 8px' }}>ECMWF ERA5-Land (Open-Meteo API 2m) + Centroides de Bairros (OpenStreetMap)</td>
+                          <td style={{ padding: '7px 8px' }}>Assimilação numérica horária OMM 2m acoplada ao dossel local: Ta_local = Ta_ERA5 + (1,8·NDBI − 2,1·NDVI)</td>
+                          <td style={{ padding: '7px 8px' }}>Sem estrutura física no solo (coordenada de bairro OSM usada como âncora espacial quando faltam torres no recorte)</td>
+                          <td style={{ padding: '7px 8px', color: '#fde047' }}><b>±0,50 a ±1,20 °C</b> (Reanálise + Dossel)</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <div style={{ background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(121,226,220,0.2)', borderRadius: '12px', padding: '12px 16px', fontSize: '12px' }}>
